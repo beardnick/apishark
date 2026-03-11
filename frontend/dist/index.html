@@ -42,7 +42,7 @@
           <p class="hint">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
           <textarea
             id="envInput"
-            rows="10"
+            rows="8"
             placeholder="OPENAI_API_KEY=sk-...\nBASE_URL=https://api.openai.com"
           ></textarea>
         </section>
@@ -51,7 +51,7 @@
           <h2>Import with cURL</h2>
           <textarea
             id="curlInput"
-            rows="8"
+            rows="6"
             placeholder='curl -X POST "https://example.com" -H "Authorization: Bearer {{OPENAI_API_KEY}}" -d "{\"hello\":\"world\"}"'
           ></textarea>
           <button id="importCurlBtn" type="button">Import to request</button>
@@ -70,7 +70,7 @@
             />
             <p>Postman-style HTTP request builder with SSE support.</p>
           </div>
-          <button id="clearOutputBtn" type="button" class="ghost">Clear response</button>
+          <button id="clearOutputBtn" type="button" class="ghost small-btn">Clear response</button>
         </header>
 
         <section class="pm-card">
@@ -147,7 +147,7 @@
               </div>
               <textarea
                 id="bodyInput"
-                rows="14"
+                rows="11"
                 placeholder='{"stream": true, "messages": []}'
               ></textarea>
 
