@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>APIShark</title>
+    <link rel="stylesheet" href="/assets/main.css" />
+  </head>
+  <body>
+    <div class="pm-shell">
+      <aside class="pm-sidebar">
+        <div class="pm-brand">
+          <span class="pm-brand-mark"></span>
+          <div>
+            <strong>APIShark</strong>
+            <p>Workspace</p>
+          </div>
+        </div>
+
+        <section class="pm-side-card">
+          <h2>Environment</h2>
+          <p class="hint">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
+          <textarea
+            id="envInput"
+            rows="10"
+            placeholder="OPENAI_API_KEY=sk-...\nBASE_URL=https://api.openai.com"
+          ></textarea>
+        </section>
+
+        <section class="pm-side-card">
+          <h2>Import with cURL</h2>
+          <textarea
+            id="curlInput"
+            rows="8"
+            placeholder='curl -X POST "https://example.com" -H "Authorization: Bearer {{OPENAI_API_KEY}}" -d "{\"hello\":\"world\"}"'
+          ></textarea>
+          <button id="importCurlBtn" type="button">Import to request</button>
+        </section>
+      </aside>
+
+      <main class="pm-main">
+        <header class="pm-topbar">
+          <div>
+            <h1>Untitled Request</h1>
+            <p>Postman-style HTTP request builder with SSE support.</p>
+          </div>
+          <button id="clearOutputBtn" type="button" class="ghost">Clear response</button>
+        </header>
+
+        <section class="pm-card">
+          <div class="pm-request-row">
+            <select id="methodInput" class="method-select">
+              <option>GET</option>
+              <option>POST</option>
+              <option>PUT</option>
+              <option>PATCH</option>
+              <option>DELETE</option>
+              <option>HEAD</option>
+            </select>
+            <input id="urlInput" type="text" placeholder="https://example.com/path" />
+            <button id="sendBtn" type="button" class="send-btn">Send</button>
+            <button id="abortBtn" type="button" class="secondary">Abort</button>
+          </div>
+
+          <div class="pm-request-meta">
+            <label class="checkbox">
+              <input id="aggregateInput" type="checkbox" />
+              Enable built-in OpenAI-style SSE aggregator
+            </label>
+            <label for="timeoutInput" class="timeout-label">
+              Timeout (seconds)
+              <input id="timeoutInput" type="number" min="1" value="120" />
+            </label>
+          </div>
+
+          <div class="pm-tabs" role="tablist" aria-label="Request editor tabs">
+            <button
+              type="button"
+              class="pm-tab is-active"
+              data-tab-group="request"
+              data-tab-target="headersPanel"
+            >
+              Headers
+            </button>
+            <button
+              type="button"
+              class="pm-tab"
+              data-tab-group="request"
+              data-tab-target="bodyPanel"
+            >
+              Body
+            </button>
+          </div>
+
+          <div class="pm-panel-stack">
+            <section id="headersPanel" class="pm-panel is-active" data-tab-panel="request">
+              <label for="headersInput">Headers (one per line: Key: Value)</label>
+              <textarea
+                id="headersInput"
+                rows="8"
+                placeholder="Content-Type: application/json"
+              ></textarea>
+            </section>
+
+            <section id="bodyPanel" class="pm-panel" data-tab-panel="request">
+              <label for="bodyInput">Body</label>
+              <textarea
+                id="bodyInput"
+                rows="14"
+                placeholder='{"stream": true, "messages": []}'
+              ></textarea>
+            </section>
+          </div>
+        </section>
+
+        <section class="pm-card">
+          <div class="pm-response-head">
+            <h2>Response</h2>
+            <div class="status-line">
+              <strong>Status:</strong>
+              <span id="statusText">-</span>
+            </div>
+          </div>
+          <p id="errorText" class="error"></p>
+
+          <div class="pm-tabs" role="tablist" aria-label="Response tabs">
+            <button
+              type="button"
+              class="pm-tab is-active"
+              data-tab-group="response"
+              data-tab-target="responseRawPanel"
+            >
+              Raw
+            </button>
+            <button
+              type="button"
+              class="pm-tab"
+              data-tab-group="response"
+              data-tab-target="responseAggregatePanel"
+            >
+              Aggregated
+            </button>
+            <button
+              type="button"
+              class="pm-tab"
+              data-tab-group="response"
+              data-tab-target="responseHeadersPanel"
+            >
+              Headers
+            </button>
+          </div>
+
+          <div class="pm-panel-stack">
+            <section id="responseRawPanel" class="pm-panel is-active" data-tab-panel="response">
+              <p class="hint compact">
+                SSE mode: each incoming line is clickable to inspect and prettify payload.
+              </p>
+
+              <div id="sseInspector" class="sse-inspector">
+                <div class="sse-lines-pane">
+                  <p class="sse-pane-title">SSE lines</p>
+                  <div id="sseLineList" class="sse-line-list"></div>
+                </div>
+                <div class="sse-payload-pane">
+                  <p id="ssePayloadMeta" class="sse-pane-title">Click a line to inspect payload.</p>
+                  <pre id="ssePayloadOutput" class="output sse-payload-output"></pre>
+                </div>
+              </div>
+
+              <pre id="rawOutput" class="output output-tall raw-fallback"></pre>
+            </section>
+
+            <section id="responseAggregatePanel" class="pm-panel" data-tab-panel="response">
+              <p class="hint compact">
+                Long aggregated output is capped to keep the page responsive.
+              </p>
+              <pre id="aggregateOutput" class="output output-tall"></pre>
+            </section>
+
+            <section id="responseHeadersPanel" class="pm-panel" data-tab-panel="response">
+              <pre id="headersOutput" class="output"></pre>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/assets/main.js"></script>
+  </body>
+</html>
