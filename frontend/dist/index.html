@@ -20,7 +20,17 @@
         <section class="pm-side-card">
           <div class="side-card-head">
             <h2>Collections</h2>
-            <button id="reloadCollectionsBtn" type="button" class="ghost small-btn">Reload</button>
+            <div class="side-card-tools">
+              <button
+                id="reloadCollectionsBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="Reload collections"
+                title="Reload collections"
+              >
+                <span class="action-symbol" aria-hidden="true">↻</span>
+              </button>
+            </div>
           </div>
 
           <div class="inline-form">
@@ -43,13 +53,33 @@
               <h2>Environment</h2>
               <p class="hint compact">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
             </div>
-            <div class="environment-actions">
-              <button id="createEnvironmentBtn" type="button" class="ghost small-btn">New</button>
-              <button id="renameEnvironmentBtn" type="button" class="ghost small-btn">
-                Rename
+            <div class="environment-actions side-card-tools">
+              <button
+                id="createEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="New environment"
+                title="New environment"
+              >
+                <span class="action-symbol" aria-hidden="true">+</span>
               </button>
-              <button id="deleteEnvironmentBtn" type="button" class="ghost small-btn danger-btn">
-                Delete
+              <button
+                id="renameEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="Rename environment"
+                title="Rename environment"
+              >
+                <span class="action-symbol" aria-hidden="true">✎</span>
+              </button>
+              <button
+                id="deleteEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn danger-btn"
+                aria-label="Delete environment"
+                title="Delete environment"
+              >
+                <span class="action-symbol" aria-hidden="true">×</span>
               </button>
             </div>
           </div>
@@ -85,7 +115,17 @@
             />
             <p>Postman-style HTTP request builder with SSE support.</p>
           </div>
-          <button id="clearOutputBtn" type="button" class="ghost small-btn">Clear response</button>
+          <div class="pm-topbar-actions">
+            <button
+              id="clearOutputBtn"
+              type="button"
+              class="ghost icon-btn control-icon-btn"
+              aria-label="Clear response"
+              title="Clear response"
+            >
+              <span class="action-symbol" aria-hidden="true">×</span>
+            </button>
+          </div>
         </header>
 
         <section class="pm-card">
@@ -140,15 +180,17 @@
                   <p class="panel-label">Headers</p>
                   <p class="hint compact">Disabled rows stay editable but won’t be sent.</p>
                 </div>
-                <button
-                  id="addHeaderBtn"
-                  type="button"
-                  class="ghost icon-btn toolbar-icon-btn"
-                  aria-label="Add header"
-                  title="Add header"
-                >
-                  <span class="action-symbol" aria-hidden="true">+</span>
-                </button>
+                <div class="panel-tools">
+                  <button
+                    id="addHeaderBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Add header"
+                    title="Add header"
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
+                  </button>
+                </div>
               </div>
               <div id="headersEditor" class="headers-editor"></div>
             </section>
@@ -156,7 +198,7 @@
             <section id="bodyPanel" class="pm-panel" data-tab-panel="request">
               <div class="panel-head">
                 <label for="bodyInput" class="panel-label">Body</label>
-                <div class="inline-actions">
+                <div class="inline-actions panel-tools">
                   <button
                     id="bodyPrettifyBtn"
                     type="button"
@@ -255,7 +297,7 @@
                     <p id="ssePayloadMeta" class="sse-pane-title">
                       Click a line to inspect payload.
                     </p>
-                    <div class="inline-actions">
+                    <div class="inline-actions panel-tools">
                       <button
                         id="ssePayloadCollapseBtn"
                         type="button"
@@ -285,7 +327,7 @@
                 <span id="rawJsonMeta" class="hint compact">
                   JSON tools appear automatically when the final response body is valid JSON.
                 </span>
-                <div class="inline-actions">
+                <div class="inline-actions panel-tools">
                   <button
                     id="rawCollapseBtn"
                     type="button"

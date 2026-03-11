@@ -27,9 +27,10 @@
   --space-3: 9px;
   --space-4: 11px;
   --space-5: 16px;
-  --control-height: 32px;
-  --control-padding-x: 10px;
-  --icon-btn-size: 28px;
+  --control-height: 34px;
+  --control-padding-x: 12px;
+  --icon-btn-size: 30px;
+  --divider-gap: 12px;
   --focus-ring: 0 0 0 3px rgba(255, 108, 55, 0.14);
 }
 
@@ -167,9 +168,19 @@ code {
 }
 
 .request-name-input {
+  padding-left: 0;
+  padding-right: 0;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
   font-size: 0.94rem;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+.request-name-input:hover {
+  border-color: #b8c2cf;
 }
 
 .pm-request-row {
@@ -300,6 +311,11 @@ button {
   color: var(--text);
   font-family: inherit;
   font-size: 0.84rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
   transition:
     border-color 120ms ease,
     background-color 120ms ease,
@@ -341,7 +357,8 @@ button.ghost:hover:not(:disabled) {
 
 .small-btn {
   width: auto;
-  min-width: fit-content;
+  min-width: 0;
+  padding: 0 var(--control-padding-x);
 }
 
 .method-select {
@@ -408,9 +425,9 @@ button.ghost:hover:not(:disabled) {
 
 .header-row {
   display: grid;
-  grid-template-columns: 86px minmax(0, 0.95fr) minmax(0, 1.15fr) auto;
+  grid-template-columns: 68px minmax(0, 0.95fr) minmax(0, 1.15fr) auto;
   gap: var(--space-2);
-  padding: 8px 0;
+  padding: 10px 0;
   align-items: center;
   border: none;
   border-bottom: 1px solid var(--border);
@@ -420,6 +437,8 @@ button.ghost:hover:not(:disabled) {
 
 .headers-editor {
   gap: 0;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
 }
 
 .header-row:last-child {
@@ -439,6 +458,13 @@ button.ghost:hover:not(:disabled) {
   color: var(--text-muted);
 }
 
+.header-toggle-text {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .header-row.is-disabled .header-key-input,
 .header-row.is-disabled .header-value-input {
   background: #f5f6f8;
@@ -455,6 +481,7 @@ button.ghost:hover:not(:disabled) {
 
 .header-row-actions {
   width: auto;
+  justify-self: end;
 }
 
 .action-btn,
@@ -468,6 +495,7 @@ button.ghost:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: 999px;
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);
@@ -480,6 +508,13 @@ button.ghost:hover:not(:disabled) {
 }
 
 .toolbar-icon-btn {
+  min-width: var(--control-height);
+  width: var(--control-height);
+  min-height: var(--control-height);
+  height: var(--control-height);
+}
+
+.control-icon-btn {
   min-width: var(--control-height);
   width: var(--control-height);
   min-height: var(--control-height);
@@ -504,6 +539,17 @@ button.ghost:hover:not(:disabled) {
 .environment-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.pm-topbar-actions,
+.side-card-tools,
+.panel-tools,
+.header-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: var(--divider-gap);
+  border-left: 1px solid var(--border);
 }
 
 .collection-card {
@@ -807,10 +853,15 @@ button.ghost:hover:not(:disabled) {
   margin-top: 3px;
 }
 
-.panel-head {
-  align-items: start;
+.side-card-head,
+.panel-head,
+.pm-response-head {
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border);
+}
+
+.panel-head {
+  align-items: start;
 }
 
 .inline-form,
@@ -889,7 +940,18 @@ button.ghost:hover:not(:disabled) {
   .request-item-actions,
   .environment-actions,
   .inline-form,
-  .inline-actions {
+  .inline-actions,
+  .pm-topbar-actions,
+  .side-card-tools,
+  .panel-tools {
     flex-wrap: wrap;
+  }
+
+  .pm-topbar-actions,
+  .side-card-tools,
+  .panel-tools,
+  .header-row-actions {
+    padding-left: 0;
+    border-left: none;
   }
 }

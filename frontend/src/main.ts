@@ -559,7 +559,12 @@ function renderHeaderRows(): void {
       updateHeaderRow(header.id, { enabled: toggle.checked });
     });
     const toggleText = document.createElement("span");
-    toggleText.textContent = header.enabled ? "Send" : "Skip";
+    toggleText.className = "header-toggle-text";
+    toggleText.textContent = header.enabled ? "On" : "Off";
+    const toggleLabelText = header.enabled ? "Send this header" : "Skip this header";
+    toggle.ariaLabel = toggleLabelText;
+    toggle.title = toggleLabelText;
+    toggleLabel.title = toggleLabelText;
     toggleLabel.append(toggle, toggleText);
 
     const keyInput = document.createElement("input");
@@ -586,19 +591,19 @@ function renderHeaderRows(): void {
     actions.className = "header-row-actions";
     actions.append(
       createHeaderActionButton(
-        "+",
+        "＋",
         "Insert header below",
         () => insertHeaderAfter(header.id),
         requestIsLoading,
       ),
       createHeaderActionButton(
-        "⧉",
+        "⎘",
         "Duplicate header",
         () => duplicateHeader(header.id),
         requestIsLoading,
       ),
       createHeaderActionButton(
-        "×",
+        "✕",
         "Delete header",
         () => removeHeader(header.id),
         requestIsLoading,
