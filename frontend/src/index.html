@@ -38,8 +38,23 @@
         </section>
 
         <section class="pm-side-card">
-          <h2>Environment</h2>
-          <p class="hint">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
+          <div class="side-card-head">
+            <div>
+              <h2>Environment</h2>
+              <p class="hint compact">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
+            </div>
+            <div class="environment-actions">
+              <button id="createEnvironmentBtn" type="button" class="ghost small-btn">New</button>
+              <button id="renameEnvironmentBtn" type="button" class="ghost small-btn">
+                Rename
+              </button>
+              <button id="deleteEnvironmentBtn" type="button" class="ghost small-btn danger-btn">
+                Delete
+              </button>
+            </div>
+          </div>
+          <label for="environmentSelect" class="panel-label compact-label">Active environment</label>
+          <select id="environmentSelect" aria-label="Active environment"></select>
           <textarea
             id="envInput"
             rows="8"

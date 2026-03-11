@@ -15,9 +15,16 @@ type EditableHeader = HeaderKV & {
   enabled: boolean;
 };
 
+type EnvironmentEntry = {
+  id: string;
+  name: string;
+  text: string;
+};
+
 type PersistedState = {
   requestName: string;
-  envText: string;
+  environments: EnvironmentEntry[];
+  activeEnvironmentId: string | null;
   curlText: string;
   method: string;
   url: string;
@@ -87,6 +94,10 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120_000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
 
+const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
+const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
+const renameEnvironmentBtn = byId<HTMLButtonElement>("renameEnvironmentBtn");
+const deleteEnvironmentBtn = byId<HTMLButtonElement>("deleteEnvironmentBtn");
 const envInput = byId<HTMLTextAreaElement>("envInput");
 const curlInput = byId<HTMLTextAreaElement>("curlInput");
 const importCurlBtn = byId<HTMLButtonElement>("importCurlBtn");
@@ -137,6 +148,8 @@ let rawAppender: BatchedBoundedAppender;
 let aggregateAppender: BatchedBoundedAppender;
 let rawResponseMode: RawResponseMode = "plain";
 let requestIsLoading = false;
+let environments: EnvironmentEntry[] = [];
+let activeEnvironmentId: string | null = null;
 let headerRows: EditableHeader[] = [];
 let collectionStore: CollectionStore = { collections: [] };
 let activeCollectionId: string | null = null;
@@ -150,6 +163,28 @@ let selectedSseLine: SseLineEntry | null = null;
 let sseLineCounter = 0;
 
 function wireEvents(): void {
+  environmentSelect.addEventListener("change", () => {
+    activeEnvironmentId = environmentSelect.value || null;
+    syncEnvironmentEditor();
+    persistState();
+  });
+
+  createEnvironmentBtn.addEventListener("click", () => {
+    createEnvironment();
+  });
+
+  renameEnvironmentBtn.addEventListener("click", () => {
+    renameActiveEnvironment();
+  });
+
+  deleteEnvironmentBtn.addEventListener("click", () => {
+    deleteActiveEnvironment();
+  });
+
+  envInput.addEventListener("input", () => {
+    patchActiveEnvironment({ text: envInput.value });
+  });
+
   importCurlBtn.addEventListener("click", () => {
     void importCurl();
   });
@@ -199,7 +234,6 @@ function wireEvents(): void {
   const persistTargets: Array<
     EventTarget & { addEventListener: typeof EventTarget.prototype.addEventListener }
   > = [
-    envInput,
     curlInput,
     requestNameInput,
     methodInput,
@@ -243,9 +277,14 @@ function activateTab(group: string, targetId: string): void {
 }
 
 function defaultState(): PersistedState {
+  const defaultEnvironment = createEnvironmentEntry(
+    "Default",
+    "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com",
+  );
   return {
     requestName: "Streaming Chat Request",
-    envText: "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com",
+    environments: [defaultEnvironment],
+    activeEnvironmentId: defaultEnvironment.id,
     curlText: "",
     method: "POST",
     url: "{{BASE_URL}}/v1/chat/completions",
@@ -272,7 +311,8 @@ function defaultState(): PersistedState {
 function applyInitialState(): void {
   const state = loadState();
   requestNameInput.value = state.requestName;
-  envInput.value = state.envText;
+  environments = normalizeEnvironments(state.environments);
+  activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
   curlInput.value = state.curlText;
   methodInput.value = state.method;
   urlInput.value = state.url;
@@ -283,6 +323,7 @@ function applyInitialState(): void {
   activeCollectionId = state.activeCollectionId;
   activeSavedRequestId = state.activeSavedRequestId;
 
+  renderEnvironmentControls();
   renderHeaderRows();
   updateBodyJsonPreview();
 }
@@ -295,19 +336,30 @@ function loadState(): PersistedState {
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const parsed = JSON.parse(raw) as Partial<PersistedState> & {
+      envText?: unknown;
+    };
     const parsedHeaders = Array.isArray(parsed.headers)
       ? normalizeHeaderRows(parsed.headers)
       : typeof parsed.headersText === "string"
         ? normalizeHeaderRows(parseLegacyHeadersText(parsed.headersText))
         : fallback.headers;
+    const parsedEnvironments = Array.isArray(parsed.environments)
+      ? normalizeEnvironments(parsed.environments)
+      : typeof parsed.envText === "string"
+        ? [createEnvironmentEntry("Default", parsed.envText)]
+        : fallback.environments;
 
     return {
       requestName:
         typeof parsed.requestName === "string" && parsed.requestName.trim()
           ? parsed.requestName
           : fallback.requestName,
-      envText: typeof parsed.envText === "string" ? parsed.envText : fallback.envText,
+      environments: parsedEnvironments,
+      activeEnvironmentId:
+        typeof parsed.activeEnvironmentId === "string"
+          ? parsed.activeEnvironmentId
+          : resolveActiveEnvironmentId(parsedEnvironments, fallback.activeEnvironmentId),
       curlText: typeof parsed.curlText === "string" ? parsed.curlText : fallback.curlText,
       method: typeof parsed.method === "string" ? parsed.method : fallback.method,
       url: typeof parsed.url === "string" ? parsed.url : fallback.url,
@@ -334,7 +386,8 @@ function loadState(): PersistedState {
 function persistState(): void {
   const state: PersistedState = {
     requestName: requestNameInput.value.trim() || "Untitled Request",
-    envText: envInput.value,
+    environments: environments.map((environment) => ({ ...environment })),
+    activeEnvironmentId,
     curlText: curlInput.value,
     method: methodInput.value,
     url: urlInput.value,
@@ -346,6 +399,144 @@ function persistState(): void {
     activeSavedRequestId,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function renderEnvironmentControls(): void {
+  environments = normalizeEnvironments(environments);
+  activeEnvironmentId = resolveActiveEnvironmentId(environments, activeEnvironmentId);
+
+  const fragment = document.createDocumentFragment();
+  for (const environment of environments) {
+    const option = document.createElement("option");
+    option.value = environment.id;
+    option.textContent = environment.name;
+    fragment.appendChild(option);
+  }
+
+  environmentSelect.textContent = "";
+  environmentSelect.appendChild(fragment);
+  environmentSelect.value = activeEnvironmentId ?? "";
+
+  syncEnvironmentEditor();
+}
+
+function syncEnvironmentEditor(): void {
+  const activeEnvironment = getActiveEnvironment();
+  envInput.value = activeEnvironment?.text ?? "";
+  environmentSelect.disabled = requestIsLoading || environments.length === 0;
+  createEnvironmentBtn.disabled = requestIsLoading;
+  renameEnvironmentBtn.disabled = requestIsLoading || !activeEnvironment;
+  deleteEnvironmentBtn.disabled = requestIsLoading || environments.length <= 1 || !activeEnvironment;
+}
+
+function getActiveEnvironment(): EnvironmentEntry | null {
+  if (!activeEnvironmentId) {
+    return null;
+  }
+  return environments.find((environment) => environment.id === activeEnvironmentId) ?? null;
+}
+
+function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
+  const activeEnvironment = getActiveEnvironment();
+  if (!activeEnvironment) {
+    return;
+  }
+
+  environments = environments.map((environment) =>
+    environment.id === activeEnvironment.id ? { ...environment, ...patch } : environment,
+  );
+  persistState();
+}
+
+function createEnvironment(): void {
+  const suggestedName = nextEnvironmentName();
+  const name = window.prompt("New environment name", suggestedName)?.trim();
+  if (!name) {
+    return;
+  }
+
+  const environment = createEnvironmentEntry(name, "");
+  environments = [...environments, environment];
+  activeEnvironmentId = environment.id;
+  renderEnvironmentControls();
+  persistState();
+}
+
+function renameActiveEnvironment(): void {
+  const activeEnvironment = getActiveEnvironment();
+  if (!activeEnvironment) {
+    return;
+  }
+
+  const name = window.prompt("Rename environment", activeEnvironment.name)?.trim();
+  if (!name || name === activeEnvironment.name) {
+    return;
+  }
+
+  patchActiveEnvironment({ name });
+  renderEnvironmentControls();
+}
+
+function deleteActiveEnvironment(): void {
+  const activeEnvironment = getActiveEnvironment();
+  if (!activeEnvironment || environments.length <= 1) {
+    return;
+  }
+  if (!window.confirm(`Delete environment "${activeEnvironment.name}"?`)) {
+    return;
+  }
+
+  const index = environments.findIndex((environment) => environment.id === activeEnvironment.id);
+  environments = environments.filter((environment) => environment.id !== activeEnvironment.id);
+  activeEnvironmentId =
+    environments[index]?.id ?? environments[index - 1]?.id ?? environments[0]?.id ?? null;
+  renderEnvironmentControls();
+  persistState();
+}
+
+function nextEnvironmentName(): string {
+  const usedNames = new Set(environments.map((environment) => environment.name));
+  let index = environments.length + 1;
+  let candidate = `Environment ${index}`;
+  while (usedNames.has(candidate)) {
+    index += 1;
+    candidate = `Environment ${index}`;
+  }
+  return candidate;
+}
+
+function normalizeEnvironments(
+  rows: Array<Partial<EnvironmentEntry> | EnvironmentEntry>,
+): EnvironmentEntry[] {
+  const normalized = rows.map((environment, index) => {
+    const typed = environment as Partial<EnvironmentEntry>;
+    const name =
+      typeof typed.name === "string" && typed.name.trim()
+        ? typed.name.trim()
+        : index === 0
+          ? "Default"
+          : `Environment ${index + 1}`;
+
+    return {
+      id: typeof typed.id === "string" && typed.id ? typed.id : makeId("env"),
+      name,
+      text: typeof typed.text === "string" ? typed.text : "",
+    };
+  });
+
+  return normalized.length > 0
+    ? normalized
+    : [createEnvironmentEntry("Default", "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com")];
+}
+
+function resolveActiveEnvironmentId(
+  rows: EnvironmentEntry[],
+  preferredId: string | null,
+): string | null {
+  if (preferredId && rows.some((environment) => environment.id === preferredId)) {
+    return preferredId;
+  }
+  return rows[0]?.id ?? null;
 }
 
 function renderHeaderRows(): void {
@@ -566,7 +757,7 @@ async function sendRequest(): Promise<void> {
       .map((header) => ({ key: header.key, value: header.value }))
       .filter((header) => header.key.trim() !== ""),
     body: bodyInput.value,
-    env: parseEnvVars(envInput.value),
+    env: parseEnvVars(getActiveEnvironment()?.text ?? ""),
     aggregate_openai_sse: aggregateInput.checked,
     timeout_seconds: toPositiveInt(timeoutInput.value, 120),
   };
@@ -947,6 +1138,14 @@ function normalizeHeaderRows(rows: Array<Partial<EditableHeader> | SavedHeader |
     .filter((row) => row.key !== "" || row.value !== "" || row.enabled);
 
   return normalized.length > 0 ? normalized : [createEmptyHeaderRow()];
+}
+
+function createEnvironmentEntry(name: string, text: string): EnvironmentEntry {
+  return {
+    id: makeId("env"),
+    name,
+    text,
+  };
 }
 
 function createHeaderRow(key: string, value: string, enabled: boolean): EditableHeader {
@@ -1378,6 +1577,7 @@ function setLoading(isLoading: boolean): void {
   sendBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
   requestNameInput.disabled = isLoading;
+  envInput.disabled = isLoading;
   methodInput.disabled = isLoading;
   urlInput.disabled = isLoading;
   bodyInput.disabled = isLoading;
@@ -1387,6 +1587,7 @@ function setLoading(isLoading: boolean): void {
   bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
+  syncEnvironmentEditor();
   renderHeaderRows();
 }
 
