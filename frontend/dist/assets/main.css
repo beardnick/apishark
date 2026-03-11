@@ -24,9 +24,12 @@
   --radius-lg: 11px;
   --space-1: 4px;
   --space-2: 6px;
-  --space-3: 10px;
-  --space-4: 12px;
+  --space-3: 9px;
+  --space-4: 11px;
   --space-5: 16px;
+  --control-height: 32px;
+  --control-padding-x: 10px;
+  --icon-btn-size: 28px;
   --focus-ring: 0 0 0 3px rgba(255, 108, 55, 0.14);
 }
 
@@ -65,10 +68,10 @@ body {
 }
 
 .pm-main {
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -114,6 +117,7 @@ code {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.02);
 }
 
 .pm-side-card {
@@ -121,7 +125,7 @@ code {
 }
 
 .pm-card {
-  padding: var(--space-3);
+  padding: var(--space-3) var(--space-4);
 }
 
 .pm-side-card h2,
@@ -134,18 +138,22 @@ code {
 .pm-topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
+  align-items: start;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .pm-title-block {
   width: min(100%, 640px);
+  display: grid;
+  gap: 4px;
 }
 
 .topbar-label,
 .panel-label {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -224,15 +232,14 @@ code {
 
 textarea,
 input:not([type="checkbox"]),
-select,
-button {
+select {
   width: 100%;
-  min-height: 32px;
+  min-height: var(--control-height);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: #fff;
   color: var(--text);
-  padding: 6px 8px;
+  padding: 6px var(--control-padding-x);
   font-size: 0.84rem;
   transition:
     border-color 120ms ease,
@@ -251,8 +258,7 @@ textarea {
 }
 
 input,
-select,
-button {
+select {
   font-family: inherit;
 }
 
@@ -282,9 +288,23 @@ button:focus-visible {
 }
 
 button {
+  width: auto;
+  min-width: 72px;
+  min-height: var(--control-height);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  padding: 0 var(--control-padding-x);
   cursor: pointer;
   background: var(--surface-muted);
   font-weight: 500;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.84rem;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
 }
 
 button:disabled {
@@ -306,21 +326,22 @@ button:disabled {
 
 button.secondary,
 button.ghost {
-  background: #fff;
+  background: transparent;
 }
 
 button.ghost {
-  width: auto;
-  padding-inline: 11px;
   color: var(--text-muted);
+  border-color: transparent;
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
 }
 
 .small-btn {
   width: auto;
   min-width: fit-content;
-  min-height: 26px;
-  padding: 4px 8px;
-  font-size: 0.75rem;
 }
 
 .method-select {
@@ -329,40 +350,42 @@ button.ghost {
 }
 
 .pm-tabs {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-strong);
+  gap: var(--space-3);
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .pm-tab {
   width: auto;
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  min-width: fit-content;
+  min-height: 30px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  padding: 5px 8px;
+  padding: 0 1px 7px;
   font-size: 0.8rem;
 }
 
 .pm-tab.is-active {
   color: var(--text);
-  background: var(--surface);
-  border-color: var(--border);
+  background: transparent;
+  border-color: var(--brand);
   font-weight: 600;
 }
 
 .pm-panel-stack {
-  margin-top: var(--space-2);
+  margin-top: 0;
 }
 
 .pm-panel {
   display: none;
+  padding-top: var(--space-2);
 }
 
 .pm-panel.is-active {
@@ -387,20 +410,32 @@ button.ghost {
   display: grid;
   grid-template-columns: 86px minmax(0, 0.95fr) minmax(0, 1.15fr) auto;
   gap: var(--space-2);
-  padding: 6px;
+  padding: 8px 0;
   align-items: center;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.headers-editor {
+  gap: 0;
+}
+
+.header-row:last-child {
+  border-bottom: none;
 }
 
 .header-row.is-disabled {
-  background: var(--surface-strong);
+  opacity: 0.8;
 }
 
 .header-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
@@ -424,11 +459,39 @@ button.ghost {
 
 .action-btn,
 .icon-btn {
-  width: auto;
-  min-width: fit-content;
-  min-height: 26px;
-  padding: 4px 8px;
-  font-size: 0.75rem;
+  min-width: var(--icon-btn-size);
+  width: var(--icon-btn-size);
+  min-height: var(--icon-btn-size);
+  height: var(--icon-btn-size);
+  padding: 0;
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.action-btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: transparent;
+}
+
+.toolbar-icon-btn {
+  min-width: var(--control-height);
+  width: var(--control-height);
+  min-height: var(--control-height);
+  height: var(--control-height);
+}
+
+.action-symbol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  line-height: 1;
 }
 
 .icon-btn.danger,
@@ -525,14 +588,16 @@ button.ghost {
 
 .json-panel {
   margin-top: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--code-bg);
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
 }
 
 .json-toolbar {
   flex-wrap: wrap;
-  padding: 7px 8px 0;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .json-viewer-shell {
@@ -544,9 +609,8 @@ button.ghost {
 }
 
 .json-panel .json-viewer-shell {
-  border: none;
-  border-top: 1px solid var(--border);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  margin-top: var(--space-2);
+  border-radius: var(--radius-md);
 }
 
 .json-viewer {
@@ -664,7 +728,7 @@ button.ghost {
   min-height: 212px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface-muted);
+  background: #fbfcfe;
 }
 
 .sse-pane-title {
@@ -745,6 +809,8 @@ button.ghost {
 
 .panel-head {
   align-items: start;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .inline-form,
@@ -769,6 +835,10 @@ button.ghost {
 .pm-panel > .json-panel,
 .pm-side-card > button:not(:first-child) {
   margin-top: 8px;
+}
+
+.pm-side-card > button:not(.icon-btn) {
+  width: 100%;
 }
 
 @media (max-width: 1120px) {

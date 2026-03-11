@@ -140,7 +140,15 @@
                   <p class="panel-label">Headers</p>
                   <p class="hint compact">Disabled rows stay editable but won’t be sent.</p>
                 </div>
-                <button id="addHeaderBtn" type="button" class="ghost small-btn">Add header</button>
+                <button
+                  id="addHeaderBtn"
+                  type="button"
+                  class="ghost icon-btn toolbar-icon-btn"
+                  aria-label="Add header"
+                  title="Add header"
+                >
+                  <span class="action-symbol" aria-hidden="true">+</span>
+                </button>
               </div>
               <div id="headersEditor" class="headers-editor"></div>
             </section>
@@ -149,14 +157,32 @@
               <div class="panel-head">
                 <label for="bodyInput" class="panel-label">Body</label>
                 <div class="inline-actions">
-                  <button id="bodyPrettifyBtn" type="button" class="ghost small-btn">
-                    Prettify JSON
+                  <button
+                    id="bodyPrettifyBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Prettify JSON"
+                    title="Prettify JSON"
+                  >
+                    <span class="action-symbol" aria-hidden="true">{}</span>
                   </button>
-                  <button id="bodyCollapseBtn" type="button" class="ghost small-btn">
-                    Collapse all
+                  <button
+                    id="bodyCollapseBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Collapse all"
+                    title="Collapse all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">−</span>
                   </button>
-                  <button id="bodyExpandBtn" type="button" class="ghost small-btn">
-                    Expand all
+                  <button
+                    id="bodyExpandBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Expand all"
+                    title="Expand all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
                   </button>
                 </div>
               </div>
@@ -233,12 +259,20 @@
                       <button
                         id="ssePayloadCollapseBtn"
                         type="button"
-                        class="ghost small-btn"
+                        class="ghost icon-btn toolbar-icon-btn"
+                        aria-label="Collapse all"
+                        title="Collapse all"
                       >
-                        Collapse all
+                        <span class="action-symbol" aria-hidden="true">−</span>
                       </button>
-                      <button id="ssePayloadExpandBtn" type="button" class="ghost small-btn">
-                        Expand all
+                      <button
+                        id="ssePayloadExpandBtn"
+                        type="button"
+                        class="ghost icon-btn toolbar-icon-btn"
+                        aria-label="Expand all"
+                        title="Expand all"
+                      >
+                        <span class="action-symbol" aria-hidden="true">+</span>
                       </button>
                     </div>
                   </div>
@@ -252,11 +286,23 @@
                   JSON tools appear automatically when the final response body is valid JSON.
                 </span>
                 <div class="inline-actions">
-                  <button id="rawCollapseBtn" type="button" class="ghost small-btn">
-                    Collapse all
+                  <button
+                    id="rawCollapseBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Collapse all"
+                    title="Collapse all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">−</span>
                   </button>
-                  <button id="rawExpandBtn" type="button" class="ghost small-btn">
-                    Expand all
+                  <button
+                    id="rawExpandBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Expand all"
+                    title="Expand all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
                   </button>
                 </div>
               </div>

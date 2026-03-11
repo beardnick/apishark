@@ -414,18 +414,24 @@ function renderHeaderRows() {
         });
         const actions = document.createElement("div");
         actions.className = "header-row-actions";
-        actions.append(createHeaderActionButton("Insert", () => insertHeaderAfter(header.id), requestIsLoading), createHeaderActionButton("Duplicate", () => duplicateHeader(header.id), requestIsLoading), createHeaderActionButton("Delete", () => removeHeader(header.id), requestIsLoading, true));
+        actions.append(createHeaderActionButton("+", "Insert header below", () => insertHeaderAfter(header.id), requestIsLoading), createHeaderActionButton("⧉", "Duplicate header", () => duplicateHeader(header.id), requestIsLoading), createHeaderActionButton("×", "Delete header", () => removeHeader(header.id), requestIsLoading, true));
         row.append(toggleLabel, keyInput, valueInput, actions);
         fragment.appendChild(row);
     }
     headersEditor.textContent = "";
     headersEditor.appendChild(fragment);
 }
-function createHeaderActionButton(label, onClick, disabled, danger = false) {
+function createHeaderActionButton(symbol, label, onClick, disabled, danger = false) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = danger ? "action-btn icon-btn danger" : "action-btn icon-btn";
-    button.textContent = label;
+    button.ariaLabel = label;
+    button.title = label;
+    const icon = document.createElement("span");
+    icon.className = "action-symbol";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = symbol;
+    button.appendChild(icon);
     button.disabled = disabled;
     button.addEventListener("click", onClick);
     return button;
