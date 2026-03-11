@@ -8,7 +8,10 @@ into the Go executable via `embed`.
 
 - Environment variable support with `{{VAR_NAME}}` interpolation
 - Import request definition from a `curl` command
+- Editable header rows with per-header enable/disable toggles
+- Named collections saved to `./collections.json`
 - Proxy arbitrary HTTP requests from the UI
+- JSON prettify and collapsible JSON viewers for request/response payloads
 - Incremental streaming display for SSE responses
 - Built-in OpenAI-style SSE aggregator for token-by-token text rendering
 
@@ -39,5 +42,5 @@ npm install
 npm run build
 ```
 
-This writes bundled files to `frontend/dist`, which are embedded into the Go
-binary by `main.go`.
+This writes browser-ready files to `frontend/dist`, which are embedded into the
+Go binary by `main.go`.

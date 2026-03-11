@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 
 	"apishark/internal/server"
 )
@@ -23,7 +24,12 @@ func main() {
 		log.Fatalf("failed to load embedded frontend: %v", err)
 	}
 
-	handler := server.NewHandler(distFS)
+	projectDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("failed to resolve project directory: %v", err)
+	}
+
+	handler := server.NewHandler(distFS, projectDir)
 	url := fmt.Sprintf("http://%s", *addr)
 	log.Printf("APIShark is running at %s", url)
 

@@ -42,19 +42,27 @@ type SendRequestPayload struct {
 }
 
 type server struct {
-	staticFS   fs.FS
-	fileServer http.Handler
+	staticFS         fs.FS
+	fileServer       http.Handler
+	collectionStore  *collectionFileStore
 }
 
-func NewHandler(staticFS fs.FS) http.Handler {
+func NewHandler(staticFS fs.FS, projectDir string) http.Handler {
+	collectionStore, err := newCollectionFileStore(projectDir)
+	if err != nil {
+		panic(err)
+	}
+
 	s := &server{
-		staticFS:   staticFS,
-		fileServer: http.FileServer(http.FS(staticFS)),
+		staticFS:        staticFS,
+		fileServer:      http.FileServer(http.FS(staticFS)),
+		collectionStore: collectionStore,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/import/curl", s.handleImportCurl)
 	mux.HandleFunc("/api/request", s.handleSendRequest)
+	mux.HandleFunc("/api/collections", s.handleCollections)
 	mux.HandleFunc("/", s.handleStatic)
 	return mux
 }
@@ -205,6 +213,48 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	indexReq := r.Clone(r.Context())
 	indexReq.URL.Path = "/index.html"
 	s.fileServer.ServeHTTP(w, indexReq)
+}
+
+func (s *server) handleCollections(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		store, err := s.collectionStore.Load()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to load collections: %v", err), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, store)
+
+	case http.MethodPut:
+		defer r.Body.Close()
+
+		limitedBody := io.LimitReader(r.Body, maxCollectionsFileSize+1)
+		body, err := io.ReadAll(limitedBody)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		if len(body) > maxCollectionsFileSize {
+			http.Error(w, "collections payload is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		var store CollectionStore
+		if err := json.Unmarshal(body, &store); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		saved, err := s.collectionStore.Save(store)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to save collections: %v", err), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, saved)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func streamSSEBody(

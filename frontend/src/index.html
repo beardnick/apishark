@@ -18,6 +18,26 @@
         </div>
 
         <section class="pm-side-card">
+          <div class="side-card-head">
+            <h2>Collections</h2>
+            <button id="reloadCollectionsBtn" type="button" class="ghost small-btn">Reload</button>
+          </div>
+
+          <div class="inline-form">
+            <input id="newCollectionNameInput" type="text" placeholder="New collection name" />
+            <button id="createCollectionBtn" type="button">Create</button>
+          </div>
+
+          <button id="saveRequestBtn" type="button" class="secondary">
+            Save current request
+          </button>
+          <p id="collectionsStatusText" class="hint compact">
+            Collections are stored in <code>./collections.json</code>.
+          </p>
+          <div id="collectionsList" class="collections-list"></div>
+        </section>
+
+        <section class="pm-side-card">
           <h2>Environment</h2>
           <p class="hint">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
           <textarea
@@ -40,8 +60,14 @@
 
       <main class="pm-main">
         <header class="pm-topbar">
-          <div>
-            <h1>Untitled Request</h1>
+          <div class="pm-title-block">
+            <label for="requestNameInput" class="topbar-label">Request name</label>
+            <input
+              id="requestNameInput"
+              class="request-name-input"
+              type="text"
+              placeholder="Untitled Request"
+            />
             <p>Postman-style HTTP request builder with SSE support.</p>
           </div>
           <button id="clearOutputBtn" type="button" class="ghost">Clear response</button>
@@ -94,21 +120,43 @@
 
           <div class="pm-panel-stack">
             <section id="headersPanel" class="pm-panel is-active" data-tab-panel="request">
-              <label for="headersInput">Headers (one per line: Key: Value)</label>
-              <textarea
-                id="headersInput"
-                rows="8"
-                placeholder="Content-Type: application/json"
-              ></textarea>
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Headers</p>
+                  <p class="hint compact">Disabled rows stay editable but won’t be sent.</p>
+                </div>
+                <button id="addHeaderBtn" type="button" class="ghost small-btn">Add header</button>
+              </div>
+              <div id="headersEditor" class="headers-editor"></div>
             </section>
 
             <section id="bodyPanel" class="pm-panel" data-tab-panel="request">
-              <label for="bodyInput">Body</label>
+              <div class="panel-head">
+                <label for="bodyInput" class="panel-label">Body</label>
+                <div class="inline-actions">
+                  <button id="bodyPrettifyBtn" type="button" class="ghost small-btn">
+                    Prettify JSON
+                  </button>
+                  <button id="bodyCollapseBtn" type="button" class="ghost small-btn">
+                    Collapse all
+                  </button>
+                  <button id="bodyExpandBtn" type="button" class="ghost small-btn">
+                    Expand all
+                  </button>
+                </div>
+              </div>
               <textarea
                 id="bodyInput"
                 rows="14"
                 placeholder='{"stream": true, "messages": []}'
               ></textarea>
+
+              <div id="bodyJsonPanel" class="json-panel is-hidden">
+                <div class="json-toolbar">
+                  <span id="bodyJsonMeta" class="hint compact">JSON preview</span>
+                </div>
+                <div id="bodyJsonPreview" class="json-viewer-shell"></div>
+              </div>
             </section>
           </div>
         </section>
@@ -153,7 +201,7 @@
           <div class="pm-panel-stack">
             <section id="responseRawPanel" class="pm-panel is-active" data-tab-panel="response">
               <p class="hint compact">
-                SSE mode: each incoming line is clickable to inspect and prettify payload.
+                SSE mode: each incoming line is clickable to inspect payload and view JSON.
               </p>
 
               <div id="sseInspector" class="sse-inspector">
@@ -162,11 +210,42 @@
                   <div id="sseLineList" class="sse-line-list"></div>
                 </div>
                 <div class="sse-payload-pane">
-                  <p id="ssePayloadMeta" class="sse-pane-title">Click a line to inspect payload.</p>
+                  <div class="json-toolbar">
+                    <p id="ssePayloadMeta" class="sse-pane-title">
+                      Click a line to inspect payload.
+                    </p>
+                    <div class="inline-actions">
+                      <button
+                        id="ssePayloadCollapseBtn"
+                        type="button"
+                        class="ghost small-btn"
+                      >
+                        Collapse all
+                      </button>
+                      <button id="ssePayloadExpandBtn" type="button" class="ghost small-btn">
+                        Expand all
+                      </button>
+                    </div>
+                  </div>
+                  <div id="ssePayloadJsonViewer" class="json-viewer-shell is-hidden"></div>
                   <pre id="ssePayloadOutput" class="output sse-payload-output"></pre>
                 </div>
               </div>
 
+              <div class="json-toolbar">
+                <span id="rawJsonMeta" class="hint compact">
+                  JSON tools appear automatically when the final response body is valid JSON.
+                </span>
+                <div class="inline-actions">
+                  <button id="rawCollapseBtn" type="button" class="ghost small-btn">
+                    Collapse all
+                  </button>
+                  <button id="rawExpandBtn" type="button" class="ghost small-btn">
+                    Expand all
+                  </button>
+                </div>
+              </div>
+              <div id="rawJsonViewer" class="json-viewer-shell is-hidden"></div>
               <pre id="rawOutput" class="output output-tall raw-fallback"></pre>
             </section>
 
@@ -178,7 +257,7 @@
             </section>
 
             <section id="responseHeadersPanel" class="pm-panel" data-tab-panel="response">
-              <pre id="headersOutput" class="output"></pre>
+              <div id="headersOutput" class="json-viewer-shell output"></div>
             </section>
           </div>
         </section>
