@@ -1476,7 +1476,9 @@ function renderCollections(): void {
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
     saveBtn.className = "small-btn";
-    saveBtn.textContent = "Save here";
+    saveBtn.textContent = "↥";
+    saveBtn.ariaLabel = `Save current request to ${collection.name}`;
+    saveBtn.title = `Save current request to ${collection.name}`;
     saveBtn.addEventListener("click", () => {
       activeCollectionId = collection.id;
       void saveCurrentRequestToCollection();
@@ -1484,7 +1486,9 @@ function renderCollections(): void {
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "small-btn collection-delete-btn";
-    deleteBtn.textContent = "Delete";
+    deleteBtn.textContent = "✕";
+    deleteBtn.ariaLabel = `Delete collection ${collection.name}`;
+    deleteBtn.title = `Delete collection ${collection.name}`;
     deleteBtn.addEventListener("click", () => {
       void deleteCollection(collection.id);
     });
@@ -1511,19 +1515,32 @@ function renderCollections(): void {
         loadBtn.className = "request-load-btn";
         loadBtn.addEventListener("click", () => loadSavedRequest(collection.id, request.id));
 
+        const requestPrimary = document.createElement("div");
+        requestPrimary.className = "request-primary";
+        const requestMethod = document.createElement("span");
+        requestMethod.className = "request-method";
+        requestMethod.dataset.method = request.method;
+        requestMethod.textContent = request.method;
+        const requestText = document.createElement("div");
+        requestText.className = "request-text";
         const requestName = document.createElement("strong");
+        requestName.className = "request-title";
         requestName.textContent = request.name;
         const requestMeta = document.createElement("p");
         requestMeta.className = "request-meta hint compact";
-        requestMeta.textContent = `${request.method} ${request.url || "(no URL)"}`;
-        loadBtn.append(requestName, requestMeta);
+        requestMeta.textContent = formatSavedRequestMeta(request);
+        requestText.append(requestName, requestMeta);
+        requestPrimary.append(requestMethod, requestText);
+        loadBtn.append(requestPrimary);
 
         const requestActions = document.createElement("div");
         requestActions.className = "request-item-actions";
         const deleteBtn = document.createElement("button");
         deleteBtn.type = "button";
         deleteBtn.className = "small-btn request-delete-btn";
-        deleteBtn.textContent = "Delete";
+        deleteBtn.textContent = "✕";
+        deleteBtn.ariaLabel = `Delete saved request ${request.name}`;
+        deleteBtn.title = `Delete saved request ${request.name}`;
         deleteBtn.addEventListener("click", () => {
           void deleteSavedRequest(collection.id, request.id);
         });
@@ -1598,6 +1615,25 @@ function findCollection(id: string | null): RequestCollection | undefined {
 function setCollectionsStatus(message: string, isError = false): void {
   collectionsStatusText.textContent = message;
   collectionsStatusText.classList.toggle("error", isError);
+}
+
+function formatSavedRequestMeta(request: SavedRequest): string {
+  const url = request.url.trim() || "(no URL)";
+  if (!request.updated_at) {
+    return url;
+  }
+
+  const parsed = new Date(request.updated_at);
+  if (Number.isNaN(parsed.getTime())) {
+    return url;
+  }
+
+  return `${url} • ${parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
 }
 
 function setLoading(isLoading: boolean): void {
