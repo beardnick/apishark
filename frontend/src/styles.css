@@ -19,14 +19,14 @@
   --json-number: #7c3aed;
   --json-boolean: #b45309;
   --json-null: #6b7280;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
+  --radius-sm: 7px;
+  --radius-md: 9px;
+  --radius-lg: 11px;
   --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
+  --space-2: 6px;
+  --space-3: 10px;
+  --space-4: 12px;
+  --space-5: 16px;
   --focus-ring: 0 0 0 3px rgba(255, 108, 55, 0.14);
 }
 
@@ -49,7 +49,7 @@ body {
 .pm-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 312px minmax(0, 1fr);
+  grid-template-columns: minmax(264px, 286px) minmax(0, 1fr);
   background:
     radial-gradient(circle at top left, rgba(255, 108, 55, 0.06), transparent 24%),
     linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
@@ -69,13 +69,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .pm-brand {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-1);
+  padding: 2px 0;
 }
 
 .pm-brand-mark {
@@ -88,7 +89,7 @@ body {
 
 .pm-brand strong {
   display: block;
-  font-size: 0.98rem;
+  font-size: 0.94rem;
   letter-spacing: -0.01em;
 }
 
@@ -126,26 +127,26 @@ code {
 .pm-side-card h2,
 .pm-response-head h2 {
   margin: 0;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   letter-spacing: -0.01em;
 }
 
 .pm-topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
 }
 
 .pm-title-block {
-  width: min(100%, 720px);
+  width: min(100%, 640px);
 }
 
 .topbar-label,
 .panel-label {
   display: block;
-  margin-bottom: 5px;
-  font-size: 0.8rem;
+  margin-bottom: 4px;
+  font-size: 0.74rem;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -153,19 +154,19 @@ code {
 }
 
 .compact-label {
-  margin-top: 10px;
-  margin-bottom: 6px;
+  margin-top: 8px;
+  margin-bottom: 4px;
 }
 
 .request-name-input {
-  font-size: 0.98rem;
+  font-size: 0.94rem;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .pm-request-row {
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr) 92px 82px;
+  grid-template-columns: 94px minmax(0, 1fr) 80px 74px;
   gap: var(--space-2);
 }
 
@@ -200,8 +201,8 @@ code {
 
 .status-line {
   color: var(--text-muted);
-  font-size: 0.82rem;
-  padding: 6px 10px;
+  font-size: 0.78rem;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-muted);
@@ -226,13 +227,13 @@ input:not([type="checkbox"]),
 select,
 button {
   width: 100%;
-  min-height: 36px;
+  min-height: 32px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: #fff;
   color: var(--text);
-  padding: 8px 10px;
-  font-size: 0.88rem;
+  padding: 6px 8px;
+  font-size: 0.84rem;
   transition:
     border-color 120ms ease,
     background-color 120ms ease,
@@ -242,8 +243,8 @@ button {
 
 textarea {
   resize: vertical;
-  min-height: 112px;
-  line-height: 1.4;
+  min-height: 88px;
+  line-height: 1.35;
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
@@ -317,9 +318,9 @@ button.ghost {
 .small-btn {
   width: auto;
   min-width: fit-content;
-  min-height: 30px;
-  padding: 5px 9px;
-  font-size: 0.78rem;
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
 }
 
 .method-select {
@@ -328,24 +329,25 @@ button.ghost {
 }
 
 .pm-tabs {
-  margin-top: 10px;
+  margin-top: 8px;
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 4px;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--surface-strong);
 }
 
 .pm-tab {
   width: auto;
-  min-height: 30px;
+  min-height: 28px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-muted);
-  padding: 6px 10px;
+  padding: 5px 8px;
+  font-size: 0.8rem;
 }
 
 .pm-tab.is-active {
@@ -356,7 +358,7 @@ button.ghost {
 }
 
 .pm-panel-stack {
-  margin-top: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 .pm-panel {
@@ -385,7 +387,7 @@ button.ghost {
   display: grid;
   grid-template-columns: 86px minmax(0, 0.95fr) minmax(0, 1.15fr) auto;
   gap: var(--space-2);
-  padding: 8px;
+  padding: 6px;
   align-items: center;
 }
 
@@ -424,9 +426,9 @@ button.ghost {
 .icon-btn {
   width: auto;
   min-width: fit-content;
-  min-height: 30px;
-  padding: 5px 9px;
-  font-size: 0.77rem;
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
 }
 
 .icon-btn.danger,
@@ -442,7 +444,7 @@ button.ghost {
 }
 
 .collection-card {
-  padding: 9px;
+  padding: 8px;
 }
 
 .collection-card.is-selected {
@@ -479,8 +481,8 @@ button.ghost {
 .request-list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-top: 8px;
+  gap: 5px;
+  margin-top: 6px;
 }
 
 .request-item {
@@ -488,7 +490,7 @@ button.ghost {
   justify-content: space-between;
   gap: var(--space-2);
   align-items: center;
-  padding: 7px 8px;
+  padding: 6px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: #fff;
@@ -513,7 +515,7 @@ button.ghost {
 
 .empty-state {
   margin: 0;
-  padding: 10px;
+  padding: 8px;
   border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -522,7 +524,7 @@ button.ghost {
 }
 
 .json-panel {
-  margin-top: 10px;
+  margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--code-bg);
@@ -530,14 +532,14 @@ button.ghost {
 
 .json-toolbar {
   flex-wrap: wrap;
-  padding: 9px 10px 0;
+  padding: 7px 8px 0;
 }
 
 .json-viewer-shell {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--code-bg);
-  padding: 10px;
+  padding: 8px;
   overflow: auto;
 }
 
@@ -551,8 +553,8 @@ button.ghost {
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 0.82rem;
-  line-height: 1.5;
+  font-size: 0.79rem;
+  line-height: 1.4;
 }
 
 .json-node {
@@ -625,22 +627,22 @@ button.ghost {
 
 .output {
   margin: 0;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--code-bg);
   white-space: pre-wrap;
   overflow: auto;
-  font-size: 0.83rem;
-  line-height: 1.45;
+  font-size: 0.8rem;
+  line-height: 1.4;
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
 }
 
 .output-tall {
-  min-height: 240px;
-  max-height: 56vh;
+  min-height: 190px;
+  max-height: 50vh;
 }
 
 .raw-fallback.is-hidden,
@@ -652,14 +654,14 @@ button.ghost {
 
 .sse-inspector.is-visible {
   display: grid;
-  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(180px, 250px) minmax(0, 1fr);
   gap: var(--space-3);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .sse-lines-pane,
 .sse-payload-pane {
-  min-height: 260px;
+  min-height: 212px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-muted);
@@ -667,8 +669,8 @@ button.ghost {
 
 .sse-pane-title {
   margin: 0;
-  padding: 10px 10px 0;
-  font-size: 0.8rem;
+  padding: 8px 8px 0;
+  font-size: 0.76rem;
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -676,10 +678,10 @@ button.ghost {
 .sse-line-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 46vh;
+  gap: 4px;
+  max-height: 40vh;
   overflow: auto;
-  padding: 10px;
+  padding: 8px;
 }
 
 .sse-line-btn {
@@ -697,40 +699,76 @@ button.ghost {
 }
 
 .sse-payload-output {
-  min-height: 208px;
-  margin: 0 10px 10px;
+  min-height: 164px;
+  margin: 0 8px 8px;
 }
 
 .sse-payload-pane .json-viewer-shell {
-  margin: 0 10px 10px;
+  margin: 0 8px 8px;
 }
 
 .error {
   min-height: 1.2rem;
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--danger);
   font-size: 0.82rem;
 }
 
 #envInput {
-  height: 176px;
-  margin-top: 8px;
+  height: 136px;
+  margin-top: 6px;
 }
 
 #environmentSelect {
-  min-height: 34px;
+  min-height: 30px;
 }
 
 #curlInput {
-  height: 132px;
+  height: 104px;
 }
 
 #bodyInput {
-  height: 232px;
+  height: 184px;
 }
 
 #headersOutput.output {
   background: var(--surface-muted);
+  min-height: 156px;
+}
+
+.pm-topbar p,
+.panel-head p,
+.side-card-head p,
+.hint.compact {
+  margin-top: 3px;
+}
+
+.panel-head {
+  align-items: start;
+}
+
+.inline-form,
+.inline-actions,
+.request-item-actions,
+.collection-card-actions,
+.environment-actions {
+  gap: 6px;
+}
+
+.inline-form > input,
+.inline-form > select {
+  min-width: 0;
+}
+
+.collections-list {
+  gap: 6px;
+}
+
+.pm-side-card > textarea,
+.pm-panel > textarea,
+.pm-panel > .json-panel,
+.pm-side-card > button:not(:first-child) {
+  margin-top: 8px;
 }
 
 @media (max-width: 1120px) {
@@ -761,6 +799,10 @@ button.ghost {
   .pm-main,
   .pm-sidebar {
     padding: var(--space-3);
+  }
+
+  .pm-topbar {
+    grid-template-columns: 1fr;
   }
 
   .pm-request-meta {
