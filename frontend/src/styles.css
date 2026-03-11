@@ -425,9 +425,9 @@ button.ghost:hover:not(:disabled) {
 
 .header-row {
   display: grid;
-  grid-template-columns: 68px minmax(0, 0.95fr) minmax(0, 1.15fr) auto;
-  gap: var(--space-2);
-  padding: 10px 0;
+  grid-template-columns: 54px minmax(0, 0.92fr) minmax(0, 1.08fr) auto;
+  gap: 4px 6px;
+  padding: 5px 0;
   align-items: center;
   border: none;
   border-bottom: 1px solid var(--border);
@@ -437,8 +437,8 @@ button.ghost:hover:not(:disabled) {
 
 .headers-editor {
   gap: 0;
-  margin-top: 2px;
-  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  border-block: 1px solid var(--border);
 }
 
 .header-row:last-child {
@@ -452,17 +452,37 @@ button.ghost:hover:not(:disabled) {
 .header-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   color: var(--text-muted);
 }
 
+.header-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
 .header-toggle-text {
-  font-size: 0.72rem;
+  font-size: 0.65rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
+}
+
+.header-key-input,
+.header-value-input {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.82rem;
+}
+
+.header-key-input:hover,
+.header-value-input:hover {
+  border-color: #dbe3ec;
+  background: #fbfcfd;
 }
 
 .header-row.is-disabled .header-key-input,
@@ -482,6 +502,10 @@ button.ghost:hover:not(:disabled) {
 .header-row-actions {
   width: auto;
   justify-self: end;
+  justify-content: flex-end;
+  gap: 3px;
+  padding-left: 0;
+  border-left: none;
 }
 
 .action-btn,
@@ -505,6 +529,14 @@ button.ghost:hover:not(:disabled) {
 .icon-btn:hover:not(:disabled) {
   background: var(--surface-strong);
   border-color: transparent;
+}
+
+.header-row-actions .action-btn {
+  min-width: 26px;
+  width: 26px;
+  min-height: 26px;
+  height: 26px;
+  border-radius: 6px;
 }
 
 .toolbar-icon-btn {
@@ -543,8 +575,7 @@ button.ghost:hover:not(:disabled) {
 
 .pm-topbar-actions,
 .side-card-tools,
-.panel-tools,
-.header-row-actions {
+.panel-tools {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -953,5 +984,16 @@ button.ghost:hover:not(:disabled) {
   .header-row-actions {
     padding-left: 0;
     border-left: none;
+  }
+
+  .header-row {
+    gap: 5px;
+    padding: 6px 0;
+  }
+
+  .header-row-actions {
+    width: auto;
+    justify-self: end;
+    align-items: center;
   }
 }
