@@ -10,6 +10,7 @@ import {
   nextDuplicateRequestName,
   prunePersistedRequestDraftStore,
   requestLibraryDraftsEqual,
+  resolveEffectiveAggregationPlugin,
   setPersistedRequestDraft,
 } from "../dist/assets/request-library.js";
 
@@ -43,6 +44,7 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
     headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
     body: "{\"stream\":true}",
     aggregation_plugin: "openai",
+    use_collection_aggregation_plugin: false,
     aggregate_openai_sse: true,
     timeout_seconds: 45,
   };
@@ -55,6 +57,10 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
   assert.equal(duplicate.url, source.url);
   assert.equal(duplicate.body, source.body);
   assert.equal(duplicate.aggregation_plugin, source.aggregation_plugin);
+  assert.equal(
+    duplicate.use_collection_aggregation_plugin,
+    source.use_collection_aggregation_plugin,
+  );
   assert.equal(duplicate.aggregate_openai_sse, source.aggregate_openai_sse);
   assert.equal(duplicate.timeout_seconds, source.timeout_seconds);
   assert.equal(source.headers[0].key, "Authorization");
@@ -228,4 +234,16 @@ test("normalizePersistedRequestDraftStore ignores invalid draft entries", () => 
 
   assert.deepEqual(Object.keys(normalized), ["collection:col_alpha:request:req_one"]);
   assert.equal(normalized["collection:col_alpha:request:req_one"].draft.name, "Req 1 draft");
+});
+
+test("resolveEffectiveAggregationPlugin prefers collection binding when request inherits", () => {
+  const effective = resolveEffectiveAggregationPlugin({
+    requestPlugin: "openai",
+    useCollectionPlugin: true,
+    collectionPlugin: "vendor.custom",
+  });
+
+  assert.equal(effective.pluginId, "vendor.custom");
+  assert.equal(effective.source, "collection");
+  assert.equal(effective.label, "vendor.custom");
 });

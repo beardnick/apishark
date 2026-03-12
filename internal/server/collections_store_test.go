@@ -41,15 +41,17 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	input := CollectionStore{
 		Collections: []RequestCollection{
 			{
-				ID:   "col_1",
-				Name: "Smoke Tests",
+				ID:                "col_1",
+				Name:              "Smoke Tests",
+				AggregationPlugin: "vendor.collection",
 				Requests: []SavedRequest{
 					{
-						ID:             "req_1",
-						Name:           "Streaming chat",
-						Method:         "post",
-						URL:            "https://example.com/v1/chat/completions",
-						TimeoutSeconds: 15,
+						ID:                             "req_1",
+						Name:                           "Streaming chat",
+						Method:                         "post",
+						URL:                            "https://example.com/v1/chat/completions",
+						TimeoutSeconds:                 15,
+						UseCollectionAggregationPlugin: true,
 						Headers: []SavedHeader{
 							{Key: "Content-Type", Value: "application/json", Enabled: true},
 							{Key: "Authorization", Value: "Bearer {{TOKEN}}", Enabled: false},
@@ -70,6 +72,9 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 	if saved.Collections[0].Requests[0].Method != "POST" {
 		t.Fatalf("Save() normalized method = %q, want POST", saved.Collections[0].Requests[0].Method)
+	}
+	if saved.Collections[0].AggregationPlugin != "vendor.collection" {
+		t.Fatalf("Save() normalized collection plugin = %q, want %q", saved.Collections[0].AggregationPlugin, "vendor.collection")
 	}
 
 	rawFile, err := os.ReadFile(filepath.Join(dir, collectionsFileName))
@@ -92,8 +97,11 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	if len(request.Headers) != 2 {
 		t.Fatalf("reloaded header count = %d, want 2", len(request.Headers))
 	}
-	if request.AggregationPlugin != "openai" {
-		t.Fatalf("reloaded aggregation plugin = %q, want %q", request.AggregationPlugin, "openai")
+	if !request.UseCollectionAggregationPlugin {
+		t.Fatal("reloaded request should use collection aggregation plugin")
+	}
+	if request.AggregationPlugin != "" {
+		t.Fatalf("reloaded aggregation plugin = %q, want empty override", request.AggregationPlugin)
 	}
 	if request.Headers[1].Enabled {
 		t.Fatal("disabled header was not preserved")

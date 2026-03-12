@@ -1,10 +1,11 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
-import { AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, resolveAggregationPluginId, } from "./aggregation-runtime.js";
+import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
-import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, setPersistedRequestDraft, } from "./request-library.js";
+import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, setPersistedRequestDraft, } from "./request-library.js";
 const STORAGE_KEY = "apishark.state.v2";
+const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
@@ -17,6 +18,10 @@ const deleteEnvironmentBtn = byId("deleteEnvironmentBtn");
 const envInput = byId("envInput");
 const curlInput = byId("curlInput");
 const importCurlBtn = byId("importCurlBtn");
+const importPluginBtn = byId("importPluginBtn");
+const pluginImportInput = byId("pluginImportInput");
+const pluginsStatusText = byId("pluginsStatusText");
+const pluginsList = byId("pluginsList");
 const requestNameInput = byId("requestNameInput");
 const methodInput = byId("methodInput");
 const urlInput = byId("urlInput");
@@ -31,6 +36,7 @@ const bodyCollapseBtn = byId("bodyCollapseBtn");
 const bodyExpandBtn = byId("bodyExpandBtn");
 const aggregationPluginInput = byId("aggregationPluginInput");
 const draftStatusText = byId("draftStatusText");
+const effectiveAggregationText = byId("effectiveAggregationText");
 const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
 const copyExportCurlBtn = byId("copyExportCurlBtn");
@@ -108,6 +114,12 @@ function wireEvents() {
     importCurlBtn.addEventListener("click", () => {
         void importCurl();
     });
+    importPluginBtn.addEventListener("click", () => {
+        pluginImportInput.click();
+    });
+    pluginImportInput.addEventListener("change", () => {
+        void importPlugin();
+    });
     exportCurlBtn.addEventListener("click", () => {
         void exportCurl();
     });
@@ -181,6 +193,9 @@ function wireEvents() {
     saveRequestBtn.addEventListener("click", () => {
         void saveCurrentRequestToCollection();
     });
+    aggregationPluginInput.addEventListener("change", () => {
+        renderEffectiveAggregationPlugin();
+    });
     const persistTargets = [
         curlInput,
         requestNameInput,
@@ -237,6 +252,7 @@ function defaultState() {
             messages: [{ role: "user", content: "Write a haiku about sharks." }],
         }, null, 2),
         aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
+        useCollectionAggregationPlugin: false,
         aggregateOpenAISse: true,
         timeoutSeconds: 120,
         requestDrafts: {},
@@ -254,7 +270,9 @@ function applyInitialState() {
     urlInput.value = state.url;
     headerRows = normalizeHeaderRows(state.headers);
     bodyInput.value = state.bodyText;
-    aggregationPluginInput.value = resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse);
+    renderPluginOptionsIntoSelect(aggregationPluginInput, state.useCollectionAggregationPlugin
+        ? REQUEST_AGGREGATION_USE_COLLECTION
+        : resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse), true);
     timeoutInput.value = String(state.timeoutSeconds);
     requestDrafts = state.requestDrafts;
     activeCollectionId = state.activeCollectionId;
@@ -264,6 +282,7 @@ function applyInitialState() {
     renderHeaderRows();
     syncBodyEditor();
     renderDraftStatus();
+    renderEffectiveAggregationPlugin();
 }
 function loadState() {
     const fallback = defaultState();
@@ -299,6 +318,7 @@ function loadState() {
             aggregationPlugin: typeof parsed.aggregationPlugin === "string"
                 ? resolveAggregationPluginId(parsed.aggregationPlugin)
                 : resolveAggregationPluginId(undefined, parsed.aggregateOpenAISse === true),
+            useCollectionAggregationPlugin: parsed.useCollectionAggregationPlugin === true,
             aggregateOpenAISse: typeof parsed.aggregateOpenAISse === "boolean"
                 ? parsed.aggregateOpenAISse
                 : fallback.aggregateOpenAISse,
@@ -324,8 +344,9 @@ function persistState() {
         url: urlInput.value,
         headers: headerRows.map((header) => ({ ...header })),
         bodyText: bodyInput.value,
-        aggregationPlugin: selectedAggregationPlugin(),
-        aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
+        aggregationPlugin: selectedRequestAggregationPluginOverride(),
+        useCollectionAggregationPlugin: selectedRequestUsesCollectionPlugin(),
+        aggregateOpenAISse: selectedEffectiveAggregationPlugin().pluginId === AGGREGATION_PLUGIN_OPENAI,
         timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
         requestDrafts,
         activeCollectionId,
@@ -731,6 +752,208 @@ async function importCurl() {
         setLoading(false);
     }
 }
+async function importPlugin() {
+    const file = pluginImportInput.files?.[0];
+    pluginImportInput.value = "";
+    if (!file) {
+        return;
+    }
+    setPluginsStatus(`Importing ${file.name}...`);
+    try {
+        const source = await file.text();
+        const parsed = await parseImportedAggregationPluginFile(file.name, source);
+        const response = await fetch("/api/plugins/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(parsed),
+        });
+        const responseText = await response.text();
+        if (!response.ok) {
+            throw new Error(responseText || `Import failed (${response.status})`);
+        }
+        await loadPlugins({
+            successMessage: `Imported plugin "${parsed.label}".`,
+        });
+    }
+    catch (error) {
+        setPluginsStatus(errorMessage(error, "Failed to import plugin."), true);
+    }
+}
+async function loadPlugins(options) {
+    if (!options?.successMessage) {
+        setPluginsStatus("Loading plugins...");
+    }
+    try {
+        const response = await fetch("/api/plugins");
+        const responseText = await response.text();
+        if (!response.ok) {
+            throw new Error(responseText || `Load failed (${response.status})`);
+        }
+        const parsed = JSON.parse(responseText);
+        const manifests = Array.isArray(parsed.plugins) ? parsed.plugins : [];
+        setImportedAggregationPluginManifests(manifests.map((plugin) => ({
+            id: resolveAggregationPluginId(plugin.id),
+            label: typeof plugin.label === "string" ? plugin.label : resolveAggregationPluginId(plugin.id),
+            description: typeof plugin.description === "string" ? plugin.description : "",
+            module_url: typeof plugin.module_url === "string" ? plugin.module_url : "",
+            imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
+            format: plugin.format === "json" ? "json" : "js",
+        })));
+        renderImportedPlugins();
+        renderAggregationPluginControls();
+        renderCollections();
+        renderEffectiveAggregationPlugin();
+        setPluginsStatus(options?.successMessage ??
+            (getImportedAggregationPluginManifests().length === 0
+                ? 'Imported plugins are stored in "./.apishark/plugins.json".'
+                : `Loaded ${getImportedAggregationPluginManifests().length} imported plugin${getImportedAggregationPluginManifests().length === 1 ? "" : "s"}.`));
+    }
+    catch (error) {
+        renderImportedPlugins();
+        renderAggregationPluginControls();
+        renderCollections();
+        renderEffectiveAggregationPlugin();
+        setPluginsStatus(errorMessage(error, "Failed to load plugins."), true);
+    }
+}
+function renderImportedPlugins() {
+    pluginsList.textContent = "";
+    const importedPlugins = getImportedAggregationPluginManifests();
+    if (importedPlugins.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "No imported plugins yet. Import a JSON or JS package to add one.";
+        pluginsList.appendChild(empty);
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const plugin of importedPlugins) {
+        const item = document.createElement("div");
+        item.className = "plugin-item";
+        const title = document.createElement("strong");
+        title.className = "plugin-title";
+        title.textContent = plugin.label;
+        const meta = document.createElement("p");
+        meta.className = "hint compact plugin-meta";
+        meta.textContent = `${plugin.id} • ${plugin.format.toUpperCase()}`;
+        item.append(title, meta);
+        if (plugin.description) {
+            const description = document.createElement("p");
+            description.className = "hint compact plugin-description";
+            description.textContent = plugin.description;
+            item.appendChild(description);
+        }
+        fragment.appendChild(item);
+    }
+    pluginsList.appendChild(fragment);
+}
+function renderAggregationPluginControls() {
+    const currentValue = aggregationPluginInput.value || AGGREGATION_PLUGIN_OPENAI;
+    renderPluginOptionsIntoSelect(aggregationPluginInput, currentValue, true);
+}
+function renderPluginOptionsIntoSelect(select, selectedValue, includeCollectionDefault = false) {
+    const fragment = document.createDocumentFragment();
+    if (includeCollectionDefault) {
+        const option = document.createElement("option");
+        option.value = REQUEST_AGGREGATION_USE_COLLECTION;
+        option.textContent = "Collection default";
+        fragment.appendChild(option);
+    }
+    for (const plugin of listAggregationPlugins()) {
+        const option = document.createElement("option");
+        option.value = plugin.id;
+        option.textContent = plugin.builtin ? plugin.label : `${plugin.label}`;
+        fragment.appendChild(option);
+    }
+    const normalizedSelected = selectedValue === REQUEST_AGGREGATION_USE_COLLECTION
+        ? REQUEST_AGGREGATION_USE_COLLECTION
+        : resolveAggregationPluginId(selectedValue);
+    const shouldAddMissingOption = normalizedSelected !== REQUEST_AGGREGATION_USE_COLLECTION &&
+        normalizedSelected !== AGGREGATION_PLUGIN_NONE &&
+        !hasAggregationPlugin(normalizedSelected);
+    if (shouldAddMissingOption) {
+        const missingOption = document.createElement("option");
+        missingOption.value = normalizedSelected;
+        missingOption.textContent = `Missing: ${normalizedSelected}`;
+        fragment.appendChild(missingOption);
+    }
+    select.textContent = "";
+    select.appendChild(fragment);
+    select.value = normalizedSelected;
+    if (select.value !== normalizedSelected) {
+        select.value = includeCollectionDefault
+            ? REQUEST_AGGREGATION_USE_COLLECTION
+            : AGGREGATION_PLUGIN_NONE;
+    }
+}
+function selectedRequestUsesCollectionPlugin() {
+    return aggregationPluginInput.value === REQUEST_AGGREGATION_USE_COLLECTION;
+}
+function selectedRequestAggregationPluginOverride() {
+    return selectedRequestUsesCollectionPlugin()
+        ? AGGREGATION_PLUGIN_NONE
+        : resolveAggregationPluginId(aggregationPluginInput.value);
+}
+function selectedEffectiveAggregationPlugin() {
+    return resolveEffectiveAggregationPlugin({
+        requestPlugin: selectedRequestAggregationPluginOverride(),
+        useCollectionPlugin: selectedRequestUsesCollectionPlugin(),
+        collectionPlugin: findCollection(activeCollectionId)?.aggregation_plugin,
+    });
+}
+function renderEffectiveAggregationPlugin() {
+    const effective = selectedEffectiveAggregationPlugin();
+    const activeCollection = findCollection(activeCollectionId);
+    if (selectedRequestUsesCollectionPlugin()) {
+        if (!activeCollection) {
+            effectiveAggregationText.textContent = "Effective: None. No collection is selected.";
+            return;
+        }
+        const suffix = effective.pluginId !== AGGREGATION_PLUGIN_NONE && !hasAggregationPlugin(effective.pluginId)
+            ? " Missing plugin; raw output will still work."
+            : "";
+        effectiveAggregationText.textContent = `Effective: ${effective.label} via collection "${activeCollection.name}".${suffix}`;
+        return;
+    }
+    const suffix = effective.pluginId !== AGGREGATION_PLUGIN_NONE && !hasAggregationPlugin(effective.pluginId)
+        ? " Missing plugin; raw output will still work."
+        : "";
+    effectiveAggregationText.textContent = `Effective: ${effective.label} via request override.${suffix}`;
+}
+async function prepareAggregationRuntime() {
+    const effective = selectedEffectiveAggregationPlugin();
+    if (effective.pluginId === AGGREGATION_PLUGIN_NONE) {
+        return {
+            pluginId: effective.pluginId,
+            runtime: new ResponseAggregationRuntime(effective.pluginId),
+        };
+    }
+    if (!hasAggregationPlugin(effective.pluginId)) {
+        setError(`Aggregation plugin "${effective.pluginId}" is not available. Falling back to raw output.`);
+        return {
+            pluginId: AGGREGATION_PLUGIN_NONE,
+            runtime: new ResponseAggregationRuntime(AGGREGATION_PLUGIN_NONE),
+        };
+    }
+    try {
+        await ensureAggregationPluginLoaded(effective.pluginId);
+        return {
+            pluginId: effective.pluginId,
+            runtime: new ResponseAggregationRuntime(effective.pluginId),
+        };
+    }
+    catch (error) {
+        setError(`${errorMessage(error, "Failed to load aggregation plugin.")} Falling back to raw output.`);
+        return {
+            pluginId: AGGREGATION_PLUGIN_NONE,
+            runtime: new ResponseAggregationRuntime(AGGREGATION_PLUGIN_NONE),
+        };
+    }
+}
+function setPluginsStatus(message, isError = false) {
+    pluginsStatusText.textContent = message;
+    pluginsStatusText.classList.toggle("error", isError);
+}
 async function exportCurl() {
     setError("");
     try {
@@ -788,8 +1011,9 @@ async function sendRequest() {
     }
     setLoading(true);
     activeAbortController = new AbortController();
-    aggregationRuntime = new ResponseAggregationRuntime(selectedAggregationPlugin());
     try {
+        const preparedAggregation = await prepareAggregationRuntime();
+        aggregationRuntime = preparedAggregation.runtime;
         const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
         const resolvedDraft = resolveRequestDraft(draft, env);
         if (!resolvedDraft.url) {
@@ -801,8 +1025,8 @@ async function sendRequest() {
             headers: resolvedDraft.headers,
             body: resolvedDraft.body,
             env,
-            aggregation_plugin: selectedAggregationPlugin(),
-            aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
+            aggregation_plugin: preparedAggregation.pluginId,
+            aggregate_openai_sse: preparedAggregation.pluginId === AGGREGATION_PLUGIN_OPENAI,
             timeout_seconds: toPositiveInt(timeoutInput.value, 120),
         };
         const response = await fetch("/api/request", {
@@ -1216,6 +1440,7 @@ async function loadCollections() {
         const activeSavedRequest = findSavedRequest(activeCollectionId, activeSavedRequestId);
         restoreDraftForCurrentSelection(activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined);
         renderCollections();
+        renderEffectiveAggregationPlugin();
         persistState();
         setCollectionsStatus(parsed.collections.length === 0
             ? "Collections are stored in ./collections.json."
@@ -1237,6 +1462,7 @@ async function createCollection() {
     const nextCollection = {
         id: makeId("col"),
         name,
+        aggregation_plugin: AGGREGATION_PLUGIN_NONE,
         requests: [],
     };
     collectionStore = {
@@ -1249,6 +1475,7 @@ async function createCollection() {
     }
     newCollectionNameInput.value = "";
     renderCollections();
+    renderEffectiveAggregationPlugin();
     persistState();
     setCollectionsStatus(`Selected collection "${name}".`);
 }
@@ -1294,6 +1521,7 @@ async function saveCurrentRequestToCollection() {
         return;
     }
     renderCollections();
+    renderEffectiveAggregationPlugin();
     clearPersistedRequestDraft(previousScope);
     clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
     persistState();
@@ -1310,6 +1538,10 @@ async function duplicateCurrentRequest() {
     if (!targetCollection || !activeCollectionId) {
         requestNameInput.value = duplicateDraft.name;
         activeSavedRequestId = null;
+        renderPluginOptionsIntoSelect(aggregationPluginInput, duplicateDraft.use_collection_aggregation_plugin
+            ? REQUEST_AGGREGATION_USE_COLLECTION
+            : resolveAggregationPluginId(duplicateDraft.aggregation_plugin), true);
+        renderEffectiveAggregationPlugin();
         persistState();
         persistCurrentRequestDraft();
         setCollectionsStatus(`Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`);
@@ -1339,6 +1571,7 @@ async function duplicateCurrentRequest() {
     requestNameInput.value = savedRequest.name;
     activeSavedRequestId = savedRequest.id;
     renderCollections();
+    renderEffectiveAggregationPlugin();
     clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
     persistState();
     setCollectionsStatus(`Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`);
@@ -1355,6 +1588,7 @@ function loadSavedRequest(collectionId, requestId) {
     activeSavedRequestId = requestId;
     restoreDraftForCurrentSelection(savedRequestToDraft(savedRequest));
     renderCollections();
+    renderEffectiveAggregationPlugin();
     persistState();
     setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
 }
@@ -1383,6 +1617,7 @@ async function deleteCollection(collectionId) {
     prunePersistedDrafts();
     restoreDraftForCurrentSelection();
     renderCollections();
+    renderEffectiveAggregationPlugin();
     persistState();
     setCollectionsStatus(`Deleted collection "${collection.name}".`);
 }
@@ -1419,6 +1654,7 @@ async function deleteSavedRequest(collectionId, requestId) {
     clearPersistedRequestDraft({ collectionId, requestId });
     restoreDraftForCurrentSelection();
     renderCollections();
+    renderEffectiveAggregationPlugin();
     persistState();
     setCollectionsStatus(`Deleted "${request.name}".`);
 }
@@ -1448,9 +1684,30 @@ async function saveCollectionsToServer(previous) {
     catch (error) {
         collectionStore = previous;
         renderCollections();
+        renderEffectiveAggregationPlugin();
         setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
         return false;
     }
+}
+async function updateCollectionAggregationPlugin(collectionId, pluginId) {
+    const collection = findCollection(collectionId);
+    if (!collection) {
+        return;
+    }
+    if (collection.aggregation_plugin === pluginId) {
+        return;
+    }
+    const previous = cloneCollectionStore(collectionStore);
+    collectionStore = {
+        collections: collectionStore.collections.map((item) => item.id === collectionId ? { ...item, aggregation_plugin: pluginId } : item),
+    };
+    if (!(await saveCollectionsToServer(previous))) {
+        return;
+    }
+    renderCollections();
+    renderEffectiveAggregationPlugin();
+    persistState();
+    setCollectionsStatus(`Collection "${collection.name}" now defaults to ${aggregationPluginLabel(pluginId)}.`);
 }
 function renderCollections() {
     collectionsList.textContent = "";
@@ -1478,6 +1735,7 @@ function renderCollections() {
             }
             restoreDraftForCurrentSelection();
             renderCollections();
+            renderEffectiveAggregationPlugin();
             persistState();
             setCollectionsStatus(`Selected collection "${collection.name}".`);
         });
@@ -1485,7 +1743,7 @@ function renderCollections() {
         name.textContent = collection.name;
         const meta = document.createElement("p");
         meta.className = "collection-meta hint compact";
-        meta.textContent = `${collection.requests.length} saved request${collection.requests.length === 1 ? "" : "s"}`;
+        meta.textContent = formatCollectionMeta(collection);
         selectBtn.append(name, meta);
         const actions = document.createElement("div");
         actions.className = "collection-card-actions";
@@ -1512,6 +1770,20 @@ function renderCollections() {
         actions.append(saveBtn, deleteBtn);
         head.append(selectBtn, actions);
         card.appendChild(head);
+        const bindingRow = document.createElement("label");
+        bindingRow.className = "collection-plugin-row";
+        const bindingLabel = document.createElement("span");
+        bindingLabel.className = "hint compact";
+        bindingLabel.textContent = "Aggregation";
+        const bindingSelect = document.createElement("select");
+        bindingSelect.className = "collection-plugin-select";
+        bindingSelect.disabled = requestIsLoading;
+        renderPluginOptionsIntoSelect(bindingSelect, collection.aggregation_plugin);
+        bindingSelect.addEventListener("change", () => {
+            void updateCollectionAggregationPlugin(collection.id, resolveAggregationPluginId(bindingSelect.value));
+        });
+        bindingRow.append(bindingLabel, bindingSelect);
+        card.appendChild(bindingRow);
         const requestList = document.createElement("div");
         requestList.className = "request-list";
         if (collection.requests.length === 0) {
@@ -1541,7 +1813,7 @@ function renderCollections() {
                 requestName.textContent = request.name;
                 const requestMeta = document.createElement("p");
                 requestMeta.className = "request-meta hint compact";
-                requestMeta.textContent = formatSavedRequestMeta(request);
+                requestMeta.textContent = formatSavedRequestMeta(request, collection);
                 requestText.append(requestName, requestMeta);
                 requestPrimary.append(requestMethod, requestText);
                 loadBtn.append(requestPrimary);
@@ -1573,6 +1845,9 @@ function normalizeCollectionStore(input) {
             .map((collection) => ({
             id: typeof collection.id === "string" ? collection.id : makeId("col"),
             name: typeof collection.name === "string" ? collection.name : "Untitled Collection",
+            aggregation_plugin: typeof collection.aggregation_plugin === "string"
+                ? resolveAggregationPluginId(collection.aggregation_plugin)
+                : AGGREGATION_PLUGIN_NONE,
             requests: Array.isArray(collection.requests)
                 ? collection.requests.map((request) => ({
                     id: typeof request.id === "string" ? request.id : makeId("req"),
@@ -1581,12 +1856,17 @@ function normalizeCollectionStore(input) {
                     url: typeof request.url === "string" ? request.url : "",
                     headers: normalizeSavedHeaders(request.headers),
                     body: typeof request.body === "string" ? request.body : "",
-                    aggregation_plugin: typeof request.aggregation_plugin === "string"
-                        ? resolveAggregationPluginId(request.aggregation_plugin)
-                        : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
-                    aggregate_openai_sse: resolveAggregationPluginId(typeof request.aggregation_plugin === "string"
-                        ? request.aggregation_plugin
-                        : undefined, request.aggregate_openai_sse === true) === AGGREGATION_PLUGIN_OPENAI,
+                    aggregation_plugin: request.use_collection_aggregation_plugin === true
+                        ? undefined
+                        : typeof request.aggregation_plugin === "string"
+                            ? resolveAggregationPluginId(request.aggregation_plugin)
+                            : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
+                    use_collection_aggregation_plugin: request.use_collection_aggregation_plugin === true,
+                    aggregate_openai_sse: request.use_collection_aggregation_plugin === true
+                        ? false
+                        : resolveAggregationPluginId(typeof request.aggregation_plugin === "string"
+                            ? request.aggregation_plugin
+                            : undefined, request.aggregate_openai_sse === true) === AGGREGATION_PLUGIN_OPENAI,
                     timeout_seconds: typeof request.timeout_seconds === "number" && Number.isFinite(request.timeout_seconds)
                         ? request.timeout_seconds
                         : 120,
@@ -1636,16 +1916,22 @@ function setCollectionsStatus(message, isError = false) {
     collectionsStatusText.textContent = message;
     collectionsStatusText.classList.toggle("error", isError);
 }
-function formatSavedRequestMeta(request) {
+function formatCollectionMeta(collection) {
+    return `${collection.requests.length} saved request${collection.requests.length === 1 ? "" : "s"} • ${aggregationPluginLabel(collection.aggregation_plugin)}`;
+}
+function formatSavedRequestMeta(request, collection) {
     const url = request.url.trim() || "(no URL)";
+    const binding = request.use_collection_aggregation_plugin
+        ? `via ${aggregationPluginLabel(collection.aggregation_plugin)} collection default`
+        : `${aggregationPluginLabel(request.aggregation_plugin)} override`;
     if (!request.updated_at) {
-        return url;
+        return `${url} • ${binding}`;
     }
     const parsed = new Date(request.updated_at);
     if (Number.isNaN(parsed.getTime())) {
-        return url;
+        return `${url} • ${binding}`;
     }
-    return `${url} • ${parsed.toLocaleString([], {
+    return `${url} • ${binding} • ${parsed.toLocaleString([], {
         month: "short",
         day: "numeric",
         hour: "2-digit",
@@ -1656,6 +1942,8 @@ function setLoading(isLoading) {
     requestIsLoading = isLoading;
     sendBtn.disabled = isLoading;
     importCurlBtn.disabled = isLoading;
+    importPluginBtn.disabled = isLoading;
+    pluginImportInput.disabled = isLoading;
     exportCurlBtn.disabled = isLoading;
     requestNameInput.disabled = isLoading;
     envInput.disabled = isLoading;
@@ -1674,6 +1962,8 @@ function setLoading(isLoading) {
     syncEnvironmentEditor();
     renderHeaderRows();
     syncBodyEditor();
+    renderCollections();
+    renderEffectiveAggregationPlugin();
 }
 function setError(message) {
     errorText.textContent = message;
@@ -1690,9 +1980,6 @@ function errorMessage(error, fallback) {
         return error.message;
     }
     return fallback;
-}
-function selectedAggregationPlugin() {
-    return resolveAggregationPluginId(aggregationPluginInput.value);
 }
 function toPositiveInt(value, fallback) {
     const parsed = Number.parseInt(value, 10);
@@ -1711,7 +1998,8 @@ function cloneCollectionStore(store) {
     return JSON.parse(JSON.stringify(store));
 }
 function getCurrentSavedRequestDraft() {
-    const aggregationPlugin = selectedAggregationPlugin();
+    const aggregationPlugin = selectedRequestAggregationPluginOverride();
+    const useCollectionAggregationPlugin = selectedRequestUsesCollectionPlugin();
     return {
         name: requestNameInput.value.trim() || "Untitled Request",
         method: methodInput.value.trim().toUpperCase() || "GET",
@@ -1723,7 +2011,8 @@ function getCurrentSavedRequestDraft() {
         })),
         body: bodyInput.value,
         aggregation_plugin: aggregationPlugin,
-        aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+        use_collection_aggregation_plugin: useCollectionAggregationPlugin,
+        aggregate_openai_sse: !useCollectionAggregationPlugin && aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
         timeout_seconds: toPositiveInt(timeoutInput.value, 120),
     };
 }
@@ -1736,6 +2025,7 @@ function savedRequestToDraft(savedRequest) {
         headers: savedRequest.headers.map((header) => ({ ...header })),
         body: savedRequest.body,
         aggregation_plugin: aggregationPlugin,
+        use_collection_aggregation_plugin: savedRequest.use_collection_aggregation_plugin !== false,
         aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
         timeout_seconds: savedRequest.timeout_seconds || 120,
     };
@@ -1748,7 +2038,10 @@ function createSavedRequest(input) {
         url: input.draft.url,
         headers: input.draft.headers.map((header) => ({ ...header })),
         body: input.draft.body,
-        aggregation_plugin: input.draft.aggregation_plugin,
+        aggregation_plugin: input.draft.use_collection_aggregation_plugin
+            ? undefined
+            : input.draft.aggregation_plugin,
+        use_collection_aggregation_plugin: input.draft.use_collection_aggregation_plugin,
         aggregate_openai_sse: input.draft.aggregate_openai_sse,
         timeout_seconds: input.draft.timeout_seconds,
         updated_at: new Date().toISOString(),
@@ -2006,7 +2299,12 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
-applyInitialState();
 setupTabs();
 wireEvents();
-void loadCollections();
+void initializeApp();
+async function initializeApp() {
+    renderAggregationPluginControls();
+    await loadPlugins();
+    applyInitialState();
+    await loadCollections();
+}

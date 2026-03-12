@@ -4,6 +4,10 @@ import test from "node:test";
 import {
   AGGREGATION_PLUGIN_OPENAI,
   ResponseAggregationRuntime,
+  ensureAggregationPluginLoaded,
+  listAggregationPlugins,
+  parseImportedAggregationPluginFile,
+  setImportedAggregationPluginManifests,
 } from "../dist/assets/aggregation-runtime.js";
 
 test("ResponseAggregationRuntime aggregates OpenAI SSE raw events incrementally", () => {
@@ -108,4 +112,54 @@ test("ResponseAggregationRuntime turns plugin failures into readable errors", ()
 
   assert.equal(result.error, 'Aggregation plugin "custom" failed: boom');
   assert.deepEqual(runtime.finalize(), {});
+});
+
+test("parseImportedAggregationPluginFile accepts JSON-wrapped plugin modules", async () => {
+  const plugin = await parseImportedAggregationPluginFile(
+    "vendor-plugin.json",
+    JSON.stringify({
+      id: "vendor.example",
+      label: "Vendor Example",
+      description: "Test plugin",
+      source: `
+        export function create() {
+          return {
+            onRawEvent() {
+              return { append: [{ kind: "content", text: "ok" }] };
+            },
+          };
+        }
+      `,
+    }),
+  );
+
+  assert.equal(plugin.id, "vendor.example");
+  assert.equal(plugin.label, "Vendor Example");
+  assert.equal(plugin.format, "json");
+});
+
+test("ensureAggregationPluginLoaded registers imported plugin manifests", async () => {
+  setImportedAggregationPluginManifests([
+    {
+      id: "vendor.loaded",
+      label: "Vendor Loaded",
+      description: "Loads on demand",
+      module_url: `data:text/javascript;base64,${Buffer.from(`
+        export function create() {
+          return {
+            onRawEvent() {
+              return { append: [{ kind: "content", text: "loaded" }] };
+            },
+          };
+        }
+      `).toString("base64")}`,
+      imported_at: "2026-03-12T00:00:00Z",
+      format: "js",
+    },
+  ]);
+
+  await ensureAggregationPluginLoaded("vendor.loaded");
+
+  const plugin = listAggregationPlugins().find((item) => item.id === "vendor.loaded");
+  assert.equal(plugin?.loaded, true);
 });

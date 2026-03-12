@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,22 +23,24 @@ type SavedHeader struct {
 }
 
 type SavedRequest struct {
-	ID                 string        `json:"id"`
-	Name               string        `json:"name"`
-	Method             string        `json:"method"`
-	URL                string        `json:"url"`
-	Headers            []SavedHeader `json:"headers"`
-	Body               string        `json:"body"`
-	AggregationPlugin  string        `json:"aggregation_plugin,omitempty"`
-	AggregateOpenAISSE bool          `json:"aggregate_openai_sse"`
-	TimeoutSeconds     int           `json:"timeout_seconds"`
-	UpdatedAt          string        `json:"updated_at,omitempty"`
+	ID                           string        `json:"id"`
+	Name                         string        `json:"name"`
+	Method                       string        `json:"method"`
+	URL                          string        `json:"url"`
+	Headers                      []SavedHeader `json:"headers"`
+	Body                         string        `json:"body"`
+	AggregationPlugin            string        `json:"aggregation_plugin,omitempty"`
+	UseCollectionAggregationPlugin bool       `json:"use_collection_aggregation_plugin,omitempty"`
+	AggregateOpenAISSE           bool          `json:"aggregate_openai_sse"`
+	TimeoutSeconds               int           `json:"timeout_seconds"`
+	UpdatedAt                    string        `json:"updated_at,omitempty"`
 }
 
 type RequestCollection struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Requests []SavedRequest `json:"requests"`
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	AggregationPlugin string         `json:"aggregation_plugin"`
+	Requests          []SavedRequest `json:"requests"`
 }
 
 type CollectionStore struct {
@@ -115,46 +116,12 @@ func loadCollectionStoreFromFile(filePath string) (CollectionStore, error) {
 }
 
 func saveCollectionStoreToFile(filePath string, store CollectionStore) error {
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
-		return fmt.Errorf("create collections directory: %w", err)
-	}
-
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal collections: %w", err)
 	}
 	data = append(data, '\n')
-
-	tempFile, err := os.CreateTemp(filepath.Dir(filePath), ".collections-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp collections file: %w", err)
-	}
-
-	tempPath := tempFile.Name()
-	cleanupTemp := true
-	defer func() {
-		if cleanupTemp {
-			_ = os.Remove(tempPath)
-		}
-	}()
-
-	if _, err := tempFile.Write(data); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("write temp collections file: %w", err)
-	}
-	if err := tempFile.Chmod(0o644); err != nil {
-		_ = tempFile.Close()
-		return fmt.Errorf("chmod temp collections file: %w", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("close temp collections file: %w", err)
-	}
-	if err := os.Rename(tempPath, filePath); err != nil {
-		return fmt.Errorf("replace collections file: %w", err)
-	}
-
-	cleanupTemp = false
-	return nil
+	return writeAtomicFile(filePath, data, 0o644)
 }
 
 func normalizeCollectionStore(store CollectionStore) CollectionStore {
@@ -173,30 +140,37 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 		}
 
 		nextCollection := RequestCollection{
-			ID:       strings.TrimSpace(collection.ID),
-			Name:     name,
-			Requests: make([]SavedRequest, 0, len(collection.Requests)),
+			ID:                strings.TrimSpace(collection.ID),
+			Name:              name,
+			AggregationPlugin: normalizeAggregationPlugin(collection.AggregationPlugin, false),
+			Requests:          make([]SavedRequest, 0, len(collection.Requests)),
 		}
 
 		for _, request := range collection.Requests {
-			aggregationPlugin := resolveAggregationPlugin(request.AggregationPlugin, request.AggregateOpenAISSE)
+			aggregationPlugin := normalizeAggregationPlugin(request.AggregationPlugin, request.AggregateOpenAISSE)
+			useCollectionAggregationPlugin := request.UseCollectionAggregationPlugin
+			if useCollectionAggregationPlugin {
+				aggregationPlugin = ""
+			}
+
 			nextRequest := SavedRequest{
-				ID:                 strings.TrimSpace(request.ID),
-				Name:               strings.TrimSpace(request.Name),
-				Method:             strings.ToUpper(strings.TrimSpace(request.Method)),
-				URL:                request.URL,
-				Headers:            normalizeSavedHeaders(request.Headers),
-				Body:               request.Body,
-				AggregationPlugin:  aggregationPlugin,
-				AggregateOpenAISSE: aggregationPlugin == "openai",
-				TimeoutSeconds:     request.TimeoutSeconds,
-				UpdatedAt:          strings.TrimSpace(request.UpdatedAt),
+				ID:                             strings.TrimSpace(request.ID),
+				Name:                           strings.TrimSpace(request.Name),
+				Method:                         strings.ToUpper(strings.TrimSpace(request.Method)),
+				URL:                            request.URL,
+				Headers:                        normalizeSavedHeaders(request.Headers),
+				Body:                           request.Body,
+				AggregationPlugin:              aggregationPlugin,
+				UseCollectionAggregationPlugin: useCollectionAggregationPlugin,
+				AggregateOpenAISSE:             aggregationPlugin == "openai",
+				TimeoutSeconds:                 request.TimeoutSeconds,
+				UpdatedAt:                      strings.TrimSpace(request.UpdatedAt),
 			}
 			if nextRequest.Name == "" {
 				nextRequest.Name = "Untitled Request"
 			}
 			if nextRequest.Method == "" {
-				nextRequest.Method = http.MethodGet
+				nextRequest.Method = "GET"
 			}
 			if nextRequest.TimeoutSeconds <= 0 {
 				nextRequest.TimeoutSeconds = 120

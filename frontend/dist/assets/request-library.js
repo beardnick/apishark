@@ -1,3 +1,4 @@
+import { AGGREGATION_PLUGIN_NONE, aggregationPluginLabel, resolveAggregationPluginId, } from "./aggregation-runtime.js";
 const duplicateSuffixPattern = /^(.*?)(?: copy(?: (\d+))?)?$/;
 export function nextDuplicateRequestName(name, existingNames) {
     const normalizedName = name.trim() || "Untitled Request";
@@ -127,6 +128,22 @@ export function normalizePersistedRequestDraftStore(input) {
         .filter((entry) => entry !== null);
     return Object.fromEntries(normalizedEntries.map((entry) => [entry.key, entry]));
 }
+export function resolveEffectiveAggregationPlugin(input) {
+    if (input.useCollectionPlugin) {
+        const collectionPlugin = resolveAggregationPluginId(input.collectionPlugin);
+        return {
+            pluginId: collectionPlugin,
+            source: collectionPlugin === AGGREGATION_PLUGIN_NONE ? "none" : "collection",
+            label: aggregationPluginLabel(collectionPlugin),
+        };
+    }
+    const requestPlugin = resolveAggregationPluginId(input.requestPlugin);
+    return {
+        pluginId: requestPlugin,
+        source: requestPlugin === AGGREGATION_PLUGIN_NONE ? "none" : "request",
+        label: aggregationPluginLabel(requestPlugin),
+    };
+}
 function duplicateBaseName(name) {
     const match = name.match(duplicateSuffixPattern);
     const baseName = match?.[1]?.trim();
@@ -178,6 +195,7 @@ function normalizeRequestLibraryDraft(input) {
             : [],
         body: typeof input.body === "string" ? input.body : "",
         aggregation_plugin: typeof input.aggregation_plugin === "string" ? input.aggregation_plugin : "none",
+        use_collection_aggregation_plugin: input.use_collection_aggregation_plugin !== false,
         aggregate_openai_sse: input.aggregate_openai_sse === true,
         timeout_seconds: typeof input.timeout_seconds === "number" && Number.isFinite(input.timeout_seconds)
             ? input.timeout_seconds

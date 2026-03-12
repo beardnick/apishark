@@ -11,9 +11,18 @@ import {
   type AggregateFragment,
 } from "./aggregate-fragments.js";
 import {
+  AGGREGATION_PLUGIN_NONE,
   AGGREGATION_PLUGIN_OPENAI,
   ResponseAggregationRuntime,
+  aggregationPluginLabel,
+  ensureAggregationPluginLoaded,
+  getImportedAggregationPluginManifests,
+  hasAggregationPlugin,
+  listAggregationPlugins,
+  parseImportedAggregationPluginFile,
   resolveAggregationPluginId,
+  setImportedAggregationPluginManifests,
+  type ImportedAggregationPluginManifest,
   type RawEvent,
 } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
@@ -25,6 +34,7 @@ import {
   normalizePersistedRequestDraftStore,
   prunePersistedRequestDraftStore,
   requestLibraryDraftsEqual,
+  resolveEffectiveAggregationPlugin,
   setPersistedRequestDraft,
   type PersistedRequestDraftStore,
   type RequestDraftScope,
@@ -58,6 +68,7 @@ type PersistedState = {
   headersText?: string;
   bodyText: string;
   aggregationPlugin: string;
+  useCollectionAggregationPlugin: boolean;
   aggregateOpenAISse: boolean;
   timeoutSeconds: number;
   requestDrafts: PersistedRequestDraftStore;
@@ -77,6 +88,7 @@ type SavedRequest = {
   headers: SavedHeader[];
   body: string;
   aggregation_plugin?: string;
+  use_collection_aggregation_plugin?: boolean;
   aggregate_openai_sse: boolean;
   timeout_seconds: number;
   updated_at?: string;
@@ -85,11 +97,16 @@ type SavedRequest = {
 type RequestCollection = {
   id: string;
   name: string;
+  aggregation_plugin: string;
   requests: SavedRequest[];
 };
 
 type CollectionStore = {
   collections: RequestCollection[];
+};
+
+type PluginStoreResponse = {
+  plugins: ImportedAggregationPluginManifest[];
 };
 
 type ServerEvent =
@@ -119,6 +136,7 @@ type SseLineEntry = {
 };
 
 const STORAGE_KEY = "apishark.state.v2";
+const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220_000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120_000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
@@ -132,6 +150,10 @@ const deleteEnvironmentBtn = byId<HTMLButtonElement>("deleteEnvironmentBtn");
 const envInput = byId<HTMLTextAreaElement>("envInput");
 const curlInput = byId<HTMLTextAreaElement>("curlInput");
 const importCurlBtn = byId<HTMLButtonElement>("importCurlBtn");
+const importPluginBtn = byId<HTMLButtonElement>("importPluginBtn");
+const pluginImportInput = byId<HTMLInputElement>("pluginImportInput");
+const pluginsStatusText = byId<HTMLElement>("pluginsStatusText");
+const pluginsList = byId<HTMLElement>("pluginsList");
 const requestNameInput = byId<HTMLInputElement>("requestNameInput");
 const methodInput = byId<HTMLSelectElement>("methodInput");
 const urlInput = byId<HTMLInputElement>("urlInput");
@@ -146,6 +168,7 @@ const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
 const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const draftStatusText = byId<HTMLElement>("draftStatusText");
+const effectiveAggregationText = byId<HTMLElement>("effectiveAggregationText");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
 const copyExportCurlBtn = byId<HTMLButtonElement>("copyExportCurlBtn");
@@ -232,6 +255,12 @@ function wireEvents(): void {
   importCurlBtn.addEventListener("click", () => {
     void importCurl();
   });
+  importPluginBtn.addEventListener("click", () => {
+    pluginImportInput.click();
+  });
+  pluginImportInput.addEventListener("change", () => {
+    void importPlugin();
+  });
 
   exportCurlBtn.addEventListener("click", () => {
     void exportCurl();
@@ -316,6 +345,9 @@ function wireEvents(): void {
   saveRequestBtn.addEventListener("click", () => {
     void saveCurrentRequestToCollection();
   });
+  aggregationPluginInput.addEventListener("change", () => {
+    renderEffectiveAggregationPlugin();
+  });
 
   const persistTargets: Array<
     EventTarget & { addEventListener: typeof EventTarget.prototype.addEventListener }
@@ -389,6 +421,7 @@ function defaultState(): PersistedState {
       2,
     ),
     aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
+    useCollectionAggregationPlugin: false,
     aggregateOpenAISse: true,
     timeoutSeconds: 120,
     requestDrafts: {},
@@ -407,9 +440,12 @@ function applyInitialState(): void {
   urlInput.value = state.url;
   headerRows = normalizeHeaderRows(state.headers);
   bodyInput.value = state.bodyText;
-  aggregationPluginInput.value = resolveAggregationPluginId(
-    state.aggregationPlugin,
-    state.aggregateOpenAISse,
+  renderPluginOptionsIntoSelect(
+    aggregationPluginInput,
+    state.useCollectionAggregationPlugin
+      ? REQUEST_AGGREGATION_USE_COLLECTION
+      : resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse),
+    true,
   );
   timeoutInput.value = String(state.timeoutSeconds);
   requestDrafts = state.requestDrafts;
@@ -421,6 +457,7 @@ function applyInitialState(): void {
   renderHeaderRows();
   syncBodyEditor();
   renderDraftStatus();
+  renderEffectiveAggregationPlugin();
 }
 
 function loadState(): PersistedState {
@@ -464,6 +501,7 @@ function loadState(): PersistedState {
         typeof parsed.aggregationPlugin === "string"
           ? resolveAggregationPluginId(parsed.aggregationPlugin)
           : resolveAggregationPluginId(undefined, parsed.aggregateOpenAISse === true),
+      useCollectionAggregationPlugin: parsed.useCollectionAggregationPlugin === true,
       aggregateOpenAISse:
         typeof parsed.aggregateOpenAISse === "boolean"
           ? parsed.aggregateOpenAISse
@@ -493,8 +531,9 @@ function persistState(): void {
     url: urlInput.value,
     headers: headerRows.map((header) => ({ ...header })),
     bodyText: bodyInput.value,
-    aggregationPlugin: selectedAggregationPlugin(),
-    aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
+    aggregationPlugin: selectedRequestAggregationPluginOverride(),
+    useCollectionAggregationPlugin: selectedRequestUsesCollectionPlugin(),
+    aggregateOpenAISse: selectedEffectiveAggregationPlugin().pluginId === AGGREGATION_PLUGIN_OPENAI,
     timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
     requestDrafts,
     activeCollectionId,
@@ -1008,6 +1047,255 @@ async function importCurl(): Promise<void> {
   }
 }
 
+async function importPlugin(): Promise<void> {
+  const file = pluginImportInput.files?.[0];
+  pluginImportInput.value = "";
+  if (!file) {
+    return;
+  }
+
+  setPluginsStatus(`Importing ${file.name}...`);
+  try {
+    const source = await file.text();
+    const parsed = await parseImportedAggregationPluginFile(file.name, source);
+
+    const response = await fetch("/api/plugins/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parsed),
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(responseText || `Import failed (${response.status})`);
+    }
+
+    await loadPlugins({
+      successMessage: `Imported plugin "${parsed.label}".`,
+    });
+  } catch (error) {
+    setPluginsStatus(errorMessage(error, "Failed to import plugin."), true);
+  }
+}
+
+async function loadPlugins(options?: { successMessage?: string }): Promise<void> {
+  if (!options?.successMessage) {
+    setPluginsStatus("Loading plugins...");
+  }
+
+  try {
+    const response = await fetch("/api/plugins");
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(responseText || `Load failed (${response.status})`);
+    }
+
+    const parsed = JSON.parse(responseText) as Partial<PluginStoreResponse>;
+    const manifests = Array.isArray(parsed.plugins) ? parsed.plugins : [];
+    setImportedAggregationPluginManifests(
+      manifests.map((plugin) => ({
+        id: resolveAggregationPluginId(plugin.id),
+        label: typeof plugin.label === "string" ? plugin.label : resolveAggregationPluginId(plugin.id),
+        description: typeof plugin.description === "string" ? plugin.description : "",
+        module_url: typeof plugin.module_url === "string" ? plugin.module_url : "",
+        imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
+        format: plugin.format === "json" ? "json" : "js",
+      })),
+    );
+
+    renderImportedPlugins();
+    renderAggregationPluginControls();
+    renderCollections();
+    renderEffectiveAggregationPlugin();
+    setPluginsStatus(
+      options?.successMessage ??
+        (getImportedAggregationPluginManifests().length === 0
+          ? 'Imported plugins are stored in "./.apishark/plugins.json".'
+          : `Loaded ${getImportedAggregationPluginManifests().length} imported plugin${getImportedAggregationPluginManifests().length === 1 ? "" : "s"}.`),
+    );
+  } catch (error) {
+    renderImportedPlugins();
+    renderAggregationPluginControls();
+    renderCollections();
+    renderEffectiveAggregationPlugin();
+    setPluginsStatus(errorMessage(error, "Failed to load plugins."), true);
+  }
+}
+
+function renderImportedPlugins(): void {
+  pluginsList.textContent = "";
+  const importedPlugins = getImportedAggregationPluginManifests();
+  if (importedPlugins.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No imported plugins yet. Import a JSON or JS package to add one.";
+    pluginsList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const plugin of importedPlugins) {
+    const item = document.createElement("div");
+    item.className = "plugin-item";
+
+    const title = document.createElement("strong");
+    title.className = "plugin-title";
+    title.textContent = plugin.label;
+
+    const meta = document.createElement("p");
+    meta.className = "hint compact plugin-meta";
+    meta.textContent = `${plugin.id} • ${plugin.format.toUpperCase()}`;
+
+    item.append(title, meta);
+    if (plugin.description) {
+      const description = document.createElement("p");
+      description.className = "hint compact plugin-description";
+      description.textContent = plugin.description;
+      item.appendChild(description);
+    }
+
+    fragment.appendChild(item);
+  }
+
+  pluginsList.appendChild(fragment);
+}
+
+function renderAggregationPluginControls(): void {
+  const currentValue = aggregationPluginInput.value || AGGREGATION_PLUGIN_OPENAI;
+  renderPluginOptionsIntoSelect(aggregationPluginInput, currentValue, true);
+}
+
+function renderPluginOptionsIntoSelect(
+  select: HTMLSelectElement,
+  selectedValue: string,
+  includeCollectionDefault = false,
+): void {
+  const fragment = document.createDocumentFragment();
+  if (includeCollectionDefault) {
+    const option = document.createElement("option");
+    option.value = REQUEST_AGGREGATION_USE_COLLECTION;
+    option.textContent = "Collection default";
+    fragment.appendChild(option);
+  }
+
+  for (const plugin of listAggregationPlugins()) {
+    const option = document.createElement("option");
+    option.value = plugin.id;
+    option.textContent = plugin.builtin ? plugin.label : `${plugin.label}`;
+    fragment.appendChild(option);
+  }
+
+  const normalizedSelected =
+    selectedValue === REQUEST_AGGREGATION_USE_COLLECTION
+      ? REQUEST_AGGREGATION_USE_COLLECTION
+      : resolveAggregationPluginId(selectedValue);
+  const shouldAddMissingOption =
+    normalizedSelected !== REQUEST_AGGREGATION_USE_COLLECTION &&
+    normalizedSelected !== AGGREGATION_PLUGIN_NONE &&
+    !hasAggregationPlugin(normalizedSelected);
+  if (shouldAddMissingOption) {
+    const missingOption = document.createElement("option");
+    missingOption.value = normalizedSelected;
+    missingOption.textContent = `Missing: ${normalizedSelected}`;
+    fragment.appendChild(missingOption);
+  }
+
+  select.textContent = "";
+  select.appendChild(fragment);
+  select.value = normalizedSelected;
+  if (select.value !== normalizedSelected) {
+    select.value = includeCollectionDefault
+      ? REQUEST_AGGREGATION_USE_COLLECTION
+      : AGGREGATION_PLUGIN_NONE;
+  }
+}
+
+function selectedRequestUsesCollectionPlugin(): boolean {
+  return aggregationPluginInput.value === REQUEST_AGGREGATION_USE_COLLECTION;
+}
+
+function selectedRequestAggregationPluginOverride(): string {
+  return selectedRequestUsesCollectionPlugin()
+    ? AGGREGATION_PLUGIN_NONE
+    : resolveAggregationPluginId(aggregationPluginInput.value);
+}
+
+function selectedEffectiveAggregationPlugin(): {
+  pluginId: string;
+  source: "request" | "collection" | "none";
+  label: string;
+} {
+  return resolveEffectiveAggregationPlugin({
+    requestPlugin: selectedRequestAggregationPluginOverride(),
+    useCollectionPlugin: selectedRequestUsesCollectionPlugin(),
+    collectionPlugin: findCollection(activeCollectionId)?.aggregation_plugin,
+  });
+}
+
+function renderEffectiveAggregationPlugin(): void {
+  const effective = selectedEffectiveAggregationPlugin();
+  const activeCollection = findCollection(activeCollectionId);
+
+  if (selectedRequestUsesCollectionPlugin()) {
+    if (!activeCollection) {
+      effectiveAggregationText.textContent = "Effective: None. No collection is selected.";
+      return;
+    }
+
+    const suffix =
+      effective.pluginId !== AGGREGATION_PLUGIN_NONE && !hasAggregationPlugin(effective.pluginId)
+        ? " Missing plugin; raw output will still work."
+        : "";
+    effectiveAggregationText.textContent = `Effective: ${effective.label} via collection "${activeCollection.name}".${suffix}`;
+    return;
+  }
+
+  const suffix =
+    effective.pluginId !== AGGREGATION_PLUGIN_NONE && !hasAggregationPlugin(effective.pluginId)
+      ? " Missing plugin; raw output will still work."
+      : "";
+  effectiveAggregationText.textContent = `Effective: ${effective.label} via request override.${suffix}`;
+}
+
+async function prepareAggregationRuntime(): Promise<{
+  pluginId: string;
+  runtime: ResponseAggregationRuntime;
+}> {
+  const effective = selectedEffectiveAggregationPlugin();
+  if (effective.pluginId === AGGREGATION_PLUGIN_NONE) {
+    return {
+      pluginId: effective.pluginId,
+      runtime: new ResponseAggregationRuntime(effective.pluginId),
+    };
+  }
+
+  if (!hasAggregationPlugin(effective.pluginId)) {
+    setError(`Aggregation plugin "${effective.pluginId}" is not available. Falling back to raw output.`);
+    return {
+      pluginId: AGGREGATION_PLUGIN_NONE,
+      runtime: new ResponseAggregationRuntime(AGGREGATION_PLUGIN_NONE),
+    };
+  }
+
+  try {
+    await ensureAggregationPluginLoaded(effective.pluginId);
+    return {
+      pluginId: effective.pluginId,
+      runtime: new ResponseAggregationRuntime(effective.pluginId),
+    };
+  } catch (error) {
+    setError(`${errorMessage(error, "Failed to load aggregation plugin.")} Falling back to raw output.`);
+    return {
+      pluginId: AGGREGATION_PLUGIN_NONE,
+      runtime: new ResponseAggregationRuntime(AGGREGATION_PLUGIN_NONE),
+    };
+  }
+}
+
+function setPluginsStatus(message: string, isError = false): void {
+  pluginsStatusText.textContent = message;
+  pluginsStatusText.classList.toggle("error", isError);
+}
+
 async function exportCurl(): Promise<void> {
   setError("");
 
@@ -1076,9 +1364,11 @@ async function sendRequest(): Promise<void> {
 
   setLoading(true);
   activeAbortController = new AbortController();
-  aggregationRuntime = new ResponseAggregationRuntime(selectedAggregationPlugin());
 
   try {
+    const preparedAggregation = await prepareAggregationRuntime();
+    aggregationRuntime = preparedAggregation.runtime;
+
     const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
     const resolvedDraft = resolveRequestDraft(draft, env);
     if (!resolvedDraft.url) {
@@ -1091,8 +1381,8 @@ async function sendRequest(): Promise<void> {
       headers: resolvedDraft.headers,
       body: resolvedDraft.body,
       env,
-      aggregation_plugin: selectedAggregationPlugin(),
-      aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
+      aggregation_plugin: preparedAggregation.pluginId,
+      aggregate_openai_sse: preparedAggregation.pluginId === AGGREGATION_PLUGIN_OPENAI,
       timeout_seconds: toPositiveInt(timeoutInput.value, 120),
     };
 
@@ -1570,6 +1860,7 @@ async function loadCollections(): Promise<void> {
       activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined,
     );
     renderCollections();
+    renderEffectiveAggregationPlugin();
     persistState();
     setCollectionsStatus(
       parsed.collections.length === 0
@@ -1594,6 +1885,7 @@ async function createCollection(): Promise<void> {
   const nextCollection: RequestCollection = {
     id: makeId("col"),
     name,
+    aggregation_plugin: AGGREGATION_PLUGIN_NONE,
     requests: [],
   };
 
@@ -1609,6 +1901,7 @@ async function createCollection(): Promise<void> {
 
   newCollectionNameInput.value = "";
   renderCollections();
+  renderEffectiveAggregationPlugin();
   persistState();
   setCollectionsStatus(`Selected collection "${name}".`);
 }
@@ -1661,6 +1954,7 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   }
 
   renderCollections();
+  renderEffectiveAggregationPlugin();
   clearPersistedRequestDraft(previousScope);
   clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
   persistState();
@@ -1681,6 +1975,14 @@ async function duplicateCurrentRequest(): Promise<void> {
   if (!targetCollection || !activeCollectionId) {
     requestNameInput.value = duplicateDraft.name;
     activeSavedRequestId = null;
+    renderPluginOptionsIntoSelect(
+      aggregationPluginInput,
+      duplicateDraft.use_collection_aggregation_plugin
+        ? REQUEST_AGGREGATION_USE_COLLECTION
+        : resolveAggregationPluginId(duplicateDraft.aggregation_plugin),
+      true,
+    );
+    renderEffectiveAggregationPlugin();
     persistState();
     persistCurrentRequestDraft();
     setCollectionsStatus(
@@ -1715,6 +2017,7 @@ async function duplicateCurrentRequest(): Promise<void> {
   requestNameInput.value = savedRequest.name;
   activeSavedRequestId = savedRequest.id;
   renderCollections();
+  renderEffectiveAggregationPlugin();
   clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
   persistState();
   setCollectionsStatus(
@@ -1735,6 +2038,7 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
   activeSavedRequestId = requestId;
   restoreDraftForCurrentSelection(savedRequestToDraft(savedRequest));
   renderCollections();
+  renderEffectiveAggregationPlugin();
   persistState();
   setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
 }
@@ -1768,6 +2072,7 @@ async function deleteCollection(collectionId: string): Promise<void> {
   prunePersistedDrafts();
   restoreDraftForCurrentSelection();
   renderCollections();
+  renderEffectiveAggregationPlugin();
   persistState();
   setCollectionsStatus(`Deleted collection "${collection.name}".`);
 }
@@ -1809,6 +2114,7 @@ async function deleteSavedRequest(collectionId: string, requestId: string): Prom
   clearPersistedRequestDraft({ collectionId, requestId });
   restoreDraftForCurrentSelection();
   renderCollections();
+  renderEffectiveAggregationPlugin();
   persistState();
   setCollectionsStatus(`Deleted "${request.name}".`);
 }
@@ -1839,9 +2145,42 @@ async function saveCollectionsToServer(previous: CollectionStore): Promise<boole
   } catch (error) {
     collectionStore = previous;
     renderCollections();
+    renderEffectiveAggregationPlugin();
     setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
     return false;
   }
+}
+
+async function updateCollectionAggregationPlugin(
+  collectionId: string,
+  pluginId: string,
+): Promise<void> {
+  const collection = findCollection(collectionId);
+  if (!collection) {
+    return;
+  }
+
+  if (collection.aggregation_plugin === pluginId) {
+    return;
+  }
+
+  const previous = cloneCollectionStore(collectionStore);
+  collectionStore = {
+    collections: collectionStore.collections.map((item) =>
+      item.id === collectionId ? { ...item, aggregation_plugin: pluginId } : item,
+    ),
+  };
+
+  if (!(await saveCollectionsToServer(previous))) {
+    return;
+  }
+
+  renderCollections();
+  renderEffectiveAggregationPlugin();
+  persistState();
+  setCollectionsStatus(
+    `Collection "${collection.name}" now defaults to ${aggregationPluginLabel(pluginId)}.`,
+  );
 }
 
 function renderCollections(): void {
@@ -1875,6 +2214,7 @@ function renderCollections(): void {
       }
       restoreDraftForCurrentSelection();
       renderCollections();
+      renderEffectiveAggregationPlugin();
       persistState();
       setCollectionsStatus(`Selected collection "${collection.name}".`);
     });
@@ -1883,7 +2223,7 @@ function renderCollections(): void {
     name.textContent = collection.name;
     const meta = document.createElement("p");
     meta.className = "collection-meta hint compact";
-    meta.textContent = `${collection.requests.length} saved request${collection.requests.length === 1 ? "" : "s"}`;
+    meta.textContent = formatCollectionMeta(collection);
     selectBtn.append(name, meta);
 
     const actions = document.createElement("div");
@@ -1912,6 +2252,24 @@ function renderCollections(): void {
 
     head.append(selectBtn, actions);
     card.appendChild(head);
+
+    const bindingRow = document.createElement("label");
+    bindingRow.className = "collection-plugin-row";
+    const bindingLabel = document.createElement("span");
+    bindingLabel.className = "hint compact";
+    bindingLabel.textContent = "Aggregation";
+    const bindingSelect = document.createElement("select");
+    bindingSelect.className = "collection-plugin-select";
+    bindingSelect.disabled = requestIsLoading;
+    renderPluginOptionsIntoSelect(bindingSelect, collection.aggregation_plugin);
+    bindingSelect.addEventListener("change", () => {
+      void updateCollectionAggregationPlugin(
+        collection.id,
+        resolveAggregationPluginId(bindingSelect.value),
+      );
+    });
+    bindingRow.append(bindingLabel, bindingSelect);
+    card.appendChild(bindingRow);
 
     const requestList = document.createElement("div");
     requestList.className = "request-list";
@@ -1944,7 +2302,7 @@ function renderCollections(): void {
         requestName.textContent = request.name;
         const requestMeta = document.createElement("p");
         requestMeta.className = "request-meta hint compact";
-        requestMeta.textContent = formatSavedRequestMeta(request);
+        requestMeta.textContent = formatSavedRequestMeta(request, collection);
         requestText.append(requestName, requestMeta);
         requestPrimary.append(requestMethod, requestText);
         loadBtn.append(requestPrimary);
@@ -1981,6 +2339,10 @@ function normalizeCollectionStore(input: Partial<CollectionStore>): CollectionSt
       .map((collection) => ({
         id: typeof collection.id === "string" ? collection.id : makeId("col"),
         name: typeof collection.name === "string" ? collection.name : "Untitled Collection",
+        aggregation_plugin:
+          typeof collection.aggregation_plugin === "string"
+            ? resolveAggregationPluginId(collection.aggregation_plugin)
+            : AGGREGATION_PLUGIN_NONE,
         requests: Array.isArray(collection.requests)
           ? collection.requests.map((request) => ({
               id: typeof request.id === "string" ? request.id : makeId("req"),
@@ -1990,16 +2352,22 @@ function normalizeCollectionStore(input: Partial<CollectionStore>): CollectionSt
               headers: normalizeSavedHeaders(request.headers),
               body: typeof request.body === "string" ? request.body : "",
               aggregation_plugin:
-                typeof request.aggregation_plugin === "string"
-                  ? resolveAggregationPluginId(request.aggregation_plugin)
-                  : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
+                request.use_collection_aggregation_plugin === true
+                  ? undefined
+                  : typeof request.aggregation_plugin === "string"
+                    ? resolveAggregationPluginId(request.aggregation_plugin)
+                    : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
+              use_collection_aggregation_plugin:
+                request.use_collection_aggregation_plugin === true,
               aggregate_openai_sse:
-                resolveAggregationPluginId(
-                  typeof request.aggregation_plugin === "string"
-                    ? request.aggregation_plugin
-                    : undefined,
-                  request.aggregate_openai_sse === true,
-                ) === AGGREGATION_PLUGIN_OPENAI,
+                request.use_collection_aggregation_plugin === true
+                  ? false
+                  : resolveAggregationPluginId(
+                        typeof request.aggregation_plugin === "string"
+                          ? request.aggregation_plugin
+                          : undefined,
+                        request.aggregate_openai_sse === true,
+                      ) === AGGREGATION_PLUGIN_OPENAI,
               timeout_seconds:
                 typeof request.timeout_seconds === "number" && Number.isFinite(request.timeout_seconds)
                   ? request.timeout_seconds
@@ -2063,18 +2431,26 @@ function setCollectionsStatus(message: string, isError = false): void {
   collectionsStatusText.classList.toggle("error", isError);
 }
 
-function formatSavedRequestMeta(request: SavedRequest): string {
+function formatCollectionMeta(collection: RequestCollection): string {
+  return `${collection.requests.length} saved request${collection.requests.length === 1 ? "" : "s"} • ${aggregationPluginLabel(collection.aggregation_plugin)}`;
+}
+
+function formatSavedRequestMeta(request: SavedRequest, collection: RequestCollection): string {
   const url = request.url.trim() || "(no URL)";
+  const binding = request.use_collection_aggregation_plugin
+    ? `via ${aggregationPluginLabel(collection.aggregation_plugin)} collection default`
+    : `${aggregationPluginLabel(request.aggregation_plugin)} override`;
+
   if (!request.updated_at) {
-    return url;
+    return `${url} • ${binding}`;
   }
 
   const parsed = new Date(request.updated_at);
   if (Number.isNaN(parsed.getTime())) {
-    return url;
+    return `${url} • ${binding}`;
   }
 
-  return `${url} • ${parsed.toLocaleString([], {
+  return `${url} • ${binding} • ${parsed.toLocaleString([], {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -2086,6 +2462,8 @@ function setLoading(isLoading: boolean): void {
   requestIsLoading = isLoading;
   sendBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
+  importPluginBtn.disabled = isLoading;
+  pluginImportInput.disabled = isLoading;
   exportCurlBtn.disabled = isLoading;
   requestNameInput.disabled = isLoading;
   envInput.disabled = isLoading;
@@ -2104,6 +2482,8 @@ function setLoading(isLoading: boolean): void {
   syncEnvironmentEditor();
   renderHeaderRows();
   syncBodyEditor();
+  renderCollections();
+  renderEffectiveAggregationPlugin();
 }
 
 function setError(message: string): void {
@@ -2123,10 +2503,6 @@ function errorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
-}
-
-function selectedAggregationPlugin(): string {
-  return resolveAggregationPluginId(aggregationPluginInput.value);
 }
 
 function toPositiveInt(value: string, fallback: number): number {
@@ -2149,7 +2525,8 @@ function cloneCollectionStore(store: CollectionStore): CollectionStore {
 }
 
 function getCurrentSavedRequestDraft(): RequestLibraryDraft {
-  const aggregationPlugin = selectedAggregationPlugin();
+  const aggregationPlugin = selectedRequestAggregationPluginOverride();
+  const useCollectionAggregationPlugin = selectedRequestUsesCollectionPlugin();
   return {
     name: requestNameInput.value.trim() || "Untitled Request",
     method: methodInput.value.trim().toUpperCase() || "GET",
@@ -2161,7 +2538,9 @@ function getCurrentSavedRequestDraft(): RequestLibraryDraft {
     })),
     body: bodyInput.value,
     aggregation_plugin: aggregationPlugin,
-    aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+    use_collection_aggregation_plugin: useCollectionAggregationPlugin,
+    aggregate_openai_sse:
+      !useCollectionAggregationPlugin && aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
     timeout_seconds: toPositiveInt(timeoutInput.value, 120),
   };
 }
@@ -2178,6 +2557,7 @@ function savedRequestToDraft(savedRequest: SavedRequest): RequestLibraryDraft {
     headers: savedRequest.headers.map((header) => ({ ...header })),
     body: savedRequest.body,
     aggregation_plugin: aggregationPlugin,
+    use_collection_aggregation_plugin: savedRequest.use_collection_aggregation_plugin !== false,
     aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
     timeout_seconds: savedRequest.timeout_seconds || 120,
   };
@@ -2191,7 +2571,10 @@ function createSavedRequest(input: { id: string; draft: RequestLibraryDraft }): 
     url: input.draft.url,
     headers: input.draft.headers.map((header) => ({ ...header })),
     body: input.draft.body,
-    aggregation_plugin: input.draft.aggregation_plugin,
+    aggregation_plugin: input.draft.use_collection_aggregation_plugin
+      ? undefined
+      : input.draft.aggregation_plugin,
+    use_collection_aggregation_plugin: input.draft.use_collection_aggregation_plugin,
     aggregate_openai_sse: input.draft.aggregate_openai_sse,
     timeout_seconds: input.draft.timeout_seconds,
     updated_at: new Date().toISOString(),
@@ -2509,7 +2892,13 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
-applyInitialState();
 setupTabs();
 wireEvents();
-void loadCollections();
+void initializeApp();
+
+async function initializeApp(): Promise<void> {
+  renderAggregationPluginControls();
+  await loadPlugins();
+  applyInitialState();
+  await loadCollections();
+}

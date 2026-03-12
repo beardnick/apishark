@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -45,6 +46,7 @@ type server struct {
 	staticFS        fs.FS
 	fileServer      http.Handler
 	collectionStore *collectionFileStore
+	pluginStore     *pluginFileStore
 	httpClient      *http.Client
 }
 
@@ -53,17 +55,25 @@ func NewHandler(staticFS fs.FS, projectDir string) http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	pluginStore, err := newPluginFileStore(projectDir)
+	if err != nil {
+		panic(err)
+	}
 
 	s := &server{
 		staticFS:        staticFS,
 		fileServer:      http.FileServer(http.FS(staticFS)),
 		collectionStore: collectionStore,
+		pluginStore:     pluginStore,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/import/curl", s.handleImportCurl)
 	mux.HandleFunc("/api/request", s.handleSendRequest)
 	mux.HandleFunc("/api/collections", s.handleCollections)
+	mux.HandleFunc("/api/plugins", s.handlePlugins)
+	mux.HandleFunc("/api/plugins/import", s.handleImportPlugin)
+	mux.HandleFunc("/api/plugins/assets/", s.handlePluginAsset)
 	mux.HandleFunc("/", s.handleStatic)
 	return mux
 }
@@ -183,7 +193,7 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 		"response_headers": flattenHeaders(upstreamResp.Header),
 		"sent_headers":     flattenHeaders(upstreamReq.Header),
 		"streaming":        streaming,
-		"aggregation_plugin": resolveAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
+		"aggregation_plugin": normalizeAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
 	}) {
 		return
 	}
@@ -266,6 +276,108 @@ func (s *server) handleCollections(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	store, err := s.pluginStore.Load()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to load plugins: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := struct {
+		Plugins []ImportedAggregationPluginResponse `json:"plugins"`
+	}{
+		Plugins: make([]ImportedAggregationPluginResponse, 0, len(store.Plugins)),
+	}
+	for _, plugin := range store.Plugins {
+		response.Plugins = append(response.Plugins, ImportedAggregationPluginResponse{
+			ID:          plugin.ID,
+			Label:       plugin.Label,
+			Description: plugin.Description,
+			ImportedAt:  plugin.ImportedAt,
+			Format:      plugin.Format,
+			ModuleURL:   fmt.Sprintf("/api/plugins/assets/%s.mjs?v=%s", plugin.ID, urlQueryEscape(plugin.ImportedAt)),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) handleImportPlugin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	defer r.Body.Close()
+	var payload PluginImportPayload
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxPluginSourceSize+(32<<10)))
+	if err := decoder.Decode(&payload); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	plugin, err := s.pluginStore.Import(payload)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to import plugin: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ImportedAggregationPluginResponse{
+		ID:          plugin.ID,
+		Label:       plugin.Label,
+		Description: plugin.Description,
+		ImportedAt:  plugin.ImportedAt,
+		Format:      plugin.Format,
+		ModuleURL:   fmt.Sprintf("/api/plugins/assets/%s.mjs?v=%s", plugin.ID, urlQueryEscape(plugin.ImportedAt)),
+	})
+}
+
+func (s *server) handlePluginAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := strings.TrimPrefix(path.Clean(strings.TrimPrefix(r.URL.Path, "/api/plugins/assets/")), "/")
+	if !strings.HasSuffix(name, ".mjs") || strings.Contains(name, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	id := normalizeImportedAggregationPluginID(strings.TrimSuffix(name, ".mjs"))
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	store, err := s.pluginStore.Load()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to load plugins: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	found := false
+	for _, plugin := range store.Plugins {
+		if plugin.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+
+	modulePath := filepath.Join(s.pluginStore.modulesDir, id+".mjs")
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	http.ServeFile(w, r, modulePath)
 }
 
 func streamSSEBody(
@@ -355,10 +467,13 @@ func sendEvent(w io.Writer, flusher http.Flusher, payload any) bool {
 	return true
 }
 
-func resolveAggregationPlugin(pluginID string, legacyOpenAI bool) string {
+func normalizeAggregationPlugin(pluginID string, legacyOpenAI bool) string {
 	normalized := strings.ToLower(strings.TrimSpace(pluginID))
 	switch normalized {
 	case "openai", "none":
+		return normalized
+	}
+	if normalizeImportedAggregationPluginID(normalized) != "" {
 		return normalized
 	}
 	if legacyOpenAI {
@@ -388,4 +503,9 @@ func applyEnv(input string, env map[string]string) string {
 		}
 		return match
 	})
+}
+
+func urlQueryEscape(value string) string {
+	replacer := strings.NewReplacer("%", "%25", ":", "%3A", "+", "%2B")
+	return replacer.Replace(value)
 }
