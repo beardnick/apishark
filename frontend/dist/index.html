@@ -164,9 +164,12 @@
           </div>
 
           <div class="workspace-row workspace-row-meta">
-            <label class="checkbox">
-              <input id="aggregateInput" type="checkbox" />
-              Enable built-in OpenAI-style SSE aggregator
+            <label for="aggregationPluginInput" class="timeout-label">
+              Aggregation
+              <select id="aggregationPluginInput">
+                <option value="none">None</option>
+                <option value="openai">Built-in OpenAI</option>
+              </select>
             </label>
             <label for="timeoutInput" class="timeout-label">
               Timeout (seconds)

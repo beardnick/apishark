@@ -10,6 +10,12 @@ import {
   trimAggregateFragments,
   type AggregateFragment,
 } from "./aggregate-fragments.js";
+import {
+  AGGREGATION_PLUGIN_OPENAI,
+  ResponseAggregationRuntime,
+  resolveAggregationPluginId,
+  type RawEvent,
+} from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
 
@@ -39,6 +45,7 @@ type PersistedState = {
   headers: EditableHeader[];
   headersText?: string;
   bodyText: string;
+  aggregationPlugin: string;
   aggregateOpenAISse: boolean;
   timeoutSeconds: number;
   activeCollectionId: string | null;
@@ -56,6 +63,7 @@ type SavedRequest = {
   url: string;
   headers: SavedHeader[];
   body: string;
+  aggregation_plugin?: string;
   aggregate_openai_sse: boolean;
   timeout_seconds: number;
   updated_at?: string;
@@ -80,11 +88,9 @@ type ServerEvent =
       response_headers?: Record<string, string>;
       sent_headers?: Record<string, string>;
       streaming: boolean;
+      aggregation_plugin?: string;
     }
-  | { type: "sse_line"; line: string }
-  | { type: "body_chunk"; chunk: string }
-  | { type: "aggregate_delta"; delta: string; text: string; fragments?: AggregateFragment[] }
-  | { type: "aggregate_done"; text: string; fragments?: AggregateFragment[] }
+  | ({ type: "raw_event" } & RawEvent)
   | { type: "error"; message: string }
   | { type: "done"; duration_ms: number; aggregated: string };
 
@@ -123,7 +129,7 @@ const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
 const bodyJsonPanel = byId<HTMLElement>("bodyJsonPanel");
 const bodyJsonMeta = byId<HTMLElement>("bodyJsonMeta");
 const bodyJsonPreview = byId<HTMLElement>("bodyJsonPreview");
-const aggregateInput = byId<HTMLInputElement>("aggregateInput");
+const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
 const copyExportCurlBtn = byId<HTMLButtonElement>("copyExportCurlBtn");
@@ -162,6 +168,7 @@ const ssePayloadOutput = byId<HTMLElement>("ssePayloadOutput");
 let activeAbortController: AbortController | null = null;
 let rawAppender: BatchedBoundedAppender;
 let aggregateAppender: BatchedAggregateAppender;
+let aggregationRuntime: ResponseAggregationRuntime | null = null;
 let rawResponseMode: RawResponseMode = "plain";
 let requestIsLoading = false;
 let environments: EnvironmentEntry[] = [];
@@ -267,7 +274,7 @@ function wireEvents(): void {
     requestNameInput,
     methodInput,
     urlInput,
-    aggregateInput,
+    aggregationPluginInput,
     timeoutInput,
   ];
 
@@ -330,6 +337,7 @@ function defaultState(): PersistedState {
       null,
       2,
     ),
+    aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
     aggregateOpenAISse: true,
     timeoutSeconds: 120,
     activeCollectionId: null,
@@ -347,7 +355,10 @@ function applyInitialState(): void {
   urlInput.value = state.url;
   headerRows = normalizeHeaderRows(state.headers);
   bodyInput.value = state.bodyText;
-  aggregateInput.checked = state.aggregateOpenAISse;
+  aggregationPluginInput.value = resolveAggregationPluginId(
+    state.aggregationPlugin,
+    state.aggregateOpenAISse,
+  );
   timeoutInput.value = String(state.timeoutSeconds);
   activeCollectionId = state.activeCollectionId;
   activeSavedRequestId = state.activeSavedRequestId;
@@ -394,6 +405,10 @@ function loadState(): PersistedState {
       url: typeof parsed.url === "string" ? parsed.url : fallback.url,
       headers: parsedHeaders,
       bodyText: typeof parsed.bodyText === "string" ? parsed.bodyText : fallback.bodyText,
+      aggregationPlugin:
+        typeof parsed.aggregationPlugin === "string"
+          ? resolveAggregationPluginId(parsed.aggregationPlugin)
+          : resolveAggregationPluginId(undefined, parsed.aggregateOpenAISse === true),
       aggregateOpenAISse:
         typeof parsed.aggregateOpenAISse === "boolean"
           ? parsed.aggregateOpenAISse
@@ -422,7 +437,8 @@ function persistState(): void {
     url: urlInput.value,
     headers: headerRows.map((header) => ({ ...header })),
     bodyText: bodyInput.value,
-    aggregateOpenAISse: aggregateInput.checked,
+    aggregationPlugin: selectedAggregationPlugin(),
+    aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
     timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
     activeCollectionId,
     activeSavedRequestId,
@@ -843,6 +859,7 @@ async function sendRequest(): Promise<void> {
 
   setLoading(true);
   activeAbortController = new AbortController();
+  aggregationRuntime = new ResponseAggregationRuntime(selectedAggregationPlugin());
 
   try {
     const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
@@ -857,7 +874,8 @@ async function sendRequest(): Promise<void> {
       headers: resolvedDraft.headers,
       body: resolvedDraft.body,
       env,
-      aggregate_openai_sse: aggregateInput.checked,
+      aggregation_plugin: selectedAggregationPlugin(),
+      aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
       timeout_seconds: toPositiveInt(timeoutInput.value, 120),
     };
 
@@ -874,6 +892,7 @@ async function sendRequest(): Promise<void> {
     }
 
     await consumeServerEvents(response);
+    finalizeAggregationRuntime();
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       setError("Request aborted.");
@@ -953,39 +972,8 @@ function consumeEvent(event: ServerEvent): void {
       renderResponseHeaders(latestResponseHeaders);
       break;
 
-    case "sse_line":
-      appendSseLine(event.line);
-      break;
-
-    case "body_chunk":
-      rawOutput.classList.remove("is-hidden");
-      rawJsonViewer.classList.add("is-hidden");
-      if (rawResponseMode === "sse") {
-        const normalized = event.chunk.replace(/\r\n/g, "\n");
-        for (const line of normalized.split("\n")) {
-          if (line) {
-            appendSseLine(line);
-          }
-        }
-      } else {
-        rawAppender.enqueue(event.chunk);
-      }
-      break;
-
-    case "aggregate_delta":
-      if (event.fragments && event.fragments.length > 0) {
-        aggregateAppender.enqueueFragments(event.fragments);
-      } else {
-        aggregateAppender.enqueue(event.delta);
-      }
-      break;
-
-    case "aggregate_done":
-      if (event.fragments && event.fragments.length > 0) {
-        aggregateAppender.setFragments(event.fragments);
-      } else if (!aggregateAppender.hasContent() && event.text) {
-        aggregateAppender.setText(event.text);
-      }
+    case "raw_event":
+      consumeRawEvent(event);
       break;
 
     case "error":
@@ -996,12 +984,69 @@ function consumeEvent(event: ServerEvent): void {
       if (statusText.textContent) {
         statusText.textContent = `${statusText.textContent} (${event.duration_ms} ms)`;
       }
-      if (!aggregateAppender.hasContent() && event.aggregated) {
-        aggregateAppender.setText(event.aggregated);
-      }
+      finalizeAggregationRuntime();
       finalizeResponseViews();
       break;
   }
+}
+
+function consumeRawEvent(event: RawEvent): void {
+  rawOutput.classList.remove("is-hidden");
+  rawJsonViewer.classList.add("is-hidden");
+
+  if (event.transport.mode === "sse") {
+    if (event.rawChunk) {
+      appendSseLine(event.rawChunk);
+    }
+  } else if (event.rawChunk) {
+    rawAppender.enqueue(event.rawChunk);
+  }
+
+  if (!aggregationRuntime) {
+    return;
+  }
+
+  const result = aggregationRuntime.consumeRawEvent(event);
+  if (result.error) {
+    handleAggregationFailure(result.error);
+    return;
+  }
+
+  applyAggregationRuntimeResult(result);
+}
+
+function finalizeAggregationRuntime(): void {
+  if (!aggregationRuntime) {
+    return;
+  }
+
+  const result = aggregationRuntime.finalize();
+  if (result.error) {
+    handleAggregationFailure(result.error);
+    return;
+  }
+
+  applyAggregationRuntimeResult(result);
+}
+
+function applyAggregationRuntimeResult(result: {
+  appendFragments?: AggregateFragment[];
+  replaceFragments?: AggregateFragment[];
+}): void {
+  if (result.replaceFragments && result.replaceFragments.length > 0) {
+    aggregateAppender.setFragments(result.replaceFragments);
+    return;
+  }
+
+  if (result.appendFragments && result.appendFragments.length > 0) {
+    aggregateAppender.enqueueFragments(result.appendFragments);
+  }
+}
+
+function handleAggregationFailure(message: string): void {
+  aggregationRuntime = null;
+  aggregateAppender.clear();
+  setError(message);
 }
 
 function finalizeResponseViews(): void {
@@ -1016,6 +1061,7 @@ function finalizeResponseViews(): void {
 function clearOutputs(): void {
   latestSentHeaders = {};
   latestResponseHeaders = {};
+  aggregationRuntime = null;
   setRawResponseMode("plain");
   statusText.textContent = "-";
   sentHeadersOutput.textContent = "";
@@ -1368,7 +1414,8 @@ async function saveCurrentRequestToCollection(): Promise<void> {
       enabled: header.enabled,
     })),
     body: bodyInput.value,
-    aggregate_openai_sse: aggregateInput.checked,
+    aggregation_plugin: selectedAggregationPlugin(),
+    aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
     timeout_seconds: toPositiveInt(timeoutInput.value, 120),
     updated_at: new Date().toISOString(),
   };
@@ -1419,7 +1466,10 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
   methodInput.value = savedRequest.method || "GET";
   urlInput.value = savedRequest.url;
   bodyInput.value = savedRequest.body;
-  aggregateInput.checked = savedRequest.aggregate_openai_sse;
+  aggregationPluginInput.value = resolveAggregationPluginId(
+    savedRequest.aggregation_plugin,
+    savedRequest.aggregate_openai_sse,
+  );
   timeoutInput.value = String(savedRequest.timeout_seconds || 120);
   headerRows = normalizeHeaderRows(savedRequest.headers);
 
@@ -1662,10 +1712,17 @@ function normalizeCollectionStore(input: Partial<CollectionStore>): CollectionSt
               url: typeof request.url === "string" ? request.url : "",
               headers: normalizeSavedHeaders(request.headers),
               body: typeof request.body === "string" ? request.body : "",
+              aggregation_plugin:
+                typeof request.aggregation_plugin === "string"
+                  ? resolveAggregationPluginId(request.aggregation_plugin)
+                  : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
               aggregate_openai_sse:
-                typeof request.aggregate_openai_sse === "boolean"
-                  ? request.aggregate_openai_sse
-                  : false,
+                resolveAggregationPluginId(
+                  typeof request.aggregation_plugin === "string"
+                    ? request.aggregation_plugin
+                    : undefined,
+                  request.aggregate_openai_sse === true,
+                ) === AGGREGATION_PLUGIN_OPENAI,
               timeout_seconds:
                 typeof request.timeout_seconds === "number" && Number.isFinite(request.timeout_seconds)
                   ? request.timeout_seconds
@@ -1736,7 +1793,7 @@ function setLoading(isLoading: boolean): void {
   urlInput.disabled = isLoading;
   bodyInput.disabled = isLoading;
   timeoutInput.disabled = isLoading;
-  aggregateInput.disabled = isLoading;
+  aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
@@ -1762,6 +1819,10 @@ function errorMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   return fallback;
+}
+
+function selectedAggregationPlugin(): string {
+  return resolveAggregationPluginId(aggregationPluginInput.value);
 }
 
 function toPositiveInt(value: string, fallback: number): number {

@@ -55,6 +55,7 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 							{Key: "Authorization", Value: "Bearer {{TOKEN}}", Enabled: false},
 						},
 						Body:               "{\"stream\":true}",
+						AggregationPlugin:  "openai",
 						AggregateOpenAISSE: true,
 						UpdatedAt:          "2026-03-11T12:00:00Z",
 					},
@@ -90,6 +91,9 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 	if len(request.Headers) != 2 {
 		t.Fatalf("reloaded header count = %d, want 2", len(request.Headers))
+	}
+	if request.AggregationPlugin != "openai" {
+		t.Fatalf("reloaded aggregation plugin = %q, want %q", request.AggregationPlugin, "openai")
 	}
 	if request.Headers[1].Enabled {
 		t.Fatal("disabled header was not preserved")
