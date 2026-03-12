@@ -24,11 +24,6 @@ const headersEditor = byId("headersEditor");
 const bodyInput = byId("bodyInput");
 const copyBodyBtn = byId("copyBodyBtn");
 const bodyPrettifyBtn = byId("bodyPrettifyBtn");
-const bodyCollapseBtn = byId("bodyCollapseBtn");
-const bodyExpandBtn = byId("bodyExpandBtn");
-const bodyJsonPanel = byId("bodyJsonPanel");
-const bodyJsonMeta = byId("bodyJsonMeta");
-const bodyJsonPreview = byId("bodyJsonPreview");
 const aggregationPluginInput = byId("aggregationPluginInput");
 const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
@@ -78,7 +73,6 @@ let activeSavedRequestId = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let rawJsonController = null;
-let bodyJsonController = null;
 let ssePayloadJsonController = null;
 let sseLineEntries = [];
 let selectedSseLine = null;
@@ -128,16 +122,11 @@ function wireEvents() {
         renderHeaderRows();
         persistState();
     });
-    bodyInput.addEventListener("input", () => {
-        updateBodyJsonPreview();
-        persistState();
-    });
+    bodyInput.addEventListener("input", persistState);
     copyBodyBtn.addEventListener("click", () => {
         void copyRequestBody();
     });
     bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
-    bodyCollapseBtn.addEventListener("click", () => bodyJsonController?.collapseAll());
-    bodyExpandBtn.addEventListener("click", () => bodyJsonController?.expandAll());
     rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
     rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
     ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -231,7 +220,6 @@ function applyInitialState() {
     activeSavedRequestId = state.activeSavedRequestId;
     renderEnvironmentControls();
     renderHeaderRows();
-    updateBodyJsonPreview();
 }
 function loadState() {
     const fallback = defaultState();
@@ -524,17 +512,6 @@ function removeHeader(id) {
     renderHeaderRows();
     persistState();
 }
-function updateBodyJsonPreview() {
-    const controller = renderJSONText(bodyJsonPreview, bodyInput.value, { expandDepth: 2 });
-    bodyJsonController = controller;
-    const hasJSON = controller.hasJSON;
-    bodyJsonPanel.classList.toggle("is-hidden", !hasJSON);
-    bodyCollapseBtn.disabled = !hasJSON;
-    bodyExpandBtn.disabled = !hasJSON;
-    bodyJsonMeta.textContent = hasJSON
-        ? "Collapsible JSON preview for the request body."
-        : "JSON preview";
-}
 function prettifyBodyJSON() {
     const pretty = prettifyJSONText(bodyInput.value);
     if (!pretty) {
@@ -543,7 +520,6 @@ function prettifyBodyJSON() {
     }
     setError("");
     bodyInput.value = pretty;
-    updateBodyJsonPreview();
     persistState();
 }
 async function importCurl() {
@@ -571,7 +547,6 @@ async function importCurl() {
         bodyInput.value = parsed.body || "";
         activeSavedRequestId = null;
         renderHeaderRows();
-        updateBodyJsonPreview();
         persistState();
     }
     catch (error) {
@@ -1198,7 +1173,6 @@ function loadSavedRequest(collectionId, requestId) {
     timeoutInput.value = String(savedRequest.timeout_seconds || 120);
     headerRows = normalizeHeaderRows(savedRequest.headers);
     renderHeaderRows();
-    updateBodyJsonPreview();
     renderCollections();
     persistState();
     setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);

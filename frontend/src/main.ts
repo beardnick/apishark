@@ -129,11 +129,6 @@ const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
-const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
-const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
-const bodyJsonPanel = byId<HTMLElement>("bodyJsonPanel");
-const bodyJsonMeta = byId<HTMLElement>("bodyJsonMeta");
-const bodyJsonPreview = byId<HTMLElement>("bodyJsonPreview");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
@@ -186,7 +181,6 @@ let activeSavedRequestId: string | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let rawJsonController: JsonViewController | null = null;
-let bodyJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
@@ -250,17 +244,12 @@ function wireEvents(): void {
     persistState();
   });
 
-  bodyInput.addEventListener("input", () => {
-    updateBodyJsonPreview();
-    persistState();
-  });
+  bodyInput.addEventListener("input", persistState);
 
   copyBodyBtn.addEventListener("click", () => {
     void copyRequestBody();
   });
   bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
-  bodyCollapseBtn.addEventListener("click", () => bodyJsonController?.collapseAll());
-  bodyExpandBtn.addEventListener("click", () => bodyJsonController?.expandAll());
   rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
   rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
   ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -377,7 +366,6 @@ function applyInitialState(): void {
 
   renderEnvironmentControls();
   renderHeaderRows();
-  updateBodyJsonPreview();
 }
 
 function loadState(): PersistedState {
@@ -750,19 +738,6 @@ function removeHeader(id: string): void {
   persistState();
 }
 
-function updateBodyJsonPreview(): void {
-  const controller = renderJSONText(bodyJsonPreview, bodyInput.value, { expandDepth: 2 });
-  bodyJsonController = controller;
-  const hasJSON = controller.hasJSON;
-
-  bodyJsonPanel.classList.toggle("is-hidden", !hasJSON);
-  bodyCollapseBtn.disabled = !hasJSON;
-  bodyExpandBtn.disabled = !hasJSON;
-  bodyJsonMeta.textContent = hasJSON
-    ? "Collapsible JSON preview for the request body."
-    : "JSON preview";
-}
-
 function prettifyBodyJSON(): void {
   const pretty = prettifyJSONText(bodyInput.value);
   if (!pretty) {
@@ -772,7 +747,6 @@ function prettifyBodyJSON(): void {
 
   setError("");
   bodyInput.value = pretty;
-  updateBodyJsonPreview();
   persistState();
 }
 
@@ -812,7 +786,6 @@ async function importCurl(): Promise<void> {
     bodyInput.value = parsed.body || "";
     activeSavedRequestId = null;
     renderHeaderRows();
-    updateBodyJsonPreview();
     persistState();
   } catch (error) {
     setError(errorMessage(error, "Failed to import curl command."));
@@ -1543,7 +1516,6 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
   headerRows = normalizeHeaderRows(savedRequest.headers);
 
   renderHeaderRows();
-  updateBodyJsonPreview();
   renderCollections();
   persistState();
   setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
