@@ -4,6 +4,12 @@ import {
   renderJSONValue,
   type JsonViewController,
 } from "./json-view.js";
+import {
+  aggregateFragmentsToText,
+  normalizeAggregateFragments,
+  trimAggregateFragments,
+  type AggregateFragment,
+} from "./aggregate-fragments.js";
 import { buildCurlCommand } from "./curl-export.js";
 
 type HeaderKV = {
@@ -70,12 +76,14 @@ type ServerEvent =
       status: number;
       status_text: string;
       headers: Record<string, string>;
+      response_headers?: Record<string, string>;
+      sent_headers?: Record<string, string>;
       streaming: boolean;
     }
   | { type: "sse_line"; line: string }
   | { type: "body_chunk"; chunk: string }
-  | { type: "aggregate_delta"; delta: string; text: string }
-  | { type: "aggregate_done"; text: string }
+  | { type: "aggregate_delta"; delta: string; text: string; fragments?: AggregateFragment[] }
+  | { type: "aggregate_done"; text: string; fragments?: AggregateFragment[] }
   | { type: "error"; message: string }
   | { type: "done"; duration_ms: number; aggregated: string };
 
@@ -134,6 +142,7 @@ const collectionsList = byId<HTMLElement>("collectionsList");
 
 const statusText = byId<HTMLSpanElement>("statusText");
 const errorText = byId<HTMLParagraphElement>("errorText");
+const sentHeadersOutput = byId<HTMLElement>("sentHeadersOutput");
 const headersOutput = byId<HTMLElement>("headersOutput");
 const rawJsonMeta = byId<HTMLElement>("rawJsonMeta");
 const rawCollapseBtn = byId<HTMLButtonElement>("rawCollapseBtn");
@@ -151,7 +160,7 @@ const ssePayloadOutput = byId<HTMLElement>("ssePayloadOutput");
 
 let activeAbortController: AbortController | null = null;
 let rawAppender: BatchedBoundedAppender;
-let aggregateAppender: BatchedBoundedAppender;
+let aggregateAppender: BatchedAggregateAppender;
 let rawResponseMode: RawResponseMode = "plain";
 let requestIsLoading = false;
 let environments: EnvironmentEntry[] = [];
@@ -160,6 +169,7 @@ let headerRows: EditableHeader[] = [];
 let collectionStore: CollectionStore = { collections: [] };
 let activeCollectionId: string | null = null;
 let activeSavedRequestId: string | null = null;
+let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let rawJsonController: JsonViewController | null = null;
 let bodyJsonController: JsonViewController | null = null;
@@ -928,10 +938,12 @@ function consumeFrame(frame: string): void {
 function consumeEvent(event: ServerEvent): void {
   switch (event.type) {
     case "meta":
-      latestResponseHeaders = event.headers;
+      latestSentHeaders = event.sent_headers ?? {};
+      latestResponseHeaders = event.response_headers ?? event.headers;
       setRawResponseMode(event.streaming ? "sse" : "plain");
       statusText.textContent = `${event.status_text}${event.streaming ? " (SSE stream)" : ""}`;
-      renderResponseHeaders(event.headers);
+      renderSentHeaders(latestSentHeaders);
+      renderResponseHeaders(latestResponseHeaders);
       break;
 
     case "sse_line":
@@ -954,11 +966,17 @@ function consumeEvent(event: ServerEvent): void {
       break;
 
     case "aggregate_delta":
-      aggregateAppender.enqueue(event.delta);
+      if (event.fragments && event.fragments.length > 0) {
+        aggregateAppender.enqueueFragments(event.fragments);
+      } else {
+        aggregateAppender.enqueue(event.delta);
+      }
       break;
 
     case "aggregate_done":
-      if (!aggregateAppender.hasContent() && event.text) {
+      if (event.fragments && event.fragments.length > 0) {
+        aggregateAppender.setFragments(event.fragments);
+      } else if (!aggregateAppender.hasContent() && event.text) {
         aggregateAppender.setText(event.text);
       }
       break;
@@ -980,6 +998,7 @@ function consumeEvent(event: ServerEvent): void {
 }
 
 function finalizeResponseViews(): void {
+  renderSentHeaders(latestSentHeaders);
   renderResponseHeaders(latestResponseHeaders);
   if (rawResponseMode === "plain") {
     const rawText = rawAppender.snapshotText();
@@ -988,9 +1007,11 @@ function finalizeResponseViews(): void {
 }
 
 function clearOutputs(): void {
+  latestSentHeaders = {};
   latestResponseHeaders = {};
   setRawResponseMode("plain");
   statusText.textContent = "-";
+  sentHeadersOutput.textContent = "";
   headersOutput.textContent = "";
   rawAppender.clear();
   aggregateAppender.clear();
@@ -1036,11 +1057,19 @@ function renderRawJSONIfPossible(text: string): void {
 }
 
 function renderResponseHeaders(headers: Record<string, string>): void {
+  renderHeaderMap(headersOutput, headers);
+}
+
+function renderSentHeaders(headers: Record<string, string>): void {
+  renderHeaderMap(sentHeadersOutput, headers);
+}
+
+function renderHeaderMap(element: HTMLElement, headers: Record<string, string>): void {
   if (Object.keys(headers).length === 0) {
-    headersOutput.textContent = "";
+    element.textContent = "";
     return;
   }
-  renderJSONValue(headersOutput, headers, { expandDepth: 1 });
+  renderJSONValue(element, headers, { expandDepth: 1 });
 }
 
 function clearSseInspector(): void {
@@ -1936,13 +1965,132 @@ class BatchedBoundedAppender {
   }
 }
 
+class BatchedAggregateAppender {
+  private readonly element: HTMLElement;
+  private readonly maxChars: number;
+  private readonly flushIntervalMs: number;
+  private fragments: AggregateFragment[] = [];
+  private pending: AggregateFragment[] = [];
+  private pendingChars = 0;
+  private flushTimer: number | null = null;
+
+  constructor(element: HTMLElement, maxChars: number, flushIntervalMs = OUTPUT_FLUSH_INTERVAL_MS) {
+    this.element = element;
+    this.maxChars = maxChars;
+    this.flushIntervalMs = flushIntervalMs;
+  }
+
+  enqueue(text: string): void {
+    if (!text) {
+      return;
+    }
+    this.enqueueFragments([{ kind: "content", text }]);
+  }
+
+  enqueueFragments(fragments: AggregateFragment[]): void {
+    const normalized = normalizeAggregateFragments(fragments);
+    if (normalized.length === 0) {
+      return;
+    }
+
+    this.pending.push(...normalized);
+    this.pendingChars += aggregateFragmentsToText(normalized).length;
+    this.scheduleFlush();
+  }
+
+  hasContent(): boolean {
+    return this.fragments.length > 0 || this.pendingChars > 0;
+  }
+
+  setText(text: string): void {
+    this.setFragments(text ? [{ kind: "content", text }] : []);
+  }
+
+  setFragments(fragments: AggregateFragment[]): void {
+    this.clear();
+    this.enqueueFragments(fragments);
+    this.flushNow();
+  }
+
+  snapshotText(): string {
+    this.flushNow();
+    return aggregateFragmentsToText(this.fragments);
+  }
+
+  clear(): void {
+    this.cancelFlush();
+    this.fragments = [];
+    this.pending = [];
+    this.pendingChars = 0;
+    this.element.textContent = "";
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer !== null) {
+      return;
+    }
+    this.flushTimer = window.setTimeout(() => {
+      this.flushTimer = null;
+      this.flushNow();
+    }, this.flushIntervalMs);
+  }
+
+  private cancelFlush(): void {
+    if (this.flushTimer === null) {
+      return;
+    }
+    window.clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  private flushNow(): void {
+    if (this.pendingChars === 0) {
+      return;
+    }
+
+    const pending = this.pending;
+    this.pending = [];
+    this.pendingChars = 0;
+    const stickToBottom = isNearBottom(this.element);
+    this.fragments = trimAggregateFragments([...this.fragments, ...pending], this.maxChars);
+    renderAggregateFragments(this.element, this.fragments);
+
+    if (stickToBottom) {
+      this.element.scrollTop = this.element.scrollHeight;
+    }
+  }
+}
+
+function renderAggregateFragments(element: HTMLElement, fragments: AggregateFragment[]): void {
+  element.textContent = "";
+
+  const fragment = document.createDocumentFragment();
+  for (const part of fragments) {
+    if (!part.text) {
+      continue;
+    }
+
+    if (part.kind === "thinking") {
+      const span = document.createElement("span");
+      span.className = "aggregate-fragment is-thinking";
+      span.textContent = part.text;
+      fragment.appendChild(span);
+      continue;
+    }
+
+    fragment.appendChild(document.createTextNode(part.text));
+  }
+
+  element.appendChild(fragment);
+}
+
 function isNearBottom(element: HTMLElement): boolean {
   const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
   return remaining < 24;
 }
 
 rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
-aggregateAppender = new BatchedBoundedAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
+aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
 applyInitialState();

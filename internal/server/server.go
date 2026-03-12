@@ -42,9 +42,10 @@ type SendRequestPayload struct {
 }
 
 type server struct {
-	staticFS         fs.FS
-	fileServer       http.Handler
-	collectionStore  *collectionFileStore
+	staticFS        fs.FS
+	fileServer      http.Handler
+	collectionStore *collectionFileStore
+	httpClient      *http.Client
 }
 
 func NewHandler(staticFS fs.FS, projectDir string) http.Handler {
@@ -144,7 +145,14 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(payload.TimeoutSeconds) * time.Second
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := s.httpClient
+	if client == nil {
+		client = &http.Client{}
+	} else {
+		cloned := *client
+		client = &cloned
+	}
+	client.Timeout = timeout
 	upstreamResp, err := client.Do(upstreamReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("upstream request failed: %v", err), http.StatusBadGateway)
@@ -167,11 +175,13 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	streaming := strings.Contains(strings.ToLower(upstreamResp.Header.Get("Content-Type")), "text/event-stream")
 	if !sendEvent(w, flusher, map[string]any{
-		"type":        "meta",
-		"status":      upstreamResp.StatusCode,
-		"status_text": upstreamResp.Status,
-		"headers":     flattenHeaders(upstreamResp.Header),
-		"streaming":   streaming,
+		"type":             "meta",
+		"status":           upstreamResp.StatusCode,
+		"status_text":      upstreamResp.Status,
+		"headers":          flattenHeaders(upstreamResp.Header),
+		"response_headers": flattenHeaders(upstreamResp.Header),
+		"sent_headers":     flattenHeaders(upstreamReq.Header),
+		"streaming":        streaming,
 	}) {
 		return
 	}
@@ -275,18 +285,20 @@ func streamSSEBody(
 				return false
 			}
 
-			if delta, done := aggregator.ConsumeSSELine(line); delta != "" {
+			if fragments, done := aggregator.ConsumeSSELine(line); len(fragments) > 0 {
 				if !sendEvent(w, flusher, map[string]any{
-					"type":  "aggregate_delta",
-					"delta": delta,
-					"text":  aggregator.Text(),
+					"type":      "aggregate_delta",
+					"delta":     aggregateFragmentsText(fragments),
+					"text":      aggregator.Text(),
+					"fragments": fragments,
 				}) {
 					return false
 				}
 			} else if done {
 				if !sendEvent(w, flusher, map[string]any{
-					"type": "aggregate_done",
-					"text": aggregator.Text(),
+					"type":      "aggregate_done",
+					"text":      aggregator.Text(),
+					"fragments": aggregator.Segments(),
 				}) {
 					return false
 				}
@@ -342,10 +354,11 @@ func streamRegularBody(
 	}
 
 	if aggregateEnabled {
-		if delta := aggregator.ConsumeNonStreamJSON(fullBody.Bytes()); delta != "" {
+		if fragments := aggregator.ConsumeNonStreamJSON(fullBody.Bytes()); len(fragments) > 0 {
 			if !sendEvent(w, flusher, map[string]any{
-				"type": "aggregate_done",
-				"text": aggregator.Text(),
+				"type":      "aggregate_done",
+				"text":      aggregator.Text(),
+				"fragments": aggregator.Segments(),
 			}) {
 				return false
 			}
@@ -361,6 +374,14 @@ func flattenHeaders(headers http.Header) map[string]string {
 		out[key] = strings.Join(values, ", ")
 	}
 	return out
+}
+
+func aggregateFragmentsText(fragments []AggregateFragment) string {
+	var builder strings.Builder
+	for _, fragment := range fragments {
+		builder.WriteString(fragment.Text)
+	}
+	return builder.String()
 }
 
 func sendEvent(w io.Writer, flusher http.Flusher, payload any) bool {

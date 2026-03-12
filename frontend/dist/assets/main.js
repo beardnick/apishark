@@ -1,4 +1,5 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
+import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { buildCurlCommand } from "./curl-export.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
@@ -42,6 +43,7 @@ const collectionsStatusText = byId("collectionsStatusText");
 const collectionsList = byId("collectionsList");
 const statusText = byId("statusText");
 const errorText = byId("errorText");
+const sentHeadersOutput = byId("sentHeadersOutput");
 const headersOutput = byId("headersOutput");
 const rawJsonMeta = byId("rawJsonMeta");
 const rawCollapseBtn = byId("rawCollapseBtn");
@@ -67,6 +69,7 @@ let headerRows = [];
 let collectionStore = { collections: [] };
 let activeCollectionId = null;
 let activeSavedRequestId = null;
+let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let rawJsonController = null;
 let bodyJsonController = null;
@@ -692,10 +695,12 @@ function consumeFrame(frame) {
 function consumeEvent(event) {
     switch (event.type) {
         case "meta":
-            latestResponseHeaders = event.headers;
+            latestSentHeaders = event.sent_headers ?? {};
+            latestResponseHeaders = event.response_headers ?? event.headers;
             setRawResponseMode(event.streaming ? "sse" : "plain");
             statusText.textContent = `${event.status_text}${event.streaming ? " (SSE stream)" : ""}`;
-            renderResponseHeaders(event.headers);
+            renderSentHeaders(latestSentHeaders);
+            renderResponseHeaders(latestResponseHeaders);
             break;
         case "sse_line":
             appendSseLine(event.line);
@@ -716,10 +721,18 @@ function consumeEvent(event) {
             }
             break;
         case "aggregate_delta":
-            aggregateAppender.enqueue(event.delta);
+            if (event.fragments && event.fragments.length > 0) {
+                aggregateAppender.enqueueFragments(event.fragments);
+            }
+            else {
+                aggregateAppender.enqueue(event.delta);
+            }
             break;
         case "aggregate_done":
-            if (!aggregateAppender.hasContent() && event.text) {
+            if (event.fragments && event.fragments.length > 0) {
+                aggregateAppender.setFragments(event.fragments);
+            }
+            else if (!aggregateAppender.hasContent() && event.text) {
                 aggregateAppender.setText(event.text);
             }
             break;
@@ -738,6 +751,7 @@ function consumeEvent(event) {
     }
 }
 function finalizeResponseViews() {
+    renderSentHeaders(latestSentHeaders);
     renderResponseHeaders(latestResponseHeaders);
     if (rawResponseMode === "plain") {
         const rawText = rawAppender.snapshotText();
@@ -745,9 +759,11 @@ function finalizeResponseViews() {
     }
 }
 function clearOutputs() {
+    latestSentHeaders = {};
     latestResponseHeaders = {};
     setRawResponseMode("plain");
     statusText.textContent = "-";
+    sentHeadersOutput.textContent = "";
     headersOutput.textContent = "";
     rawAppender.clear();
     aggregateAppender.clear();
@@ -788,11 +804,17 @@ function renderRawJSONIfPossible(text) {
     rawExpandBtn.disabled = false;
 }
 function renderResponseHeaders(headers) {
+    renderHeaderMap(headersOutput, headers);
+}
+function renderSentHeaders(headers) {
+    renderHeaderMap(sentHeadersOutput, headers);
+}
+function renderHeaderMap(element, headers) {
     if (Object.keys(headers).length === 0) {
-        headersOutput.textContent = "";
+        element.textContent = "";
         return;
     }
-    renderJSONValue(headersOutput, headers, { expandDepth: 1 });
+    renderJSONValue(element, headers, { expandDepth: 1 });
 }
 function clearSseInspector() {
     sseLineEntries = [];
@@ -1560,12 +1582,108 @@ class BatchedBoundedAppender {
         }
     }
 }
+class BatchedAggregateAppender {
+    constructor(element, maxChars, flushIntervalMs = OUTPUT_FLUSH_INTERVAL_MS) {
+        this.fragments = [];
+        this.pending = [];
+        this.pendingChars = 0;
+        this.flushTimer = null;
+        this.element = element;
+        this.maxChars = maxChars;
+        this.flushIntervalMs = flushIntervalMs;
+    }
+    enqueue(text) {
+        if (!text) {
+            return;
+        }
+        this.enqueueFragments([{ kind: "content", text }]);
+    }
+    enqueueFragments(fragments) {
+        const normalized = normalizeAggregateFragments(fragments);
+        if (normalized.length === 0) {
+            return;
+        }
+        this.pending.push(...normalized);
+        this.pendingChars += aggregateFragmentsToText(normalized).length;
+        this.scheduleFlush();
+    }
+    hasContent() {
+        return this.fragments.length > 0 || this.pendingChars > 0;
+    }
+    setText(text) {
+        this.setFragments(text ? [{ kind: "content", text }] : []);
+    }
+    setFragments(fragments) {
+        this.clear();
+        this.enqueueFragments(fragments);
+        this.flushNow();
+    }
+    snapshotText() {
+        this.flushNow();
+        return aggregateFragmentsToText(this.fragments);
+    }
+    clear() {
+        this.cancelFlush();
+        this.fragments = [];
+        this.pending = [];
+        this.pendingChars = 0;
+        this.element.textContent = "";
+    }
+    scheduleFlush() {
+        if (this.flushTimer !== null) {
+            return;
+        }
+        this.flushTimer = window.setTimeout(() => {
+            this.flushTimer = null;
+            this.flushNow();
+        }, this.flushIntervalMs);
+    }
+    cancelFlush() {
+        if (this.flushTimer === null) {
+            return;
+        }
+        window.clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+    }
+    flushNow() {
+        if (this.pendingChars === 0) {
+            return;
+        }
+        const pending = this.pending;
+        this.pending = [];
+        this.pendingChars = 0;
+        const stickToBottom = isNearBottom(this.element);
+        this.fragments = trimAggregateFragments([...this.fragments, ...pending], this.maxChars);
+        renderAggregateFragments(this.element, this.fragments);
+        if (stickToBottom) {
+            this.element.scrollTop = this.element.scrollHeight;
+        }
+    }
+}
+function renderAggregateFragments(element, fragments) {
+    element.textContent = "";
+    const fragment = document.createDocumentFragment();
+    for (const part of fragments) {
+        if (!part.text) {
+            continue;
+        }
+        if (part.kind === "thinking") {
+            const span = document.createElement("span");
+            span.className = "aggregate-fragment is-thinking";
+            span.textContent = part.text;
+            fragment.appendChild(span);
+            continue;
+        }
+        fragment.appendChild(document.createTextNode(part.text));
+    }
+    element.appendChild(fragment);
+}
 function isNearBottom(element) {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     return remaining < 24;
 }
 rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
-aggregateAppender = new BatchedBoundedAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
+aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
 applyInitialState();

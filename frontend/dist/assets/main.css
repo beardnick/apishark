@@ -713,6 +713,7 @@ button.ghost:hover:not(:disabled) {
 
 .json-panel .json-viewer-shell,
 #rawJsonViewer,
+#sentHeadersOutput,
 #headersOutput {
   margin-top: var(--space-3);
 }
@@ -808,6 +809,20 @@ button.ghost:hover:not(:disabled) {
 .output-tall {
   min-height: 220px;
   max-height: 52vh;
+}
+
+.headers-panel-stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.aggregate-fragment.is-thinking {
+  color: #55616f;
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 1px 5px;
 }
 
 .raw-fallback.is-hidden,
@@ -1072,6 +1087,7 @@ button.ghost:hover:not(:disabled) {
   background: rgba(245, 247, 251, 0.96);
 }
 
+#sentHeadersOutput.output,
 #headersOutput.output {
   min-height: 156px;
   background: var(--code-bg);

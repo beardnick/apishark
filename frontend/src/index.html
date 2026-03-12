@@ -409,7 +409,16 @@
             </section>
 
             <section id="responseHeadersPanel" class="pm-panel" data-tab-panel="response">
-              <div id="headersOutput" class="json-viewer-shell output"></div>
+              <div class="headers-panel-stack">
+                <div>
+                  <p class="panel-label compact-label">Sent headers</p>
+                  <div id="sentHeadersOutput" class="json-viewer-shell output"></div>
+                </div>
+                <div>
+                  <p class="panel-label compact-label">Response headers</p>
+                  <div id="headersOutput" class="json-viewer-shell output"></div>
+                </div>
+              </div>
             </section>
           </div>
         </section>

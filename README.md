@@ -14,6 +14,8 @@ into the Go executable via `embed`.
 - JSON prettify and collapsible JSON viewers for request/response payloads
 - Incremental streaming display for SSE responses
 - Built-in OpenAI-style SSE aggregator for token-by-token text rendering
+- Sent/response header inspection with environment-resolved request headers
+- Muted styling for aggregated thinking/reasoning segments
 
 ## Run
 
