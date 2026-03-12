@@ -258,6 +258,15 @@
                 <label for="bodyInput" class="panel-label">Body</label>
                 <div class="inline-actions panel-tools">
                   <button
+                    id="copyBodyBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Copy request body"
+                    title="Copy request body"
+                  >
+                    <span class="action-symbol" aria-hidden="true">⧉</span>
+                  </button>
+                  <button
                     id="bodyPrettifyBtn"
                     type="button"
                     class="ghost icon-btn toolbar-icon-btn"
@@ -265,24 +274,6 @@
                     title="Prettify JSON"
                   >
                     <span class="action-symbol" aria-hidden="true">{}</span>
-                  </button>
-                  <button
-                    id="bodyCollapseBtn"
-                    type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
-                    aria-label="Collapse all"
-                    title="Collapse all"
-                  >
-                    <span class="action-symbol" aria-hidden="true">−</span>
-                  </button>
-                  <button
-                    id="bodyExpandBtn"
-                    type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
-                    aria-label="Expand all"
-                    title="Expand all"
-                  >
-                    <span class="action-symbol" aria-hidden="true">+</span>
                   </button>
                 </div>
               </div>
@@ -292,13 +283,6 @@
                 rows="11"
                 placeholder='{"stream": true, "messages": []}'
               ></textarea>
-
-              <div id="bodyJsonPanel" class="json-panel is-hidden">
-                <div class="json-toolbar">
-                  <span id="bodyJsonMeta" class="hint compact">JSON preview</span>
-                </div>
-                <div id="bodyJsonPreview" class="json-viewer-shell"></div>
-              </div>
             </section>
           </div>
         </section>
@@ -461,7 +445,10 @@
             <input id="newCollectionNameInput" type="text" placeholder="New collection name" />
             <button id="createCollectionBtn" type="button">Create</button>
           </div>
-          <button id="saveRequestBtn" type="button" class="secondary">Save current request</button>
+          <div class="library-request-actions">
+            <button id="duplicateRequestBtn" type="button" class="secondary">Duplicate</button>
+            <button id="saveRequestBtn" type="button" class="secondary">Save current request</button>
+          </div>
         </div>
 
         <p id="collectionsStatusText" class="hint compact">

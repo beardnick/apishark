@@ -3,6 +3,7 @@ import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFra
 import { AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, resolveAggregationPluginId, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
+import { createDuplicateRequestDraft, } from "./request-library.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
@@ -21,12 +22,8 @@ const urlInput = byId("urlInput");
 const addHeaderBtn = byId("addHeaderBtn");
 const headersEditor = byId("headersEditor");
 const bodyInput = byId("bodyInput");
+const copyBodyBtn = byId("copyBodyBtn");
 const bodyPrettifyBtn = byId("bodyPrettifyBtn");
-const bodyCollapseBtn = byId("bodyCollapseBtn");
-const bodyExpandBtn = byId("bodyExpandBtn");
-const bodyJsonPanel = byId("bodyJsonPanel");
-const bodyJsonMeta = byId("bodyJsonMeta");
-const bodyJsonPreview = byId("bodyJsonPreview");
 const aggregationPluginInput = byId("aggregationPluginInput");
 const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
@@ -39,6 +36,7 @@ const abortBtn = byId("abortBtn");
 const clearOutputBtn = byId("clearOutputBtn");
 const reloadCollectionsBtn = byId("reloadCollectionsBtn");
 const createCollectionBtn = byId("createCollectionBtn");
+const duplicateRequestBtn = byId("duplicateRequestBtn");
 const saveRequestBtn = byId("saveRequestBtn");
 const newCollectionNameInput = byId("newCollectionNameInput");
 const collectionsStatusText = byId("collectionsStatusText");
@@ -75,7 +73,6 @@ let activeSavedRequestId = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let rawJsonController = null;
-let bodyJsonController = null;
 let ssePayloadJsonController = null;
 let sseLineEntries = [];
 let selectedSseLine = null;
@@ -125,13 +122,11 @@ function wireEvents() {
         renderHeaderRows();
         persistState();
     });
-    bodyInput.addEventListener("input", () => {
-        updateBodyJsonPreview();
-        persistState();
+    bodyInput.addEventListener("input", persistState);
+    copyBodyBtn.addEventListener("click", () => {
+        void copyRequestBody();
     });
     bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
-    bodyCollapseBtn.addEventListener("click", () => bodyJsonController?.collapseAll());
-    bodyExpandBtn.addEventListener("click", () => bodyJsonController?.expandAll());
     rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
     rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
     ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -141,6 +136,9 @@ function wireEvents() {
     });
     createCollectionBtn.addEventListener("click", () => {
         void createCollection();
+    });
+    duplicateRequestBtn.addEventListener("click", () => {
+        void duplicateCurrentRequest();
     });
     saveRequestBtn.addEventListener("click", () => {
         void saveCurrentRequestToCollection();
@@ -222,7 +220,6 @@ function applyInitialState() {
     activeSavedRequestId = state.activeSavedRequestId;
     renderEnvironmentControls();
     renderHeaderRows();
-    updateBodyJsonPreview();
 }
 function loadState() {
     const fallback = defaultState();
@@ -515,17 +512,6 @@ function removeHeader(id) {
     renderHeaderRows();
     persistState();
 }
-function updateBodyJsonPreview() {
-    const controller = renderJSONText(bodyJsonPreview, bodyInput.value, { expandDepth: 2 });
-    bodyJsonController = controller;
-    const hasJSON = controller.hasJSON;
-    bodyJsonPanel.classList.toggle("is-hidden", !hasJSON);
-    bodyCollapseBtn.disabled = !hasJSON;
-    bodyExpandBtn.disabled = !hasJSON;
-    bodyJsonMeta.textContent = hasJSON
-        ? "Collapsible JSON preview for the request body."
-        : "JSON preview";
-}
 function prettifyBodyJSON() {
     const pretty = prettifyJSONText(bodyInput.value);
     if (!pretty) {
@@ -534,7 +520,6 @@ function prettifyBodyJSON() {
     }
     setError("");
     bodyInput.value = pretty;
-    updateBodyJsonPreview();
     persistState();
 }
 async function importCurl() {
@@ -562,7 +547,6 @@ async function importCurl() {
         bodyInput.value = parsed.body || "";
         activeSavedRequestId = null;
         renderHeaderRows();
-        updateBodyJsonPreview();
         persistState();
     }
     catch (error) {
@@ -603,6 +587,20 @@ async function copyExportedCurl() {
     curlExportOutput.focus();
     curlExportOutput.select();
     setError("Clipboard copy failed. Select the cURL text and copy it manually.");
+}
+async function copyRequestBody() {
+    const body = bodyInput.value;
+    if (!body) {
+        setError("Request body is empty.");
+        return;
+    }
+    if (await writeClipboardText(body)) {
+        setSuccess("Request body copied to clipboard.");
+        return;
+    }
+    bodyInput.focus();
+    bodyInput.select();
+    setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 async function sendRequest() {
     setError("");
@@ -1085,22 +1083,10 @@ async function saveCurrentRequestToCollection() {
         return;
     }
     const requestName = requestNameInput.value.trim() || "Untitled Request";
-    const savedRequest = {
+    const savedRequest = createSavedRequest({
         id: activeSavedRequestId ?? makeId("req"),
-        name: requestName,
-        method: methodInput.value.trim().toUpperCase(),
-        url: urlInput.value.trim(),
-        headers: headerRows.map((header) => ({
-            key: header.key,
-            value: header.value,
-            enabled: header.enabled,
-        })),
-        body: bodyInput.value,
-        aggregation_plugin: selectedAggregationPlugin(),
-        aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
-        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-        updated_at: new Date().toISOString(),
-    };
+        draft: getCurrentSavedRequestDraft(),
+    });
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
         collections: collectionStore.collections.map((item) => {
@@ -1129,6 +1115,47 @@ async function saveCurrentRequestToCollection() {
     persistState();
     setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
 }
+async function duplicateCurrentRequest() {
+    const currentDraft = getCurrentSavedRequestDraft();
+    const targetCollection = findCollection(activeCollectionId);
+    const existingNames = targetCollection
+        ? targetCollection.requests.map((request) => request.name)
+        : collectionStore.collections.flatMap((collection) => collection.requests.map((request) => request.name));
+    const duplicateDraft = createDuplicateRequestDraft(currentDraft, existingNames);
+    if (!targetCollection || !activeCollectionId) {
+        requestNameInput.value = duplicateDraft.name;
+        activeSavedRequestId = null;
+        persistState();
+        setCollectionsStatus(`Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`);
+        return;
+    }
+    const sourceName = currentDraft.name;
+    const insertAfterRequestId = activeSavedRequestId;
+    const savedRequest = createSavedRequest({
+        id: makeId("req"),
+        draft: duplicateDraft,
+    });
+    const previous = cloneCollectionStore(collectionStore);
+    collectionStore = {
+        collections: collectionStore.collections.map((collection) => {
+            if (collection.id !== activeCollectionId) {
+                return collection;
+            }
+            return {
+                ...collection,
+                requests: insertSavedRequest(collection.requests, savedRequest, insertAfterRequestId),
+            };
+        }),
+    };
+    if (!(await saveCollectionsToServer(previous))) {
+        return;
+    }
+    requestNameInput.value = savedRequest.name;
+    activeSavedRequestId = savedRequest.id;
+    renderCollections();
+    persistState();
+    setCollectionsStatus(`Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`);
+}
 function loadSavedRequest(collectionId, requestId) {
     const collection = findCollection(collectionId);
     const savedRequest = collection?.requests.find((request) => request.id === requestId);
@@ -1146,7 +1173,6 @@ function loadSavedRequest(collectionId, requestId) {
     timeoutInput.value = String(savedRequest.timeout_seconds || 120);
     headerRows = normalizeHeaderRows(savedRequest.headers);
     renderHeaderRows();
-    updateBodyJsonPreview();
     renderCollections();
     persistState();
     setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
@@ -1424,6 +1450,7 @@ function setLoading(isLoading) {
     timeoutInput.disabled = isLoading;
     aggregationPluginInput.disabled = isLoading;
     addHeaderBtn.disabled = isLoading;
+    copyBodyBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
     abortBtn.disabled = !isLoading;
     sendBtn.textContent = isLoading ? "Sending..." : "Send";
@@ -1464,6 +1491,51 @@ function makeId(prefix) {
 }
 function cloneCollectionStore(store) {
     return JSON.parse(JSON.stringify(store));
+}
+function getCurrentSavedRequestDraft() {
+    const aggregationPlugin = selectedAggregationPlugin();
+    return {
+        name: requestNameInput.value.trim() || "Untitled Request",
+        method: methodInput.value.trim().toUpperCase() || "GET",
+        url: urlInput.value.trim(),
+        headers: headerRows.map((header) => ({
+            key: header.key,
+            value: header.value,
+            enabled: header.enabled,
+        })),
+        body: bodyInput.value,
+        aggregation_plugin: aggregationPlugin,
+        aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+    };
+}
+function createSavedRequest(input) {
+    return {
+        id: input.id,
+        name: input.draft.name,
+        method: input.draft.method,
+        url: input.draft.url,
+        headers: input.draft.headers.map((header) => ({ ...header })),
+        body: input.draft.body,
+        aggregation_plugin: input.draft.aggregation_plugin,
+        aggregate_openai_sse: input.draft.aggregate_openai_sse,
+        timeout_seconds: input.draft.timeout_seconds,
+        updated_at: new Date().toISOString(),
+    };
+}
+function insertSavedRequest(requests, savedRequest, afterRequestId) {
+    const next = [...requests];
+    if (!afterRequestId) {
+        next.push(savedRequest);
+        return next;
+    }
+    const index = next.findIndex((request) => request.id === afterRequestId);
+    if (index < 0) {
+        next.push(savedRequest);
+        return next;
+    }
+    next.splice(index + 1, 0, savedRequest);
+    return next;
 }
 function getCurrentRequestDraft() {
     return {

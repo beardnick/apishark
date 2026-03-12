@@ -18,6 +18,10 @@ import {
 } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
+import {
+  createDuplicateRequestDraft,
+  type RequestLibraryDraft,
+} from "./request-library.js";
 
 type HeaderKV = {
   key: string;
@@ -123,12 +127,8 @@ const urlInput = byId<HTMLInputElement>("urlInput");
 const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
+const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
-const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
-const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
-const bodyJsonPanel = byId<HTMLElement>("bodyJsonPanel");
-const bodyJsonMeta = byId<HTMLElement>("bodyJsonMeta");
-const bodyJsonPreview = byId<HTMLElement>("bodyJsonPreview");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
@@ -142,6 +142,7 @@ const clearOutputBtn = byId<HTMLButtonElement>("clearOutputBtn");
 
 const reloadCollectionsBtn = byId<HTMLButtonElement>("reloadCollectionsBtn");
 const createCollectionBtn = byId<HTMLButtonElement>("createCollectionBtn");
+const duplicateRequestBtn = byId<HTMLButtonElement>("duplicateRequestBtn");
 const saveRequestBtn = byId<HTMLButtonElement>("saveRequestBtn");
 const newCollectionNameInput = byId<HTMLInputElement>("newCollectionNameInput");
 const collectionsStatusText = byId<HTMLElement>("collectionsStatusText");
@@ -180,7 +181,6 @@ let activeSavedRequestId: string | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let rawJsonController: JsonViewController | null = null;
-let bodyJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
@@ -244,14 +244,12 @@ function wireEvents(): void {
     persistState();
   });
 
-  bodyInput.addEventListener("input", () => {
-    updateBodyJsonPreview();
-    persistState();
-  });
+  bodyInput.addEventListener("input", persistState);
 
+  copyBodyBtn.addEventListener("click", () => {
+    void copyRequestBody();
+  });
   bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
-  bodyCollapseBtn.addEventListener("click", () => bodyJsonController?.collapseAll());
-  bodyExpandBtn.addEventListener("click", () => bodyJsonController?.expandAll());
   rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
   rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
   ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -262,6 +260,9 @@ function wireEvents(): void {
   });
   createCollectionBtn.addEventListener("click", () => {
     void createCollection();
+  });
+  duplicateRequestBtn.addEventListener("click", () => {
+    void duplicateCurrentRequest();
   });
   saveRequestBtn.addEventListener("click", () => {
     void saveCurrentRequestToCollection();
@@ -365,7 +366,6 @@ function applyInitialState(): void {
 
   renderEnvironmentControls();
   renderHeaderRows();
-  updateBodyJsonPreview();
 }
 
 function loadState(): PersistedState {
@@ -738,19 +738,6 @@ function removeHeader(id: string): void {
   persistState();
 }
 
-function updateBodyJsonPreview(): void {
-  const controller = renderJSONText(bodyJsonPreview, bodyInput.value, { expandDepth: 2 });
-  bodyJsonController = controller;
-  const hasJSON = controller.hasJSON;
-
-  bodyJsonPanel.classList.toggle("is-hidden", !hasJSON);
-  bodyCollapseBtn.disabled = !hasJSON;
-  bodyExpandBtn.disabled = !hasJSON;
-  bodyJsonMeta.textContent = hasJSON
-    ? "Collapsible JSON preview for the request body."
-    : "JSON preview";
-}
-
 function prettifyBodyJSON(): void {
   const pretty = prettifyJSONText(bodyInput.value);
   if (!pretty) {
@@ -760,7 +747,6 @@ function prettifyBodyJSON(): void {
 
   setError("");
   bodyInput.value = pretty;
-  updateBodyJsonPreview();
   persistState();
 }
 
@@ -800,7 +786,6 @@ async function importCurl(): Promise<void> {
     bodyInput.value = parsed.body || "";
     activeSavedRequestId = null;
     renderHeaderRows();
-    updateBodyJsonPreview();
     persistState();
   } catch (error) {
     setError(errorMessage(error, "Failed to import curl command."));
@@ -845,6 +830,23 @@ async function copyExportedCurl(): Promise<void> {
   curlExportOutput.focus();
   curlExportOutput.select();
   setError("Clipboard copy failed. Select the cURL text and copy it manually.");
+}
+
+async function copyRequestBody(): Promise<void> {
+  const body = bodyInput.value;
+  if (!body) {
+    setError("Request body is empty.");
+    return;
+  }
+
+  if (await writeClipboardText(body)) {
+    setSuccess("Request body copied to clipboard.");
+    return;
+  }
+
+  bodyInput.focus();
+  bodyInput.select();
+  setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 
 async function sendRequest(): Promise<void> {
@@ -1403,22 +1405,10 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   }
 
   const requestName = requestNameInput.value.trim() || "Untitled Request";
-  const savedRequest: SavedRequest = {
+  const savedRequest = createSavedRequest({
     id: activeSavedRequestId ?? makeId("req"),
-    name: requestName,
-    method: methodInput.value.trim().toUpperCase(),
-    url: urlInput.value.trim(),
-    headers: headerRows.map((header) => ({
-      key: header.key,
-      value: header.value,
-      enabled: header.enabled,
-    })),
-    body: bodyInput.value,
-    aggregation_plugin: selectedAggregationPlugin(),
-    aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
-    timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-    updated_at: new Date().toISOString(),
-  };
+    draft: getCurrentSavedRequestDraft(),
+  });
 
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
@@ -1452,6 +1442,58 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
 }
 
+async function duplicateCurrentRequest(): Promise<void> {
+  const currentDraft = getCurrentSavedRequestDraft();
+  const targetCollection = findCollection(activeCollectionId);
+  const existingNames = targetCollection
+    ? targetCollection.requests.map((request) => request.name)
+    : collectionStore.collections.flatMap((collection) =>
+        collection.requests.map((request) => request.name),
+      );
+  const duplicateDraft = createDuplicateRequestDraft(currentDraft, existingNames);
+
+  if (!targetCollection || !activeCollectionId) {
+    requestNameInput.value = duplicateDraft.name;
+    activeSavedRequestId = null;
+    persistState();
+    setCollectionsStatus(
+      `Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`,
+    );
+    return;
+  }
+
+  const sourceName = currentDraft.name;
+  const insertAfterRequestId = activeSavedRequestId;
+  const savedRequest = createSavedRequest({
+    id: makeId("req"),
+    draft: duplicateDraft,
+  });
+  const previous = cloneCollectionStore(collectionStore);
+  collectionStore = {
+    collections: collectionStore.collections.map((collection) => {
+      if (collection.id !== activeCollectionId) {
+        return collection;
+      }
+      return {
+        ...collection,
+        requests: insertSavedRequest(collection.requests, savedRequest, insertAfterRequestId),
+      };
+    }),
+  };
+
+  if (!(await saveCollectionsToServer(previous))) {
+    return;
+  }
+
+  requestNameInput.value = savedRequest.name;
+  activeSavedRequestId = savedRequest.id;
+  renderCollections();
+  persistState();
+  setCollectionsStatus(
+    `Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`,
+  );
+}
+
 function loadSavedRequest(collectionId: string, requestId: string): void {
   const collection = findCollection(collectionId);
   const savedRequest = collection?.requests.find((request) => request.id === requestId);
@@ -1474,7 +1516,6 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
   headerRows = normalizeHeaderRows(savedRequest.headers);
 
   renderHeaderRows();
-  updateBodyJsonPreview();
   renderCollections();
   persistState();
   setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
@@ -1795,6 +1836,7 @@ function setLoading(isLoading: boolean): void {
   timeoutInput.disabled = isLoading;
   aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
+  copyBodyBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
@@ -1842,6 +1884,60 @@ function makeId(prefix: string): string {
 
 function cloneCollectionStore(store: CollectionStore): CollectionStore {
   return JSON.parse(JSON.stringify(store)) as CollectionStore;
+}
+
+function getCurrentSavedRequestDraft(): RequestLibraryDraft {
+  const aggregationPlugin = selectedAggregationPlugin();
+  return {
+    name: requestNameInput.value.trim() || "Untitled Request",
+    method: methodInput.value.trim().toUpperCase() || "GET",
+    url: urlInput.value.trim(),
+    headers: headerRows.map((header) => ({
+      key: header.key,
+      value: header.value,
+      enabled: header.enabled,
+    })),
+    body: bodyInput.value,
+    aggregation_plugin: aggregationPlugin,
+    aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+    timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+  };
+}
+
+function createSavedRequest(input: { id: string; draft: RequestLibraryDraft }): SavedRequest {
+  return {
+    id: input.id,
+    name: input.draft.name,
+    method: input.draft.method,
+    url: input.draft.url,
+    headers: input.draft.headers.map((header) => ({ ...header })),
+    body: input.draft.body,
+    aggregation_plugin: input.draft.aggregation_plugin,
+    aggregate_openai_sse: input.draft.aggregate_openai_sse,
+    timeout_seconds: input.draft.timeout_seconds,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function insertSavedRequest(
+  requests: SavedRequest[],
+  savedRequest: SavedRequest,
+  afterRequestId: string | null,
+): SavedRequest[] {
+  const next = [...requests];
+  if (!afterRequestId) {
+    next.push(savedRequest);
+    return next;
+  }
+
+  const index = next.findIndex((request) => request.id === afterRequestId);
+  if (index < 0) {
+    next.push(savedRequest);
+    return next;
+  }
+
+  next.splice(index + 1, 0, savedRequest);
+  return next;
 }
 
 function getCurrentRequestDraft(): {
