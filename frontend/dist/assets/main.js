@@ -564,7 +564,8 @@ async function importCurl() {
 async function exportCurl() {
     setError("");
     try {
-        const command = buildCurlCommand(getCurrentRequestDraft());
+        const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
+        const command = buildCurlCommand(resolveDraftEnvironment(getCurrentRequestDraft(), env));
         showCurlExport(command);
         if (await writeClipboardText(command)) {
             setSuccess("cURL copied to clipboard.");
@@ -900,6 +901,7 @@ function summarizeLineForButton(rawLine, payloadText) {
     }
     return `${base.slice(0, 107)}...`;
 }
+const ENV_PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 function parseEnvVars(text) {
     const env = {};
     for (const line of text.split(/\r?\n/g)) {
@@ -918,6 +920,25 @@ function parseEnvVars(text) {
         }
     }
     return env;
+}
+function applyEnvironment(input, env) {
+    if (!input || Object.keys(env).length === 0) {
+        return input;
+    }
+    return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key) => {
+        return Object.prototype.hasOwnProperty.call(env, key) ? env[key] : match;
+    });
+}
+function resolveDraftEnvironment(draft, env) {
+    return {
+        ...draft,
+        url: applyEnvironment(draft.url, env),
+        headers: draft.headers.map((header) => ({
+            key: applyEnvironment(header.key, env),
+            value: applyEnvironment(header.value, env),
+        })),
+        body: applyEnvironment(draft.body, env),
+    };
 }
 function parseLegacyHeadersText(text) {
     const headers = [];

@@ -786,7 +786,8 @@ async function exportCurl(): Promise<void> {
   setError("");
 
   try {
-    const command = buildCurlCommand(getCurrentRequestDraft());
+    const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
+    const command = buildCurlCommand(resolveDraftEnvironment(getCurrentRequestDraft(), env));
     showCurlExport(command);
 
     if (await writeClipboardText(command)) {
@@ -1166,6 +1167,8 @@ function summarizeLineForButton(rawLine: string, payloadText: string): string {
   return `${base.slice(0, 107)}...`;
 }
 
+const ENV_PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
 function parseEnvVars(text: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const line of text.split(/\r?\n/g)) {
@@ -1184,6 +1187,31 @@ function parseEnvVars(text: string): Record<string, string> {
     }
   }
   return env;
+}
+
+function applyEnvironment(input: string, env: Record<string, string>): string {
+  if (!input || Object.keys(env).length === 0) {
+    return input;
+  }
+
+  return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key: string) => {
+    return Object.prototype.hasOwnProperty.call(env, key) ? env[key] : match;
+  });
+}
+
+function resolveDraftEnvironment(
+  draft: { method: string; url: string; headers: HeaderKV[]; body: string },
+  env: Record<string, string>,
+): { method: string; url: string; headers: HeaderKV[]; body: string } {
+  return {
+    ...draft,
+    url: applyEnvironment(draft.url, env),
+    headers: draft.headers.map((header) => ({
+      key: applyEnvironment(header.key, env),
+      value: applyEnvironment(header.value, env),
+    })),
+    body: applyEnvironment(draft.body, env),
+  };
 }
 
 function parseLegacyHeadersText(text: string): EditableHeader[] {
