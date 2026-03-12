@@ -99,6 +99,7 @@ type ServerEvent =
   | { type: "done"; duration_ms: number; aggregated: string };
 
 type RawResponseMode = "plain" | "sse";
+type BodyEditorMode = "text" | "json";
 
 type SseLineEntry = {
   index: number;
@@ -126,9 +127,13 @@ const methodInput = byId<HTMLSelectElement>("methodInput");
 const urlInput = byId<HTMLInputElement>("urlInput");
 const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
+const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
+const bodyJsonViewer = byId<HTMLElement>("bodyJsonViewer");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
+const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
+const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
@@ -180,6 +185,8 @@ let activeCollectionId: string | null = null;
 let activeSavedRequestId: string | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
+let bodyJsonController: JsonViewController | null = null;
+let bodyEditorMode: BodyEditorMode = "text";
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
@@ -244,12 +251,41 @@ function wireEvents(): void {
     persistState();
   });
 
-  bodyInput.addEventListener("input", persistState);
+  bodyInput.addEventListener("focus", () => {
+    showBodyTextEditor();
+  });
+  bodyInput.addEventListener("blur", () => {
+    window.setTimeout(() => {
+      if (document.activeElement === bodyInput) {
+        return;
+      }
+      bodyEditorMode = prettifyJSONText(bodyInput.value) ? "json" : "text";
+      syncBodyEditor();
+    }, 0);
+  });
+  bodyInput.addEventListener("input", () => {
+    bodyEditorMode = "text";
+    syncBodyEditor();
+    persistState();
+  });
+
+  bodyJsonViewer.addEventListener("click", () => {
+    focusBodyEditor();
+  });
+  bodyJsonViewer.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    focusBodyEditor();
+  });
 
   copyBodyBtn.addEventListener("click", () => {
     void copyRequestBody();
   });
   bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
+  bodyCollapseBtn.addEventListener("click", () => collapseBodyJSON());
+  bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
   rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
   rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
   ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -363,9 +399,11 @@ function applyInitialState(): void {
   timeoutInput.value = String(state.timeoutSeconds);
   activeCollectionId = state.activeCollectionId;
   activeSavedRequestId = state.activeSavedRequestId;
+  bodyEditorMode = "json";
 
   renderEnvironmentControls();
   renderHeaderRows();
+  syncBodyEditor();
 }
 
 function loadState(): PersistedState {
@@ -738,6 +776,62 @@ function removeHeader(id: string): void {
   persistState();
 }
 
+function syncBodyEditor(): void {
+  const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
+  bodyJsonController = controller;
+
+  const hasJSON = controller.hasJSON;
+  const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
+
+  bodyEditorShell.classList.toggle("is-json-mode", shouldShowJSON);
+  bodyEditorShell.classList.toggle("has-json", hasJSON);
+  bodyInput.classList.toggle("is-hidden", shouldShowJSON);
+  bodyJsonViewer.classList.toggle("is-hidden", !shouldShowJSON);
+  bodyJsonViewer.tabIndex = hasJSON && !requestIsLoading ? 0 : -1;
+  bodyCollapseBtn.disabled = !hasJSON || requestIsLoading;
+  bodyExpandBtn.disabled = !hasJSON || requestIsLoading;
+
+  if (!hasJSON) {
+    bodyEditorMode = "text";
+    return;
+  }
+
+  if (document.activeElement !== bodyInput && bodyEditorMode !== "text") {
+    bodyEditorMode = "json";
+  }
+}
+
+function showBodyTextEditor(): void {
+  bodyEditorMode = "text";
+  syncBodyEditor();
+}
+
+function showBodyJSONViewer(): void {
+  if (!bodyJsonController?.hasJSON) {
+    return;
+  }
+  bodyEditorMode = "json";
+  syncBodyEditor();
+}
+
+function focusBodyEditor(): void {
+  if (requestIsLoading) {
+    return;
+  }
+  showBodyTextEditor();
+  bodyInput.focus();
+}
+
+function collapseBodyJSON(): void {
+  showBodyJSONViewer();
+  bodyJsonController?.collapseAll();
+}
+
+function expandBodyJSON(): void {
+  showBodyJSONViewer();
+  bodyJsonController?.expandAll();
+}
+
 function prettifyBodyJSON(): void {
   const pretty = prettifyJSONText(bodyInput.value);
   if (!pretty) {
@@ -747,6 +841,8 @@ function prettifyBodyJSON(): void {
 
   setError("");
   bodyInput.value = pretty;
+  bodyEditorMode = document.activeElement === bodyInput ? "text" : "json";
+  syncBodyEditor();
   persistState();
 }
 
@@ -784,8 +880,10 @@ async function importCurl(): Promise<void> {
       (parsed.headers || []).map((header) => ({ ...header, enabled: true })),
     );
     bodyInput.value = parsed.body || "";
+    bodyEditorMode = "json";
     activeSavedRequestId = null;
     renderHeaderRows();
+    syncBodyEditor();
     persistState();
   } catch (error) {
     setError(errorMessage(error, "Failed to import curl command."));
@@ -844,6 +942,7 @@ async function copyRequestBody(): Promise<void> {
     return;
   }
 
+  showBodyTextEditor();
   bodyInput.focus();
   bodyInput.select();
   setError("Clipboard copy failed. Select the body text and copy it manually.");
@@ -1514,8 +1613,10 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
   );
   timeoutInput.value = String(savedRequest.timeout_seconds || 120);
   headerRows = normalizeHeaderRows(savedRequest.headers);
+  bodyEditorMode = "json";
 
   renderHeaderRows();
+  syncBodyEditor();
   renderCollections();
   persistState();
   setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
@@ -1838,10 +1939,13 @@ function setLoading(isLoading: boolean): void {
   addHeaderBtn.disabled = isLoading;
   copyBodyBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
+  bodyCollapseBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
+  bodyExpandBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
   syncEnvironmentEditor();
   renderHeaderRows();
+  syncBodyEditor();
 }
 
 function setError(message: string): void {

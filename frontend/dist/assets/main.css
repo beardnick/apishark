@@ -446,6 +446,61 @@ textarea {
     "Liberation Mono", "Courier New", monospace;
 }
 
+.body-editor-shell {
+  min-height: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--code-bg);
+  overflow: hidden;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+.body-editor-shell:hover {
+  border-color: var(--border-strong);
+}
+
+.body-editor-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.body-editor-shell textarea,
+.body-editor-shell .json-viewer-shell {
+  min-height: 220px;
+  height: 100%;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.body-editor-shell textarea {
+  resize: vertical;
+  padding: 10px 12px;
+}
+
+.body-editor-shell textarea:hover,
+.body-editor-shell textarea:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.body-editor-shell .json-viewer-shell {
+  padding: 10px 12px;
+}
+
+.body-json-viewer {
+  cursor: text;
+}
+
+.body-json-viewer:focus-visible {
+  outline: none;
+}
+
 input[type="checkbox"] {
   width: 15px;
   height: 15px;

@@ -275,14 +275,43 @@
                   >
                     <span class="action-symbol" aria-hidden="true">{}</span>
                   </button>
+                  <button
+                    id="bodyCollapseBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Collapse all"
+                    title="Collapse all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">−</span>
+                  </button>
+                  <button
+                    id="bodyExpandBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Expand all"
+                    title="Expand all"
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
+                  </button>
                 </div>
               </div>
 
-              <textarea
-                id="bodyInput"
-                rows="11"
-                placeholder='{"stream": true, "messages": []}'
-              ></textarea>
+              <div id="bodyEditorShell" class="body-editor-shell">
+                <textarea
+                  id="bodyInput"
+                  rows="11"
+                  placeholder='{"stream": true, "messages": []}'
+                  spellcheck="false"
+                ></textarea>
+                <div
+                  id="bodyJsonViewer"
+                  class="json-viewer-shell body-json-viewer is-hidden"
+                  tabindex="0"
+                  role="button"
+                  aria-label="Formatted JSON body. Press Enter or click to edit."
+                  title="Click to edit JSON"
+                ></div>
+              </div>
             </section>
           </div>
         </section>
