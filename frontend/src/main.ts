@@ -127,6 +127,7 @@ const urlInput = byId<HTMLInputElement>("urlInput");
 const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
+const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
 const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
 const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
@@ -254,6 +255,9 @@ function wireEvents(): void {
     persistState();
   });
 
+  copyBodyBtn.addEventListener("click", () => {
+    void copyRequestBody();
+  });
   bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
   bodyCollapseBtn.addEventListener("click", () => bodyJsonController?.collapseAll());
   bodyExpandBtn.addEventListener("click", () => bodyJsonController?.expandAll());
@@ -853,6 +857,23 @@ async function copyExportedCurl(): Promise<void> {
   curlExportOutput.focus();
   curlExportOutput.select();
   setError("Clipboard copy failed. Select the cURL text and copy it manually.");
+}
+
+async function copyRequestBody(): Promise<void> {
+  const body = bodyInput.value;
+  if (!body) {
+    setError("Request body is empty.");
+    return;
+  }
+
+  if (await writeClipboardText(body)) {
+    setSuccess("Request body copied to clipboard.");
+    return;
+  }
+
+  bodyInput.focus();
+  bodyInput.select();
+  setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 
 async function sendRequest(): Promise<void> {
@@ -1843,6 +1864,7 @@ function setLoading(isLoading: boolean): void {
   timeoutInput.disabled = isLoading;
   aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
+  copyBodyBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
