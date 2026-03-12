@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildCurlCommand, shellEscapeForPOSIX } from "../dist/assets/curl-export.js";
+import { resolveRequestDraft } from "../dist/assets/request-resolution.js";
 
 test("shellEscapeForPOSIX wraps and escapes single quotes", () => {
   assert.equal(shellEscapeForPOSIX("it's\nfine"), `'it'"'"'s
@@ -79,5 +80,32 @@ test("buildCurlCommand rejects an empty URL", () => {
         body: "",
       }),
     /Request URL is required/,
+  );
+});
+
+test("buildCurlCommand uses resolved dynamic placeholders for export", () => {
+  const resolved = resolveRequestDraft(
+    {
+      method: "POST",
+      url: "https://api.example.com/items/{{$uuid}}?q={{$urlencode(shark teeth)}}",
+      headers: [{ key: "X-At", value: "{{$isoNow}}" }],
+      body: '{"trace":"{{$uuid}}","stamp":"{{$now}}"}',
+    },
+    {},
+    {
+      now: new Date("2026-03-12T01:02:03.456Z"),
+      uuid: () => "123e4567-e89b-42d3-a456-426614174000",
+    },
+  );
+
+  const command = buildCurlCommand(resolved);
+
+  assert.equal(
+    command,
+    `curl \\
+  -X POST \\
+  'https://api.example.com/items/123e4567-e89b-42d3-a456-426614174000?q=shark%20teeth' \\
+  -H 'X-At: 2026-03-12T01:02:03.456Z' \\
+  --data-raw '{"trace":"123e4567-e89b-42d3-a456-426614174000","stamp":"1773277323"}'`,
   );
 });

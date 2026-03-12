@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,6 +36,7 @@ type SendRequestPayload struct {
 	Headers            []HeaderKV        `json:"headers"`
 	Body               string            `json:"body"`
 	Env                map[string]string `json:"env"`
+	AggregationPlugin  string            `json:"aggregation_plugin"`
 	AggregateOpenAISSE bool              `json:"aggregate_openai_sse"`
 	TimeoutSeconds     int               `json:"timeout_seconds"`
 }
@@ -173,7 +173,8 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	start := time.Now()
-	streaming := strings.Contains(strings.ToLower(upstreamResp.Header.Get("Content-Type")), "text/event-stream")
+	contentType := upstreamResp.Header.Get("Content-Type")
+	streaming := strings.Contains(strings.ToLower(contentType), "text/event-stream")
 	if !sendEvent(w, flusher, map[string]any{
 		"type":             "meta",
 		"status":           upstreamResp.StatusCode,
@@ -182,17 +183,17 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 		"response_headers": flattenHeaders(upstreamResp.Header),
 		"sent_headers":     flattenHeaders(upstreamReq.Header),
 		"streaming":        streaming,
+		"aggregation_plugin": resolveAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
 	}) {
 		return
 	}
 
-	aggregator := NewOpenAIAggregator(payload.AggregateOpenAISSE)
 	if streaming {
-		if !streamSSEBody(w, flusher, upstreamResp.Body, aggregator) {
+		if !streamSSEBody(w, flusher, upstreamResp.Body, contentType) {
 			return
 		}
 	} else {
-		if !streamRegularBody(w, flusher, upstreamResp.Body, aggregator, payload.AggregateOpenAISSE) {
+		if !streamRegularBody(w, flusher, upstreamResp.Body, contentType) {
 			return
 		}
 	}
@@ -200,7 +201,7 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	sendEvent(w, flusher, map[string]any{
 		"type":        "done",
 		"duration_ms": time.Since(start).Milliseconds(),
-		"aggregated":  aggregator.Text(),
+		"aggregated":  "",
 	})
 }
 
@@ -271,37 +272,17 @@ func streamSSEBody(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	body io.Reader,
-	aggregator *OpenAIAggregator,
+	contentType string,
 ) bool {
 	reader := NewLineReader(body)
+	seq := 0
 
 	for {
 		line, err := reader.ReadLine()
-		if line != "" {
-			if !sendEvent(w, flusher, map[string]any{
-				"type": "sse_line",
-				"line": line,
-			}) {
+		if line != "" || err == nil {
+			seq++
+			if !sendEvent(w, flusher, newSSERawEvent(seq, contentType, line, false)) {
 				return false
-			}
-
-			if fragments, done := aggregator.ConsumeSSELine(line); len(fragments) > 0 {
-				if !sendEvent(w, flusher, map[string]any{
-					"type":      "aggregate_delta",
-					"delta":     aggregateFragmentsText(fragments),
-					"text":      aggregator.Text(),
-					"fragments": fragments,
-				}) {
-					return false
-				}
-			} else if done {
-				if !sendEvent(w, flusher, map[string]any{
-					"type":      "aggregate_done",
-					"text":      aggregator.Text(),
-					"fragments": aggregator.Segments(),
-				}) {
-					return false
-				}
 			}
 		}
 
@@ -316,28 +297,25 @@ func streamSSEBody(
 		}
 	}
 
-	return true
+	seq++
+	return sendEvent(w, flusher, newSSERawEvent(seq, contentType, "", true))
 }
 
 func streamRegularBody(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	body io.Reader,
-	aggregator *OpenAIAggregator,
-	aggregateEnabled bool,
+	contentType string,
 ) bool {
-	var fullBody bytes.Buffer
 	buf := make([]byte, 4096)
+	seq := 0
 
 	for {
 		n, err := body.Read(buf)
 		if n > 0 {
 			chunk := string(buf[:n])
-			fullBody.Write(buf[:n])
-			if !sendEvent(w, flusher, map[string]any{
-				"type":  "body_chunk",
-				"chunk": chunk,
-			}) {
+			seq++
+			if !sendEvent(w, flusher, newBodyRawEvent(seq, contentType, chunk, false)) {
 				return false
 			}
 		}
@@ -353,19 +331,8 @@ func streamRegularBody(
 		}
 	}
 
-	if aggregateEnabled {
-		if fragments := aggregator.ConsumeNonStreamJSON(fullBody.Bytes()); len(fragments) > 0 {
-			if !sendEvent(w, flusher, map[string]any{
-				"type":      "aggregate_done",
-				"text":      aggregator.Text(),
-				"fragments": aggregator.Segments(),
-			}) {
-				return false
-			}
-		}
-	}
-
-	return true
+	seq++
+	return sendEvent(w, flusher, newBodyRawEvent(seq, contentType, "", true))
 }
 
 func flattenHeaders(headers http.Header) map[string]string {
@@ -374,14 +341,6 @@ func flattenHeaders(headers http.Header) map[string]string {
 		out[key] = strings.Join(values, ", ")
 	}
 	return out
-}
-
-func aggregateFragmentsText(fragments []AggregateFragment) string {
-	var builder strings.Builder
-	for _, fragment := range fragments {
-		builder.WriteString(fragment.Text)
-	}
-	return builder.String()
 }
 
 func sendEvent(w io.Writer, flusher http.Flusher, payload any) bool {
@@ -394,6 +353,18 @@ func sendEvent(w io.Writer, flusher http.Flusher, payload any) bool {
 	}
 	flusher.Flush()
 	return true
+}
+
+func resolveAggregationPlugin(pluginID string, legacyOpenAI bool) string {
+	normalized := strings.ToLower(strings.TrimSpace(pluginID))
+	switch normalized {
+	case "openai", "none":
+		return normalized
+	}
+	if legacyOpenAI {
+		return "openai"
+	}
+	return "none"
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

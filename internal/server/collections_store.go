@@ -30,6 +30,7 @@ type SavedRequest struct {
 	URL                string        `json:"url"`
 	Headers            []SavedHeader `json:"headers"`
 	Body               string        `json:"body"`
+	AggregationPlugin  string        `json:"aggregation_plugin,omitempty"`
 	AggregateOpenAISSE bool          `json:"aggregate_openai_sse"`
 	TimeoutSeconds     int           `json:"timeout_seconds"`
 	UpdatedAt          string        `json:"updated_at,omitempty"`
@@ -178,6 +179,7 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 		}
 
 		for _, request := range collection.Requests {
+			aggregationPlugin := resolveAggregationPlugin(request.AggregationPlugin, request.AggregateOpenAISSE)
 			nextRequest := SavedRequest{
 				ID:                 strings.TrimSpace(request.ID),
 				Name:               strings.TrimSpace(request.Name),
@@ -185,7 +187,8 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 				URL:                request.URL,
 				Headers:            normalizeSavedHeaders(request.Headers),
 				Body:               request.Body,
-				AggregateOpenAISSE: request.AggregateOpenAISSE,
+				AggregationPlugin:  aggregationPlugin,
+				AggregateOpenAISSE: aggregationPlugin == "openai",
 				TimeoutSeconds:     request.TimeoutSeconds,
 				UpdatedAt:          strings.TrimSpace(request.UpdatedAt),
 			}

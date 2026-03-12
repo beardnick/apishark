@@ -49,7 +49,17 @@
             <div class="section-head">
               <div>
                 <h3>Environments</h3>
-                <p class="hint compact">Use <code>{{VAR_NAME}}</code> in URL, headers, and body.</p>
+                <p class="hint compact">
+                  Use <code>{{VAR_NAME}}</code> plus dynamic send-time placeholders like
+                  <code>{{$uuid}}</code>, <code>{{$now}}</code>, <code>{{$nowMs}}</code>,
+                  <code>{{$isoNow}}</code>, <code>{{$randInt(1,10)}}</code>,
+                  <code>{{$randStr(16)}}</code>, <code>{{$base64(text)}}</code>, and
+                  <code>{{$urlencode(text)}}</code>.
+                </p>
+                <p class="hint compact">
+                  Matching dynamic tokens reuse one value per send or cURL export action. Invalid
+                  <code>{{$...}}</code> syntax shows an error before sending.
+                </p>
               </div>
               <div class="environment-actions side-card-tools">
                 <button
@@ -154,9 +164,12 @@
           </div>
 
           <div class="workspace-row workspace-row-meta">
-            <label class="checkbox">
-              <input id="aggregateInput" type="checkbox" />
-              Enable built-in OpenAI-style SSE aggregator
+            <label for="aggregationPluginInput" class="timeout-label">
+              Aggregation
+              <select id="aggregationPluginInput">
+                <option value="none">None</option>
+                <option value="openai">Built-in OpenAI</option>
+              </select>
             </label>
             <label for="timeoutInput" class="timeout-label">
               Timeout (seconds)

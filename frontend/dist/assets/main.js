@@ -1,6 +1,8 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
+import { AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, resolveAggregationPluginId, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
+import { resolveRequestDraft } from "./request-resolution.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
@@ -25,7 +27,7 @@ const bodyExpandBtn = byId("bodyExpandBtn");
 const bodyJsonPanel = byId("bodyJsonPanel");
 const bodyJsonMeta = byId("bodyJsonMeta");
 const bodyJsonPreview = byId("bodyJsonPreview");
-const aggregateInput = byId("aggregateInput");
+const aggregationPluginInput = byId("aggregationPluginInput");
 const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
 const copyExportCurlBtn = byId("copyExportCurlBtn");
@@ -61,6 +63,7 @@ const ssePayloadOutput = byId("ssePayloadOutput");
 let activeAbortController = null;
 let rawAppender;
 let aggregateAppender;
+let aggregationRuntime = null;
 let rawResponseMode = "plain";
 let requestIsLoading = false;
 let environments = [];
@@ -147,7 +150,7 @@ function wireEvents() {
         requestNameInput,
         methodInput,
         urlInput,
-        aggregateInput,
+        aggregationPluginInput,
         timeoutInput,
     ];
     for (const target of persistTargets) {
@@ -196,6 +199,7 @@ function defaultState() {
             stream: true,
             messages: [{ role: "user", content: "Write a haiku about sharks." }],
         }, null, 2),
+        aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
         aggregateOpenAISse: true,
         timeoutSeconds: 120,
         activeCollectionId: null,
@@ -212,7 +216,7 @@ function applyInitialState() {
     urlInput.value = state.url;
     headerRows = normalizeHeaderRows(state.headers);
     bodyInput.value = state.bodyText;
-    aggregateInput.checked = state.aggregateOpenAISse;
+    aggregationPluginInput.value = resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse);
     timeoutInput.value = String(state.timeoutSeconds);
     activeCollectionId = state.activeCollectionId;
     activeSavedRequestId = state.activeSavedRequestId;
@@ -251,6 +255,9 @@ function loadState() {
             url: typeof parsed.url === "string" ? parsed.url : fallback.url,
             headers: parsedHeaders,
             bodyText: typeof parsed.bodyText === "string" ? parsed.bodyText : fallback.bodyText,
+            aggregationPlugin: typeof parsed.aggregationPlugin === "string"
+                ? resolveAggregationPluginId(parsed.aggregationPlugin)
+                : resolveAggregationPluginId(undefined, parsed.aggregateOpenAISse === true),
             aggregateOpenAISse: typeof parsed.aggregateOpenAISse === "boolean"
                 ? parsed.aggregateOpenAISse
                 : fallback.aggregateOpenAISse,
@@ -275,7 +282,8 @@ function persistState() {
         url: urlInput.value,
         headers: headerRows.map((header) => ({ ...header })),
         bodyText: bodyInput.value,
-        aggregateOpenAISse: aggregateInput.checked,
+        aggregationPlugin: selectedAggregationPlugin(),
+        aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
         timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
         activeCollectionId,
         activeSavedRequestId,
@@ -568,7 +576,7 @@ async function exportCurl() {
     setError("");
     try {
         const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
-        const command = buildCurlCommand(resolveDraftEnvironment(getCurrentRequestDraft(), env));
+        const command = buildCurlCommand(resolveRequestDraft(getCurrentRequestDraft(), env));
         showCurlExport(command);
         if (await writeClipboardText(command)) {
             setSuccess("cURL copied to clipboard.");
@@ -606,16 +614,23 @@ async function sendRequest() {
     }
     setLoading(true);
     activeAbortController = new AbortController();
-    const payload = {
-        method: draft.method,
-        url: draft.url,
-        headers: draft.headers,
-        body: draft.body,
-        env: parseEnvVars(getActiveEnvironment()?.text ?? ""),
-        aggregate_openai_sse: aggregateInput.checked,
-        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-    };
+    aggregationRuntime = new ResponseAggregationRuntime(selectedAggregationPlugin());
     try {
+        const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
+        const resolvedDraft = resolveRequestDraft(draft, env);
+        if (!resolvedDraft.url) {
+            throw new Error("Request URL is required.");
+        }
+        const payload = {
+            method: resolvedDraft.method,
+            url: resolvedDraft.url,
+            headers: resolvedDraft.headers,
+            body: resolvedDraft.body,
+            env,
+            aggregation_plugin: selectedAggregationPlugin(),
+            aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
+            timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+        };
         const response = await fetch("/api/request", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -627,6 +642,7 @@ async function sendRequest() {
             throw new Error(errorBody || `Request failed (${response.status})`);
         }
         await consumeServerEvents(response);
+        finalizeAggregationRuntime();
     }
     catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -702,39 +718,8 @@ function consumeEvent(event) {
             renderSentHeaders(latestSentHeaders);
             renderResponseHeaders(latestResponseHeaders);
             break;
-        case "sse_line":
-            appendSseLine(event.line);
-            break;
-        case "body_chunk":
-            rawOutput.classList.remove("is-hidden");
-            rawJsonViewer.classList.add("is-hidden");
-            if (rawResponseMode === "sse") {
-                const normalized = event.chunk.replace(/\r\n/g, "\n");
-                for (const line of normalized.split("\n")) {
-                    if (line) {
-                        appendSseLine(line);
-                    }
-                }
-            }
-            else {
-                rawAppender.enqueue(event.chunk);
-            }
-            break;
-        case "aggregate_delta":
-            if (event.fragments && event.fragments.length > 0) {
-                aggregateAppender.enqueueFragments(event.fragments);
-            }
-            else {
-                aggregateAppender.enqueue(event.delta);
-            }
-            break;
-        case "aggregate_done":
-            if (event.fragments && event.fragments.length > 0) {
-                aggregateAppender.setFragments(event.fragments);
-            }
-            else if (!aggregateAppender.hasContent() && event.text) {
-                aggregateAppender.setText(event.text);
-            }
+        case "raw_event":
+            consumeRawEvent(event);
             break;
         case "error":
             setError(event.message);
@@ -743,12 +728,56 @@ function consumeEvent(event) {
             if (statusText.textContent) {
                 statusText.textContent = `${statusText.textContent} (${event.duration_ms} ms)`;
             }
-            if (!aggregateAppender.hasContent() && event.aggregated) {
-                aggregateAppender.setText(event.aggregated);
-            }
+            finalizeAggregationRuntime();
             finalizeResponseViews();
             break;
     }
+}
+function consumeRawEvent(event) {
+    rawOutput.classList.remove("is-hidden");
+    rawJsonViewer.classList.add("is-hidden");
+    if (event.transport.mode === "sse") {
+        if (event.rawChunk) {
+            appendSseLine(event.rawChunk);
+        }
+    }
+    else if (event.rawChunk) {
+        rawAppender.enqueue(event.rawChunk);
+    }
+    if (!aggregationRuntime) {
+        return;
+    }
+    const result = aggregationRuntime.consumeRawEvent(event);
+    if (result.error) {
+        handleAggregationFailure(result.error);
+        return;
+    }
+    applyAggregationRuntimeResult(result);
+}
+function finalizeAggregationRuntime() {
+    if (!aggregationRuntime) {
+        return;
+    }
+    const result = aggregationRuntime.finalize();
+    if (result.error) {
+        handleAggregationFailure(result.error);
+        return;
+    }
+    applyAggregationRuntimeResult(result);
+}
+function applyAggregationRuntimeResult(result) {
+    if (result.replaceFragments && result.replaceFragments.length > 0) {
+        aggregateAppender.setFragments(result.replaceFragments);
+        return;
+    }
+    if (result.appendFragments && result.appendFragments.length > 0) {
+        aggregateAppender.enqueueFragments(result.appendFragments);
+    }
+}
+function handleAggregationFailure(message) {
+    aggregationRuntime = null;
+    aggregateAppender.clear();
+    setError(message);
 }
 function finalizeResponseViews() {
     renderSentHeaders(latestSentHeaders);
@@ -761,6 +790,7 @@ function finalizeResponseViews() {
 function clearOutputs() {
     latestSentHeaders = {};
     latestResponseHeaders = {};
+    aggregationRuntime = null;
     setRawResponseMode("plain");
     statusText.textContent = "-";
     sentHeadersOutput.textContent = "";
@@ -923,7 +953,6 @@ function summarizeLineForButton(rawLine, payloadText) {
     }
     return `${base.slice(0, 107)}...`;
 }
-const ENV_PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 function parseEnvVars(text) {
     const env = {};
     for (const line of text.split(/\r?\n/g)) {
@@ -942,25 +971,6 @@ function parseEnvVars(text) {
         }
     }
     return env;
-}
-function applyEnvironment(input, env) {
-    if (!input || Object.keys(env).length === 0) {
-        return input;
-    }
-    return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key) => {
-        return Object.prototype.hasOwnProperty.call(env, key) ? env[key] : match;
-    });
-}
-function resolveDraftEnvironment(draft, env) {
-    return {
-        ...draft,
-        url: applyEnvironment(draft.url, env),
-        headers: draft.headers.map((header) => ({
-            key: applyEnvironment(header.key, env),
-            value: applyEnvironment(header.value, env),
-        })),
-        body: applyEnvironment(draft.body, env),
-    };
 }
 function parseLegacyHeadersText(text) {
     const headers = [];
@@ -1086,7 +1096,8 @@ async function saveCurrentRequestToCollection() {
             enabled: header.enabled,
         })),
         body: bodyInput.value,
-        aggregate_openai_sse: aggregateInput.checked,
+        aggregation_plugin: selectedAggregationPlugin(),
+        aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
         timeout_seconds: toPositiveInt(timeoutInput.value, 120),
         updated_at: new Date().toISOString(),
     };
@@ -1131,7 +1142,7 @@ function loadSavedRequest(collectionId, requestId) {
     methodInput.value = savedRequest.method || "GET";
     urlInput.value = savedRequest.url;
     bodyInput.value = savedRequest.body;
-    aggregateInput.checked = savedRequest.aggregate_openai_sse;
+    aggregationPluginInput.value = resolveAggregationPluginId(savedRequest.aggregation_plugin, savedRequest.aggregate_openai_sse);
     timeoutInput.value = String(savedRequest.timeout_seconds || 120);
     headerRows = normalizeHeaderRows(savedRequest.headers);
     renderHeaderRows();
@@ -1345,9 +1356,12 @@ function normalizeCollectionStore(input) {
                     url: typeof request.url === "string" ? request.url : "",
                     headers: normalizeSavedHeaders(request.headers),
                     body: typeof request.body === "string" ? request.body : "",
-                    aggregate_openai_sse: typeof request.aggregate_openai_sse === "boolean"
-                        ? request.aggregate_openai_sse
-                        : false,
+                    aggregation_plugin: typeof request.aggregation_plugin === "string"
+                        ? resolveAggregationPluginId(request.aggregation_plugin)
+                        : resolveAggregationPluginId(undefined, request.aggregate_openai_sse === true),
+                    aggregate_openai_sse: resolveAggregationPluginId(typeof request.aggregation_plugin === "string"
+                        ? request.aggregation_plugin
+                        : undefined, request.aggregate_openai_sse === true) === AGGREGATION_PLUGIN_OPENAI,
                     timeout_seconds: typeof request.timeout_seconds === "number" && Number.isFinite(request.timeout_seconds)
                         ? request.timeout_seconds
                         : 120,
@@ -1408,7 +1422,7 @@ function setLoading(isLoading) {
     urlInput.disabled = isLoading;
     bodyInput.disabled = isLoading;
     timeoutInput.disabled = isLoading;
-    aggregateInput.disabled = isLoading;
+    aggregationPluginInput.disabled = isLoading;
     addHeaderBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
     abortBtn.disabled = !isLoading;
@@ -1431,6 +1445,9 @@ function errorMessage(error, fallback) {
         return error.message;
     }
     return fallback;
+}
+function selectedAggregationPlugin() {
+    return resolveAggregationPluginId(aggregationPluginInput.value);
 }
 function toPositiveInt(value, fallback) {
     const parsed = Number.parseInt(value, 10);

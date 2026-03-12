@@ -13,7 +13,7 @@ into the Go executable via `embed`.
 - Proxy arbitrary HTTP requests from the UI
 - JSON prettify and collapsible JSON viewers for request/response payloads
 - Incremental streaming display for SSE responses
-- Built-in OpenAI-style SSE aggregator for token-by-token text rendering
+- Plugin-based response aggregation fed by raw streaming events
 - Sent/response header inspection with environment-resolved request headers
 - Muted styling for aggregated thinking/reasoning segments
 
@@ -46,3 +46,22 @@ npm run build
 
 This writes browser-ready files to `frontend/dist`, which are embedded into the
 Go binary by `main.go`.
+
+## Aggregation Plugins
+
+APIShark streams canonical `raw_event` messages from the Go server to the frontend.
+Each event is delivered incrementally, one chunk or SSE line at a time, with:
+
+- `seq`: monotonically increasing event number per response
+- `transport`: metadata such as `mode`, `contentType`, and SSE `field`
+- `rawChunk`: the raw body chunk or SSE line text
+- `sseData`: extracted SSE `data:` payload when available
+- `parsedJson`: best-effort parsed JSON for `rawChunk` or `sseData`
+- `done`: marks the terminal raw event for the response stream
+- `ts`: RFC3339 timestamp for when APIShark emitted the raw event
+
+Frontend aggregation plugins implement a small lifecycle contract:
+`init`, `onRawEvent`, `onNormalizedEvent`, `onDone`, and `finalize`.
+Built-in profiles currently include `none` and `openai`. Plugin failures do not
+break the request flow; the UI falls back to raw/plain rendering and shows a
+readable aggregation error.
