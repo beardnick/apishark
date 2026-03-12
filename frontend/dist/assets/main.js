@@ -3,6 +3,7 @@ import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFra
 import { AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, resolveAggregationPluginId, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
+import { createDuplicateRequestDraft, } from "./request-library.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
@@ -39,6 +40,7 @@ const abortBtn = byId("abortBtn");
 const clearOutputBtn = byId("clearOutputBtn");
 const reloadCollectionsBtn = byId("reloadCollectionsBtn");
 const createCollectionBtn = byId("createCollectionBtn");
+const duplicateRequestBtn = byId("duplicateRequestBtn");
 const saveRequestBtn = byId("saveRequestBtn");
 const newCollectionNameInput = byId("newCollectionNameInput");
 const collectionsStatusText = byId("collectionsStatusText");
@@ -141,6 +143,9 @@ function wireEvents() {
     });
     createCollectionBtn.addEventListener("click", () => {
         void createCollection();
+    });
+    duplicateRequestBtn.addEventListener("click", () => {
+        void duplicateCurrentRequest();
     });
     saveRequestBtn.addEventListener("click", () => {
         void saveCurrentRequestToCollection();
@@ -1085,22 +1090,10 @@ async function saveCurrentRequestToCollection() {
         return;
     }
     const requestName = requestNameInput.value.trim() || "Untitled Request";
-    const savedRequest = {
+    const savedRequest = createSavedRequest({
         id: activeSavedRequestId ?? makeId("req"),
-        name: requestName,
-        method: methodInput.value.trim().toUpperCase(),
-        url: urlInput.value.trim(),
-        headers: headerRows.map((header) => ({
-            key: header.key,
-            value: header.value,
-            enabled: header.enabled,
-        })),
-        body: bodyInput.value,
-        aggregation_plugin: selectedAggregationPlugin(),
-        aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
-        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-        updated_at: new Date().toISOString(),
-    };
+        draft: getCurrentSavedRequestDraft(),
+    });
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
         collections: collectionStore.collections.map((item) => {
@@ -1128,6 +1121,47 @@ async function saveCurrentRequestToCollection() {
     renderCollections();
     persistState();
     setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
+}
+async function duplicateCurrentRequest() {
+    const currentDraft = getCurrentSavedRequestDraft();
+    const targetCollection = findCollection(activeCollectionId);
+    const existingNames = targetCollection
+        ? targetCollection.requests.map((request) => request.name)
+        : collectionStore.collections.flatMap((collection) => collection.requests.map((request) => request.name));
+    const duplicateDraft = createDuplicateRequestDraft(currentDraft, existingNames);
+    if (!targetCollection || !activeCollectionId) {
+        requestNameInput.value = duplicateDraft.name;
+        activeSavedRequestId = null;
+        persistState();
+        setCollectionsStatus(`Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`);
+        return;
+    }
+    const sourceName = currentDraft.name;
+    const insertAfterRequestId = activeSavedRequestId;
+    const savedRequest = createSavedRequest({
+        id: makeId("req"),
+        draft: duplicateDraft,
+    });
+    const previous = cloneCollectionStore(collectionStore);
+    collectionStore = {
+        collections: collectionStore.collections.map((collection) => {
+            if (collection.id !== activeCollectionId) {
+                return collection;
+            }
+            return {
+                ...collection,
+                requests: insertSavedRequest(collection.requests, savedRequest, insertAfterRequestId),
+            };
+        }),
+    };
+    if (!(await saveCollectionsToServer(previous))) {
+        return;
+    }
+    requestNameInput.value = savedRequest.name;
+    activeSavedRequestId = savedRequest.id;
+    renderCollections();
+    persistState();
+    setCollectionsStatus(`Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`);
 }
 function loadSavedRequest(collectionId, requestId) {
     const collection = findCollection(collectionId);
@@ -1464,6 +1498,51 @@ function makeId(prefix) {
 }
 function cloneCollectionStore(store) {
     return JSON.parse(JSON.stringify(store));
+}
+function getCurrentSavedRequestDraft() {
+    const aggregationPlugin = selectedAggregationPlugin();
+    return {
+        name: requestNameInput.value.trim() || "Untitled Request",
+        method: methodInput.value.trim().toUpperCase() || "GET",
+        url: urlInput.value.trim(),
+        headers: headerRows.map((header) => ({
+            key: header.key,
+            value: header.value,
+            enabled: header.enabled,
+        })),
+        body: bodyInput.value,
+        aggregation_plugin: aggregationPlugin,
+        aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+    };
+}
+function createSavedRequest(input) {
+    return {
+        id: input.id,
+        name: input.draft.name,
+        method: input.draft.method,
+        url: input.draft.url,
+        headers: input.draft.headers.map((header) => ({ ...header })),
+        body: input.draft.body,
+        aggregation_plugin: input.draft.aggregation_plugin,
+        aggregate_openai_sse: input.draft.aggregate_openai_sse,
+        timeout_seconds: input.draft.timeout_seconds,
+        updated_at: new Date().toISOString(),
+    };
+}
+function insertSavedRequest(requests, savedRequest, afterRequestId) {
+    const next = [...requests];
+    if (!afterRequestId) {
+        next.push(savedRequest);
+        return next;
+    }
+    const index = next.findIndex((request) => request.id === afterRequestId);
+    if (index < 0) {
+        next.push(savedRequest);
+        return next;
+    }
+    next.splice(index + 1, 0, savedRequest);
+    return next;
 }
 function getCurrentRequestDraft() {
     return {

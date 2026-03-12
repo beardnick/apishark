@@ -18,6 +18,10 @@ import {
 } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
+import {
+  createDuplicateRequestDraft,
+  type RequestLibraryDraft,
+} from "./request-library.js";
 
 type HeaderKV = {
   key: string;
@@ -142,6 +146,7 @@ const clearOutputBtn = byId<HTMLButtonElement>("clearOutputBtn");
 
 const reloadCollectionsBtn = byId<HTMLButtonElement>("reloadCollectionsBtn");
 const createCollectionBtn = byId<HTMLButtonElement>("createCollectionBtn");
+const duplicateRequestBtn = byId<HTMLButtonElement>("duplicateRequestBtn");
 const saveRequestBtn = byId<HTMLButtonElement>("saveRequestBtn");
 const newCollectionNameInput = byId<HTMLInputElement>("newCollectionNameInput");
 const collectionsStatusText = byId<HTMLElement>("collectionsStatusText");
@@ -262,6 +267,9 @@ function wireEvents(): void {
   });
   createCollectionBtn.addEventListener("click", () => {
     void createCollection();
+  });
+  duplicateRequestBtn.addEventListener("click", () => {
+    void duplicateCurrentRequest();
   });
   saveRequestBtn.addEventListener("click", () => {
     void saveCurrentRequestToCollection();
@@ -1403,22 +1411,10 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   }
 
   const requestName = requestNameInput.value.trim() || "Untitled Request";
-  const savedRequest: SavedRequest = {
+  const savedRequest = createSavedRequest({
     id: activeSavedRequestId ?? makeId("req"),
-    name: requestName,
-    method: methodInput.value.trim().toUpperCase(),
-    url: urlInput.value.trim(),
-    headers: headerRows.map((header) => ({
-      key: header.key,
-      value: header.value,
-      enabled: header.enabled,
-    })),
-    body: bodyInput.value,
-    aggregation_plugin: selectedAggregationPlugin(),
-    aggregate_openai_sse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
-    timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-    updated_at: new Date().toISOString(),
-  };
+    draft: getCurrentSavedRequestDraft(),
+  });
 
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
@@ -1450,6 +1446,58 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   renderCollections();
   persistState();
   setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
+}
+
+async function duplicateCurrentRequest(): Promise<void> {
+  const currentDraft = getCurrentSavedRequestDraft();
+  const targetCollection = findCollection(activeCollectionId);
+  const existingNames = targetCollection
+    ? targetCollection.requests.map((request) => request.name)
+    : collectionStore.collections.flatMap((collection) =>
+        collection.requests.map((request) => request.name),
+      );
+  const duplicateDraft = createDuplicateRequestDraft(currentDraft, existingNames);
+
+  if (!targetCollection || !activeCollectionId) {
+    requestNameInput.value = duplicateDraft.name;
+    activeSavedRequestId = null;
+    persistState();
+    setCollectionsStatus(
+      `Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`,
+    );
+    return;
+  }
+
+  const sourceName = currentDraft.name;
+  const insertAfterRequestId = activeSavedRequestId;
+  const savedRequest = createSavedRequest({
+    id: makeId("req"),
+    draft: duplicateDraft,
+  });
+  const previous = cloneCollectionStore(collectionStore);
+  collectionStore = {
+    collections: collectionStore.collections.map((collection) => {
+      if (collection.id !== activeCollectionId) {
+        return collection;
+      }
+      return {
+        ...collection,
+        requests: insertSavedRequest(collection.requests, savedRequest, insertAfterRequestId),
+      };
+    }),
+  };
+
+  if (!(await saveCollectionsToServer(previous))) {
+    return;
+  }
+
+  requestNameInput.value = savedRequest.name;
+  activeSavedRequestId = savedRequest.id;
+  renderCollections();
+  persistState();
+  setCollectionsStatus(
+    `Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`,
+  );
 }
 
 function loadSavedRequest(collectionId: string, requestId: string): void {
@@ -1842,6 +1890,60 @@ function makeId(prefix: string): string {
 
 function cloneCollectionStore(store: CollectionStore): CollectionStore {
   return JSON.parse(JSON.stringify(store)) as CollectionStore;
+}
+
+function getCurrentSavedRequestDraft(): RequestLibraryDraft {
+  const aggregationPlugin = selectedAggregationPlugin();
+  return {
+    name: requestNameInput.value.trim() || "Untitled Request",
+    method: methodInput.value.trim().toUpperCase() || "GET",
+    url: urlInput.value.trim(),
+    headers: headerRows.map((header) => ({
+      key: header.key,
+      value: header.value,
+      enabled: header.enabled,
+    })),
+    body: bodyInput.value,
+    aggregation_plugin: aggregationPlugin,
+    aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+    timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+  };
+}
+
+function createSavedRequest(input: { id: string; draft: RequestLibraryDraft }): SavedRequest {
+  return {
+    id: input.id,
+    name: input.draft.name,
+    method: input.draft.method,
+    url: input.draft.url,
+    headers: input.draft.headers.map((header) => ({ ...header })),
+    body: input.draft.body,
+    aggregation_plugin: input.draft.aggregation_plugin,
+    aggregate_openai_sse: input.draft.aggregate_openai_sse,
+    timeout_seconds: input.draft.timeout_seconds,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function insertSavedRequest(
+  requests: SavedRequest[],
+  savedRequest: SavedRequest,
+  afterRequestId: string | null,
+): SavedRequest[] {
+  const next = [...requests];
+  if (!afterRequestId) {
+    next.push(savedRequest);
+    return next;
+  }
+
+  const index = next.findIndex((request) => request.id === afterRequestId);
+  if (index < 0) {
+    next.push(savedRequest);
+    return next;
+  }
+
+  next.splice(index + 1, 0, savedRequest);
+  return next;
 }
 
 function getCurrentRequestDraft(): {
