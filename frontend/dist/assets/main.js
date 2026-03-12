@@ -1,6 +1,7 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { buildCurlCommand } from "./curl-export.js";
+import { resolveRequestDraft } from "./request-resolution.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
@@ -568,7 +569,7 @@ async function exportCurl() {
     setError("");
     try {
         const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
-        const command = buildCurlCommand(resolveDraftEnvironment(getCurrentRequestDraft(), env));
+        const command = buildCurlCommand(resolveRequestDraft(getCurrentRequestDraft(), env));
         showCurlExport(command);
         if (await writeClipboardText(command)) {
             setSuccess("cURL copied to clipboard.");
@@ -606,16 +607,21 @@ async function sendRequest() {
     }
     setLoading(true);
     activeAbortController = new AbortController();
-    const payload = {
-        method: draft.method,
-        url: draft.url,
-        headers: draft.headers,
-        body: draft.body,
-        env: parseEnvVars(getActiveEnvironment()?.text ?? ""),
-        aggregate_openai_sse: aggregateInput.checked,
-        timeout_seconds: toPositiveInt(timeoutInput.value, 120),
-    };
     try {
+        const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
+        const resolvedDraft = resolveRequestDraft(draft, env);
+        if (!resolvedDraft.url) {
+            throw new Error("Request URL is required.");
+        }
+        const payload = {
+            method: resolvedDraft.method,
+            url: resolvedDraft.url,
+            headers: resolvedDraft.headers,
+            body: resolvedDraft.body,
+            env,
+            aggregate_openai_sse: aggregateInput.checked,
+            timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+        };
         const response = await fetch("/api/request", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -923,7 +929,6 @@ function summarizeLineForButton(rawLine, payloadText) {
     }
     return `${base.slice(0, 107)}...`;
 }
-const ENV_PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 function parseEnvVars(text) {
     const env = {};
     for (const line of text.split(/\r?\n/g)) {
@@ -942,25 +947,6 @@ function parseEnvVars(text) {
         }
     }
     return env;
-}
-function applyEnvironment(input, env) {
-    if (!input || Object.keys(env).length === 0) {
-        return input;
-    }
-    return input.replace(ENV_PLACEHOLDER_PATTERN, (match, key) => {
-        return Object.prototype.hasOwnProperty.call(env, key) ? env[key] : match;
-    });
-}
-function resolveDraftEnvironment(draft, env) {
-    return {
-        ...draft,
-        url: applyEnvironment(draft.url, env),
-        headers: draft.headers.map((header) => ({
-            key: applyEnvironment(header.key, env),
-            value: applyEnvironment(header.value, env),
-        })),
-        body: applyEnvironment(draft.body, env),
-    };
 }
 function parseLegacyHeadersText(text) {
     const headers = [];
