@@ -1,4 +1,5 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
+import { buildCurlCommand } from "./curl-export.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
@@ -25,6 +26,11 @@ const bodyJsonMeta = byId("bodyJsonMeta");
 const bodyJsonPreview = byId("bodyJsonPreview");
 const aggregateInput = byId("aggregateInput");
 const timeoutInput = byId("timeoutInput");
+const exportCurlBtn = byId("exportCurlBtn");
+const copyExportCurlBtn = byId("copyExportCurlBtn");
+const closeExportCurlBtn = byId("closeExportCurlBtn");
+const curlExportPanel = byId("curlExportPanel");
+const curlExportOutput = byId("curlExportOutput");
 const sendBtn = byId("sendBtn");
 const abortBtn = byId("abortBtn");
 const clearOutputBtn = byId("clearOutputBtn");
@@ -88,6 +94,15 @@ function wireEvents() {
     });
     importCurlBtn.addEventListener("click", () => {
         void importCurl();
+    });
+    exportCurlBtn.addEventListener("click", () => {
+        void exportCurl();
+    });
+    copyExportCurlBtn.addEventListener("click", () => {
+        void copyExportedCurl();
+    });
+    closeExportCurlBtn.addEventListener("click", () => {
+        hideCurlExport();
     });
     sendBtn.addEventListener("click", () => {
         void sendRequest();
@@ -546,24 +561,52 @@ async function importCurl() {
         setLoading(false);
     }
 }
+async function exportCurl() {
+    setError("");
+    try {
+        const command = buildCurlCommand(getCurrentRequestDraft());
+        showCurlExport(command);
+        if (await writeClipboardText(command)) {
+            setSuccess("cURL copied to clipboard.");
+            return;
+        }
+        curlExportOutput.focus();
+        curlExportOutput.select();
+        setError("cURL generated. Clipboard copy failed, so use the panel below to copy it.");
+    }
+    catch (error) {
+        setError(errorMessage(error, "Failed to export cURL command."));
+    }
+}
+async function copyExportedCurl() {
+    const command = curlExportOutput.value;
+    if (!command) {
+        setError("Generate a cURL command first.");
+        return;
+    }
+    if (await writeClipboardText(command)) {
+        setSuccess("cURL copied to clipboard.");
+        return;
+    }
+    curlExportOutput.focus();
+    curlExportOutput.select();
+    setError("Clipboard copy failed. Select the cURL text and copy it manually.");
+}
 async function sendRequest() {
     setError("");
     clearOutputs();
-    const url = urlInput.value.trim();
-    if (!url) {
+    const draft = getCurrentRequestDraft();
+    if (!draft.url) {
         setError("Request URL is required.");
         return;
     }
     setLoading(true);
     activeAbortController = new AbortController();
     const payload = {
-        method: methodInput.value.trim().toUpperCase(),
-        url,
-        headers: headerRows
-            .filter((header) => header.enabled)
-            .map((header) => ({ key: header.key, value: header.value }))
-            .filter((header) => header.key.trim() !== ""),
-        body: bodyInput.value,
+        method: draft.method,
+        url: draft.url,
+        headers: draft.headers,
+        body: draft.body,
         env: parseEnvVars(getActiveEnvironment()?.text ?? ""),
         aggregate_openai_sse: aggregateInput.checked,
         timeout_seconds: toPositiveInt(timeoutInput.value, 120),
@@ -1315,6 +1358,7 @@ function setLoading(isLoading) {
     requestIsLoading = isLoading;
     sendBtn.disabled = isLoading;
     importCurlBtn.disabled = isLoading;
+    exportCurlBtn.disabled = isLoading;
     requestNameInput.disabled = isLoading;
     envInput.disabled = isLoading;
     methodInput.disabled = isLoading;
@@ -1331,6 +1375,13 @@ function setLoading(isLoading) {
 }
 function setError(message) {
     errorText.textContent = message;
+    errorText.classList.remove("success");
+    errorText.classList.add("error");
+}
+function setSuccess(message) {
+    errorText.textContent = message;
+    errorText.classList.remove("error");
+    errorText.classList.add("success");
 }
 function errorMessage(error, fallback) {
     if (error instanceof Error && error.message) {
@@ -1353,6 +1404,35 @@ function makeId(prefix) {
 }
 function cloneCollectionStore(store) {
     return JSON.parse(JSON.stringify(store));
+}
+function getCurrentRequestDraft() {
+    return {
+        method: methodInput.value.trim().toUpperCase() || "GET",
+        url: urlInput.value.trim(),
+        headers: headerRows
+            .filter((header) => header.enabled && header.key.trim() !== "")
+            .map((header) => ({ key: header.key, value: header.value })),
+        body: bodyInput.value,
+    };
+}
+function showCurlExport(command) {
+    curlExportOutput.value = command;
+    curlExportPanel.classList.remove("is-hidden");
+}
+function hideCurlExport() {
+    curlExportPanel.classList.add("is-hidden");
+}
+async function writeClipboardText(text) {
+    if (!navigator.clipboard?.writeText) {
+        return false;
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    }
+    catch {
+        return false;
+    }
 }
 function byId(id) {
     const element = document.getElementById(id);

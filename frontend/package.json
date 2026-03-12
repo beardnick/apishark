@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node ./build.mjs",
     "dev": "node ./build.mjs --watch",
-    "test": "node ./node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json && npm run build"
+    "test": "node ./node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json && npm run build && node --test tests/*.test.js"
   },
   "devDependencies": {
     "esbuild": "^0.27.3",

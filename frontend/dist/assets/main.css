@@ -345,8 +345,23 @@ a {
   flex-wrap: wrap;
 }
 
+.request-export-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(245, 247, 251, 0.78), rgba(255, 255, 255, 0.72));
+}
+
 .request-actions {
   justify-content: flex-end;
+}
+
+.compact-btn {
+  min-height: 32px;
+  padding-inline: 10px;
 }
 
 .workspace-row-heading {
@@ -1017,11 +1032,19 @@ button.ghost:hover:not(:disabled) {
   font-size: 0.78rem;
 }
 
+.success,
 .error {
   min-height: 1.2rem;
   margin: 8px 0 0;
-  color: var(--danger);
   font-size: 0.82rem;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.success {
+  color: var(--success);
 }
 
 #timeoutInput {
@@ -1042,6 +1065,11 @@ button.ghost:hover:not(:disabled) {
 
 #bodyInput {
   height: 196px;
+}
+
+#curlExportOutput {
+  min-height: 132px;
+  background: rgba(245, 247, 251, 0.96);
 }
 
 #headersOutput.output {

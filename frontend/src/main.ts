@@ -4,6 +4,7 @@ import {
   renderJSONValue,
   type JsonViewController,
 } from "./json-view.js";
+import { buildCurlCommand } from "./curl-export.js";
 
 type HeaderKV = {
   key: string;
@@ -115,6 +116,11 @@ const bodyJsonMeta = byId<HTMLElement>("bodyJsonMeta");
 const bodyJsonPreview = byId<HTMLElement>("bodyJsonPreview");
 const aggregateInput = byId<HTMLInputElement>("aggregateInput");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
+const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
+const copyExportCurlBtn = byId<HTMLButtonElement>("copyExportCurlBtn");
+const closeExportCurlBtn = byId<HTMLButtonElement>("closeExportCurlBtn");
+const curlExportPanel = byId<HTMLElement>("curlExportPanel");
+const curlExportOutput = byId<HTMLTextAreaElement>("curlExportOutput");
 const sendBtn = byId<HTMLButtonElement>("sendBtn");
 const abortBtn = byId<HTMLButtonElement>("abortBtn");
 const clearOutputBtn = byId<HTMLButtonElement>("clearOutputBtn");
@@ -187,6 +193,18 @@ function wireEvents(): void {
 
   importCurlBtn.addEventListener("click", () => {
     void importCurl();
+  });
+
+  exportCurlBtn.addEventListener("click", () => {
+    void exportCurl();
+  });
+
+  copyExportCurlBtn.addEventListener("click", () => {
+    void copyExportedCurl();
+  });
+
+  closeExportCurlBtn.addEventListener("click", () => {
+    hideCurlExport();
   });
 
   sendBtn.addEventListener("click", () => {
@@ -764,12 +782,49 @@ async function importCurl(): Promise<void> {
   }
 }
 
+async function exportCurl(): Promise<void> {
+  setError("");
+
+  try {
+    const command = buildCurlCommand(getCurrentRequestDraft());
+    showCurlExport(command);
+
+    if (await writeClipboardText(command)) {
+      setSuccess("cURL copied to clipboard.");
+      return;
+    }
+
+    curlExportOutput.focus();
+    curlExportOutput.select();
+    setError("cURL generated. Clipboard copy failed, so use the panel below to copy it.");
+  } catch (error) {
+    setError(errorMessage(error, "Failed to export cURL command."));
+  }
+}
+
+async function copyExportedCurl(): Promise<void> {
+  const command = curlExportOutput.value;
+  if (!command) {
+    setError("Generate a cURL command first.");
+    return;
+  }
+
+  if (await writeClipboardText(command)) {
+    setSuccess("cURL copied to clipboard.");
+    return;
+  }
+
+  curlExportOutput.focus();
+  curlExportOutput.select();
+  setError("Clipboard copy failed. Select the cURL text and copy it manually.");
+}
+
 async function sendRequest(): Promise<void> {
   setError("");
   clearOutputs();
 
-  const url = urlInput.value.trim();
-  if (!url) {
+  const draft = getCurrentRequestDraft();
+  if (!draft.url) {
     setError("Request URL is required.");
     return;
   }
@@ -778,13 +833,10 @@ async function sendRequest(): Promise<void> {
   activeAbortController = new AbortController();
 
   const payload = {
-    method: methodInput.value.trim().toUpperCase(),
-    url,
-    headers: headerRows
-      .filter((header) => header.enabled)
-      .map((header) => ({ key: header.key, value: header.value }))
-      .filter((header) => header.key.trim() !== ""),
-    body: bodyInput.value,
+    method: draft.method,
+    url: draft.url,
+    headers: draft.headers,
+    body: draft.body,
     env: parseEnvVars(getActiveEnvironment()?.text ?? ""),
     aggregate_openai_sse: aggregateInput.checked,
     timeout_seconds: toPositiveInt(timeoutInput.value, 120),
@@ -1640,6 +1692,7 @@ function setLoading(isLoading: boolean): void {
   requestIsLoading = isLoading;
   sendBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
+  exportCurlBtn.disabled = isLoading;
   requestNameInput.disabled = isLoading;
   envInput.disabled = isLoading;
   methodInput.disabled = isLoading;
@@ -1657,6 +1710,14 @@ function setLoading(isLoading: boolean): void {
 
 function setError(message: string): void {
   errorText.textContent = message;
+  errorText.classList.remove("success");
+  errorText.classList.add("error");
+}
+
+function setSuccess(message: string): void {
+  errorText.textContent = message;
+  errorText.classList.remove("error");
+  errorText.classList.add("success");
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -1683,6 +1744,44 @@ function makeId(prefix: string): string {
 
 function cloneCollectionStore(store: CollectionStore): CollectionStore {
   return JSON.parse(JSON.stringify(store)) as CollectionStore;
+}
+
+function getCurrentRequestDraft(): {
+  method: string;
+  url: string;
+  headers: HeaderKV[];
+  body: string;
+} {
+  return {
+    method: methodInput.value.trim().toUpperCase() || "GET",
+    url: urlInput.value.trim(),
+    headers: headerRows
+      .filter((header) => header.enabled && header.key.trim() !== "")
+      .map((header) => ({ key: header.key, value: header.value })),
+    body: bodyInput.value,
+  };
+}
+
+function showCurlExport(command: string): void {
+  curlExportOutput.value = command;
+  curlExportPanel.classList.remove("is-hidden");
+}
+
+function hideCurlExport(): void {
+  curlExportPanel.classList.add("is-hidden");
+}
+
+async function writeClipboardText(text: string): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) {
+    return false;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function byId<T extends HTMLElement>(id: string): T {
