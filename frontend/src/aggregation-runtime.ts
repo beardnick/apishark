@@ -2,6 +2,7 @@ import {
   aggregateFragmentsToText,
   normalizeAggregateFragmentKind,
   normalizeAggregateFragments,
+  type AggregateTextFragmentKind,
   type AggregateFragment,
 } from "./aggregate-fragments.js";
 
@@ -704,6 +705,11 @@ function extractOpenAIFragments(payload: unknown): AggregateFragment[] {
     parts.push({ kind: "content", text: data.output_text });
   }
 
+  const directMedia = extractMediaFragment(data);
+  if (directMedia) {
+    parts.push(directMedia);
+  }
+
   const message = asRecord(data.message);
   if (message) {
     parts.push(...extractTextFragments(message));
@@ -745,7 +751,7 @@ function extractOpenAIFragments(payload: unknown): AggregateFragment[] {
 }
 
 function extractTextFragments(container: Record<string, unknown>): AggregateFragment[] {
-  const keys: Array<{ name: string; kind: AggregateFragment["kind"] }> = [
+  const keys: Array<{ name: string; kind: AggregateTextFragmentKind }> = [
     { name: "reasoning_content", kind: "thinking" },
     { name: "reasoning", kind: "thinking" },
     { name: "thinking", kind: "thinking" },
@@ -764,7 +770,7 @@ function extractTextFragments(container: Record<string, unknown>): AggregateFrag
 
 function contentToFragments(
   value: unknown,
-  defaultKind: AggregateFragment["kind"],
+  defaultKind: AggregateTextFragmentKind,
 ): AggregateFragment[] {
   if (typeof value === "string") {
     return value ? [{ kind: defaultKind, text: value }] : [];
@@ -795,6 +801,10 @@ function contentToFragments(
       if (typeof record.output_text === "string") {
         out.push({ kind: "content", text: record.output_text });
       }
+      const media = extractMediaFragment(record);
+      if (media) {
+        out.push(media);
+      }
       if (typeof record.text === "string") {
         out.push({ kind, text: record.text });
       }
@@ -817,6 +827,10 @@ function contentToFragments(
   if (typeof record.output_text === "string") {
     out.push({ kind: "content", text: record.output_text });
   }
+  const media = extractMediaFragment(record);
+  if (media) {
+    out.push(media);
+  }
   if (typeof record.text === "string") {
     out.push({ kind, text: record.text });
   }
@@ -825,13 +839,139 @@ function contentToFragments(
 
 function inferFragmentKind(
   container: Record<string, unknown>,
-  fallback: AggregateFragment["kind"],
-): AggregateFragment["kind"] {
+  fallback: AggregateTextFragmentKind,
+): AggregateTextFragmentKind {
   const eventType = stringValue(container.type)?.toLowerCase() ?? "";
   if (eventType.includes("reason") || eventType.includes("thinking")) {
     return "thinking";
   }
-  return normalizeAggregateFragmentKind(fallback);
+  return fallback === "thinking" ? "thinking" : "content";
+}
+
+function extractMediaFragment(container: Record<string, unknown>): AggregateFragment | null {
+  const mediaKind = inferMediaKind(container);
+  if (!mediaKind) {
+    return null;
+  }
+
+  const details = extractMediaDetails(container, mediaKind);
+  if (!details) {
+    return null;
+  }
+
+  return {
+    kind: mediaKind,
+    url: details.url,
+    mime: details.mime,
+    alt: details.alt,
+    title: details.title,
+  };
+}
+
+function inferMediaKind(
+  container: Record<string, unknown>,
+): "image" | "video" | null {
+  const eventType = stringValue(container.type)?.toLowerCase() ?? "";
+  if (eventType.includes("image")) {
+    return "image";
+  }
+  if (eventType.includes("video")) {
+    return "video";
+  }
+  if ("image_url" in container || "image" in container || "b64_json" in container) {
+    return "image";
+  }
+  if ("video_url" in container || "video" in container) {
+    return "video";
+  }
+  return null;
+}
+
+function extractMediaDetails(
+  container: Record<string, unknown>,
+  kind: "image" | "video",
+): {
+  url: string;
+  mime?: string;
+  alt?: string;
+  title?: string;
+} | null {
+  const fieldCandidates = kind === "image" ? ["image_url", "image", "url", "src"] : ["video_url", "video", "url", "src"];
+  for (const field of fieldCandidates) {
+    const details = mediaDetailsFromValue(container[field], {
+      mime: pickFirstString(container.mime_type, container.mime),
+      alt: pickFirstString(container.alt, container.alt_text),
+      title: pickFirstString(container.title, container.name),
+    });
+    if (details) {
+      return details;
+    }
+  }
+
+  if (kind === "image") {
+    const dataURL = base64ToDataURL(
+      stringValue(container.b64_json),
+      pickFirstString(container.mime_type, container.mime) ?? "image/png",
+    );
+    if (dataURL) {
+      return {
+        url: dataURL,
+        mime: pickFirstString(container.mime_type, container.mime) ?? "image/png",
+        alt: normalizeOptionalString(pickFirstString(container.alt, container.alt_text)),
+        title: normalizeOptionalString(pickFirstString(container.title, container.name)),
+      };
+    }
+  }
+
+  return null;
+}
+
+function mediaDetailsFromValue(
+  value: unknown,
+  defaults: { mime?: string | null; alt?: string | null; title?: string | null },
+): {
+  url: string;
+  mime?: string;
+  alt?: string;
+  title?: string;
+} | null {
+  if (typeof value === "string") {
+    const url = value.trim();
+    if (!url) {
+      return null;
+    }
+    return {
+      url,
+      mime: normalizeOptionalString(defaults.mime),
+      alt: normalizeOptionalString(defaults.alt),
+      title: normalizeOptionalString(defaults.title),
+    };
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const url = pickFirstString(record.url, record.uri, record.src, record.href);
+  if (!url) {
+    return null;
+  }
+
+  return {
+    url,
+    mime: normalizeOptionalString(pickFirstString(record.mime_type, record.mime) ?? defaults.mime),
+    alt: normalizeOptionalString(pickFirstString(record.alt, record.alt_text) ?? defaults.alt),
+    title: normalizeOptionalString(pickFirstString(record.title, record.name) ?? defaults.title),
+  };
+}
+
+function base64ToDataURL(base64: string | null, mime: string): string | null {
+  const normalized = base64?.trim() ?? "";
+  if (!normalized) {
+    return null;
+  }
+  return `data:${mime};base64,${normalized}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -847,4 +987,17 @@ function functionValue(value: unknown): (() => AggregationPlugin) | null {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function pickFirstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | undefined {
+  return value?.trim() || undefined;
 }

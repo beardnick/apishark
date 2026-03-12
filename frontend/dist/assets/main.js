@@ -1,5 +1,5 @@
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
-import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
+import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragment, isAggregateTextFragment, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
@@ -1164,8 +1164,8 @@ function finalizeAggregationRuntime() {
     applyAggregationRuntimeResult(result);
 }
 function applyAggregationRuntimeResult(result) {
-    if (result.replaceFragments && result.replaceFragments.length > 0) {
-        aggregateAppender.setFragments(result.replaceFragments);
+    if ("replaceFragments" in result) {
+        aggregateAppender.setFragments(result.replaceFragments ?? []);
         return;
     }
     if (result.appendFragments && result.appendFragments.length > 0) {
@@ -2199,7 +2199,7 @@ class BatchedAggregateAppender {
     constructor(element, maxChars, flushIntervalMs = OUTPUT_FLUSH_INTERVAL_MS) {
         this.fragments = [];
         this.pending = [];
-        this.pendingChars = 0;
+        this.pendingUnits = 0;
         this.flushTimer = null;
         this.element = element;
         this.maxChars = maxChars;
@@ -2217,11 +2217,11 @@ class BatchedAggregateAppender {
             return;
         }
         this.pending.push(...normalized);
-        this.pendingChars += aggregateFragmentsToText(normalized).length;
+        this.pendingUnits += normalized.reduce((sum, fragment) => sum + aggregateFragmentSize(fragment), 0);
         this.scheduleFlush();
     }
     hasContent() {
-        return this.fragments.length > 0 || this.pendingChars > 0;
+        return this.fragments.length > 0 || this.pendingUnits > 0;
     }
     setText(text) {
         this.setFragments(text ? [{ kind: "content", text }] : []);
@@ -2239,7 +2239,7 @@ class BatchedAggregateAppender {
         this.cancelFlush();
         this.fragments = [];
         this.pending = [];
-        this.pendingChars = 0;
+        this.pendingUnits = 0;
         this.element.textContent = "";
     }
     scheduleFlush() {
@@ -2259,12 +2259,12 @@ class BatchedAggregateAppender {
         this.flushTimer = null;
     }
     flushNow() {
-        if (this.pendingChars === 0) {
+        if (this.pendingUnits === 0) {
             return;
         }
         const pending = this.pending;
         this.pending = [];
-        this.pendingChars = 0;
+        this.pendingUnits = 0;
         const stickToBottom = isNearBottom(this.element);
         this.fragments = trimAggregateFragments([...this.fragments, ...pending], this.maxChars);
         renderAggregateFragments(this.element, this.fragments);
@@ -2277,19 +2277,62 @@ function renderAggregateFragments(element, fragments) {
     element.textContent = "";
     const fragment = document.createDocumentFragment();
     for (const part of fragments) {
-        if (!part.text) {
+        if (isAggregateTextFragment(part)) {
+            if (!part.text) {
+                continue;
+            }
+            if (part.kind === "thinking") {
+                const span = document.createElement("span");
+                span.className = "aggregate-fragment is-thinking";
+                span.textContent = part.text;
+                fragment.appendChild(span);
+                continue;
+            }
+            fragment.appendChild(document.createTextNode(part.text));
             continue;
         }
-        if (part.kind === "thinking") {
-            const span = document.createElement("span");
-            span.className = "aggregate-fragment is-thinking";
-            span.textContent = part.text;
-            fragment.appendChild(span);
-            continue;
+        if (isAggregateMediaFragment(part)) {
+            fragment.appendChild(createAggregateMediaElement(part));
         }
-        fragment.appendChild(document.createTextNode(part.text));
     }
     element.appendChild(fragment);
+}
+function createAggregateMediaElement(fragment) {
+    const wrapper = document.createElement("figure");
+    wrapper.className = `aggregate-media aggregate-media-${fragment.kind}`;
+    if (fragment.kind === "image") {
+        const image = document.createElement("img");
+        image.className = "aggregate-media-element";
+        image.src = fragment.url;
+        image.alt = fragment.alt ?? fragment.title ?? "";
+        image.loading = "lazy";
+        image.decoding = "async";
+        image.referrerPolicy = "no-referrer";
+        if (fragment.title) {
+            image.title = fragment.title;
+        }
+        wrapper.appendChild(image);
+    }
+    else {
+        const video = document.createElement("video");
+        video.className = "aggregate-media-element";
+        video.src = fragment.url;
+        video.controls = true;
+        video.preload = "metadata";
+        video.playsInline = true;
+        if (fragment.title) {
+            video.title = fragment.title;
+        }
+        video.setAttribute("aria-label", fragment.title ?? fragment.alt ?? "Aggregated video");
+        wrapper.appendChild(video);
+    }
+    if (fragment.title) {
+        const caption = document.createElement("figcaption");
+        caption.className = "aggregate-media-caption";
+        caption.textContent = fragment.title;
+        wrapper.appendChild(caption);
+    }
+    return wrapper;
 }
 function isNearBottom(element) {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;

@@ -59,6 +59,61 @@ test("ResponseAggregationRuntime aggregates OpenAI SSE raw events incrementally"
   assert.equal(runtime.snapshotText(), "plan answer");
 });
 
+test("ResponseAggregationRuntime aggregates OpenAI media fragments natively", () => {
+  const runtime = new ResponseAggregationRuntime(AGGREGATION_PLUGIN_OPENAI);
+
+  const result = runtime.consumeRawEvent({
+    seq: 1,
+    transport: { mode: "sse", contentType: "text/event-stream", field: "data" },
+    rawChunk:
+      'data: {"output":[{"content":[{"type":"output_text","text":"caption "},{"type":"output_image","image_url":{"url":"https://cdn.example.test/cat.png","mime_type":"image/png"},"alt":"cat","title":"Cat"},{"type":"output_video","video_url":"https://cdn.example.test/cat.mp4","mime_type":"video/mp4","title":"Clip"}]}]}',
+    sseData:
+      '{"output":[{"content":[{"type":"output_text","text":"caption "},{"type":"output_image","image_url":{"url":"https://cdn.example.test/cat.png","mime_type":"image/png"},"alt":"cat","title":"Cat"},{"type":"output_video","video_url":"https://cdn.example.test/cat.mp4","mime_type":"video/mp4","title":"Clip"}]}]}',
+    parsedJson: {
+      output: [
+        {
+          content: [
+            { type: "output_text", text: "caption " },
+            {
+              type: "output_image",
+              image_url: { url: "https://cdn.example.test/cat.png", mime_type: "image/png" },
+              alt: "cat",
+              title: "Cat",
+            },
+            {
+              type: "output_video",
+              video_url: "https://cdn.example.test/cat.mp4",
+              mime_type: "video/mp4",
+              title: "Clip",
+            },
+          ],
+        },
+      ],
+    },
+    done: false,
+    ts: "2026-03-12T00:00:00Z",
+  });
+
+  assert.deepEqual(result.appendFragments, [
+    { kind: "content", text: "caption " },
+    {
+      kind: "image",
+      url: "https://cdn.example.test/cat.png",
+      mime: "image/png",
+      alt: "cat",
+      title: "Cat",
+    },
+    {
+      kind: "video",
+      url: "https://cdn.example.test/cat.mp4",
+      mime: "video/mp4",
+      title: "Clip",
+    },
+  ]);
+  assert.deepEqual(runtime.snapshotFragments(), result.appendFragments);
+  assert.equal(runtime.snapshotText(), "caption ");
+});
+
 test("ResponseAggregationRuntime aggregates non-stream JSON once body completes", () => {
   const runtime = new ResponseAggregationRuntime(AGGREGATION_PLUGIN_OPENAI);
 
@@ -112,6 +167,57 @@ test("ResponseAggregationRuntime turns plugin failures into readable errors", ()
 
   assert.equal(result.error, 'Aggregation plugin "custom" failed: boom');
   assert.deepEqual(runtime.finalize(), {});
+});
+
+test("ResponseAggregationRuntime accepts plugin media append and replace updates", () => {
+  const runtime = new ResponseAggregationRuntime("custom", {
+    pluginOverride: {
+      onRawEvent() {
+        return {
+          append: [
+            { kind: "content", text: "intro " },
+            { kind: "image", url: "https://cdn.example.test/one.png", title: "One" },
+            { kind: "image", url: "javascript:alert(1)" },
+          ],
+        };
+      },
+      finalize() {
+        return {
+          replace: [
+            { kind: "thinking", text: "plan " },
+            { kind: "video", url: "data:video/mp4;base64,AAAA", title: "Clip" },
+            { kind: "content", text: "done" },
+          ],
+        };
+      },
+    },
+  });
+
+  const first = runtime.consumeRawEvent({
+    seq: 1,
+    transport: { mode: "body", contentType: "application/json" },
+    rawChunk: "{}",
+    parsedJson: {},
+    done: false,
+    ts: "2026-03-12T00:00:00Z",
+  });
+  assert.deepEqual(first.appendFragments, [
+    { kind: "content", text: "intro " },
+    { kind: "image", url: "https://cdn.example.test/one.png", title: "One" },
+  ]);
+
+  const final = runtime.finalize();
+  assert.deepEqual(final.replaceFragments, [
+    { kind: "thinking", text: "plan " },
+    {
+      kind: "video",
+      url: "data:video/mp4;base64,AAAA",
+      mime: "video/mp4",
+      title: "Clip",
+    },
+    { kind: "content", text: "done" },
+  ]);
+  assert.equal(runtime.snapshotText(), "plan done");
 });
 
 test("parseImportedAggregationPluginFile accepts JSON-wrapped plugin modules", async () => {
