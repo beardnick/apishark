@@ -230,6 +230,7 @@ let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let bodyJsonController: JsonViewController | null = null;
 let bodyEditorMode: BodyEditorMode = "text";
+let bodyJsonFoldMode: "collapsed" | "expanded" | "default" = "default";
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
@@ -946,6 +947,14 @@ function syncBodyEditor(): void {
   const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
   bodyJsonController = controller;
 
+  if (controller.hasJSON) {
+    if (bodyJsonFoldMode === "collapsed") {
+      controller.collapseAll();
+    } else if (bodyJsonFoldMode === "expanded") {
+      controller.expandAll();
+    }
+  }
+
   const hasJSON = controller.hasJSON;
   const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
 
@@ -959,6 +968,7 @@ function syncBodyEditor(): void {
 
   if (!hasJSON) {
     bodyEditorMode = "text";
+    bodyJsonFoldMode = "default";
     return;
   }
 
@@ -991,11 +1001,13 @@ function focusBodyEditor(): void {
 function collapseBodyJSON(): void {
   showBodyJSONViewer();
   bodyJsonController?.collapseAll();
+  bodyJsonFoldMode = "collapsed";
 }
 
 function expandBodyJSON(): void {
   showBodyJSONViewer();
   bodyJsonController?.expandAll();
+  bodyJsonFoldMode = "expanded";
 }
 
 function prettifyBodyJSON(): void {
