@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createRequestDraftKey,
   createDuplicateRequestDraft,
+  deletePersistedRequestDraft,
+  getPersistedRequestDraft,
+  normalizePersistedRequestDraftStore,
   nextDuplicateRequestName,
+  prunePersistedRequestDraftStore,
+  requestLibraryDraftsEqual,
+  setPersistedRequestDraft,
 } from "../dist/assets/request-library.js";
 
 test("nextDuplicateRequestName increments within the same request family", () => {
@@ -51,4 +58,174 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
   assert.equal(duplicate.aggregate_openai_sse, source.aggregate_openai_sse);
   assert.equal(duplicate.timeout_seconds, source.timeout_seconds);
   assert.equal(source.headers[0].key, "Authorization");
+});
+
+test("request draft keys include the collection when a saved request is selected", () => {
+  assert.equal(
+    createRequestDraftKey({ collectionId: "col_alpha", requestId: "req_123" }),
+    "collection:col_alpha:request:req_123",
+  );
+  assert.equal(
+    createRequestDraftKey({ collectionId: "col_alpha", requestId: null }),
+    "collection:col_alpha:unsaved",
+  );
+  assert.equal(createRequestDraftKey({ collectionId: null, requestId: null }), "workspace:unsaved");
+});
+
+test("persisted request drafts restore the right request after switching", () => {
+  const baseDraft = {
+    name: "Streaming chat",
+    method: "POST",
+    url: "https://api.example.test/v1/chat/completions",
+    headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
+    body: "{\"stream\":true}",
+    aggregation_plugin: "openai",
+    aggregate_openai_sse: true,
+    timeout_seconds: 45,
+  };
+
+  let store = {};
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_alpha", requestId: "req_one" },
+    draft: { ...baseDraft, name: "Req 1 draft", body: "{\"request\":1}" },
+    updatedAt: "2026-03-13T10:00:00.000Z",
+  });
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_alpha", requestId: "req_two" },
+    draft: { ...baseDraft, name: "Req 2 draft", body: "{\"request\":2}" },
+    updatedAt: "2026-03-13T10:01:00.000Z",
+  });
+
+  assert.equal(
+    getPersistedRequestDraft(store, {
+      collectionId: "col_alpha",
+      requestId: "req_one",
+    })?.draft.body,
+    "{\"request\":1}",
+  );
+  assert.equal(
+    getPersistedRequestDraft(store, {
+      collectionId: "col_alpha",
+      requestId: "req_two",
+    })?.draft.body,
+    "{\"request\":2}",
+  );
+});
+
+test("persisted request drafts support collection-scoped unsaved work and cleanup", () => {
+  const draft = {
+    name: "Untitled Request",
+    method: "GET",
+    url: "https://api.example.test/health",
+    headers: [],
+    body: "",
+    aggregation_plugin: "none",
+    aggregate_openai_sse: false,
+    timeout_seconds: 120,
+  };
+
+  let store = {};
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_alpha", requestId: null },
+    draft,
+  });
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_alpha", requestId: "req_keep" },
+    draft: { ...draft, name: "Saved request draft" },
+  });
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_remove", requestId: "req_remove" },
+    draft: { ...draft, name: "Delete me" },
+  });
+
+  store = prunePersistedRequestDraftStore(store, {
+    collectionIds: ["col_alpha"],
+    requestIds: ["req_keep"],
+  });
+
+  assert.ok(
+    getPersistedRequestDraft(store, {
+      collectionId: "col_alpha",
+      requestId: null,
+    }),
+  );
+  assert.ok(
+    getPersistedRequestDraft(store, {
+      collectionId: "col_alpha",
+      requestId: "req_keep",
+    }),
+  );
+  assert.equal(
+    getPersistedRequestDraft(store, {
+      collectionId: "col_remove",
+      requestId: "req_remove",
+    }),
+    null,
+  );
+
+  const withoutUnsaved = deletePersistedRequestDraft(store, {
+    collectionId: "col_alpha",
+    requestId: null,
+  });
+  assert.equal(
+    getPersistedRequestDraft(withoutUnsaved, {
+      collectionId: "col_alpha",
+      requestId: null,
+    }),
+    null,
+  );
+});
+
+test("requestLibraryDraftsEqual compares draft payloads deeply", () => {
+  const left = {
+    name: "Streaming chat",
+    method: "POST",
+    url: "https://api.example.test/v1/chat/completions",
+    headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
+    body: "{\"stream\":true}",
+    aggregation_plugin: "openai",
+    aggregate_openai_sse: true,
+    timeout_seconds: 45,
+  };
+
+  const right = {
+    ...left,
+    headers: left.headers.map((header) => ({ ...header })),
+  };
+
+  assert.equal(requestLibraryDraftsEqual(left, right), true);
+  assert.equal(
+    requestLibraryDraftsEqual(left, {
+      ...right,
+      headers: [{ key: "Authorization", value: "Bearer changed", enabled: true }],
+    }),
+    false,
+  );
+});
+
+test("normalizePersistedRequestDraftStore ignores invalid draft entries", () => {
+  const normalized = normalizePersistedRequestDraftStore({
+    valid: {
+      collection_id: "col_alpha",
+      request_id: "req_one",
+      updated_at: "2026-03-13T10:00:00.000Z",
+      draft: {
+        name: "Req 1 draft",
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
+        body: "{\"stream\":true}",
+        aggregation_plugin: "openai",
+        aggregate_openai_sse: true,
+        timeout_seconds: 45,
+      },
+    },
+    invalid: {
+      collection_id: "col_alpha",
+      draft: null,
+    },
+  });
+
+  assert.deepEqual(Object.keys(normalized), ["collection:col_alpha:request:req_one"]);
+  assert.equal(normalized["collection:col_alpha:request:req_one"].draft.name, "Req 1 draft");
 });

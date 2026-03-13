@@ -20,6 +20,14 @@ import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
 import {
   createDuplicateRequestDraft,
+  deletePersistedRequestDraft,
+  getPersistedRequestDraft,
+  normalizePersistedRequestDraftStore,
+  prunePersistedRequestDraftStore,
+  requestLibraryDraftsEqual,
+  setPersistedRequestDraft,
+  type PersistedRequestDraftStore,
+  type RequestDraftScope,
   type RequestLibraryDraft,
 } from "./request-library.js";
 
@@ -52,6 +60,7 @@ type PersistedState = {
   aggregationPlugin: string;
   aggregateOpenAISse: boolean;
   timeoutSeconds: number;
+  requestDrafts: PersistedRequestDraftStore;
   activeCollectionId: string | null;
   activeSavedRequestId: string | null;
 };
@@ -114,6 +123,7 @@ const RAW_OUTPUT_MAX_CHARS = 220_000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120_000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
+const DRAFT_AUTOSAVE_DELAY_MS = 350;
 
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
@@ -135,6 +145,7 @@ const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
 const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
 const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
+const draftStatusText = byId<HTMLElement>("draftStatusText");
 const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
 const copyExportCurlBtn = byId<HTMLButtonElement>("copyExportCurlBtn");
@@ -181,8 +192,10 @@ let environments: EnvironmentEntry[] = [];
 let activeEnvironmentId: string | null = null;
 let headerRows: EditableHeader[] = [];
 let collectionStore: CollectionStore = { collections: [] };
+let requestDrafts: PersistedRequestDraftStore = {};
 let activeCollectionId: string | null = null;
 let activeSavedRequestId: string | null = null;
+let draftAutosaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let bodyJsonController: JsonViewController | null = null;
@@ -248,7 +261,7 @@ function wireEvents(): void {
   addHeaderBtn.addEventListener("click", () => {
     headerRows.push(createEmptyHeaderRow());
     renderHeaderRows();
-    persistState();
+    markRequestEditorChanged();
   });
 
   bodyInput.addEventListener("focus", () => {
@@ -266,7 +279,7 @@ function wireEvents(): void {
   bodyInput.addEventListener("input", () => {
     bodyEditorMode = "text";
     syncBodyEditor();
-    persistState();
+    markRequestEditorChanged();
   });
 
   bodyJsonViewer.addEventListener("click", () => {
@@ -316,8 +329,9 @@ function wireEvents(): void {
   ];
 
   for (const target of persistTargets) {
-    target.addEventListener("input", persistState);
-    target.addEventListener("change", persistState);
+    const handler = target === curlInput ? persistState : markRequestEditorChanged;
+    target.addEventListener("input", handler);
+    target.addEventListener("change", handler);
   }
 }
 
@@ -377,6 +391,7 @@ function defaultState(): PersistedState {
     aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
     aggregateOpenAISse: true,
     timeoutSeconds: 120,
+    requestDrafts: {},
     activeCollectionId: null,
     activeSavedRequestId: null,
   };
@@ -397,6 +412,7 @@ function applyInitialState(): void {
     state.aggregateOpenAISse,
   );
   timeoutInput.value = String(state.timeoutSeconds);
+  requestDrafts = state.requestDrafts;
   activeCollectionId = state.activeCollectionId;
   activeSavedRequestId = state.activeSavedRequestId;
   bodyEditorMode = "json";
@@ -404,6 +420,7 @@ function applyInitialState(): void {
   renderEnvironmentControls();
   renderHeaderRows();
   syncBodyEditor();
+  renderDraftStatus();
 }
 
 function loadState(): PersistedState {
@@ -455,6 +472,7 @@ function loadState(): PersistedState {
         typeof parsed.timeoutSeconds === "number" && Number.isFinite(parsed.timeoutSeconds)
           ? parsed.timeoutSeconds
           : fallback.timeoutSeconds,
+      requestDrafts: normalizePersistedRequestDraftStore(parsed.requestDrafts),
       activeCollectionId:
         typeof parsed.activeCollectionId === "string" ? parsed.activeCollectionId : null,
       activeSavedRequestId:
@@ -478,10 +496,106 @@ function persistState(): void {
     aggregationPlugin: selectedAggregationPlugin(),
     aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
     timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
+    requestDrafts,
     activeCollectionId,
     activeSavedRequestId,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function markRequestEditorChanged(): void {
+  persistState();
+  scheduleDraftAutosave();
+}
+
+function scheduleDraftAutosave(): void {
+  if (draftAutosaveTimer !== null) {
+    window.clearTimeout(draftAutosaveTimer);
+  }
+  draftAutosaveTimer = window.setTimeout(() => {
+    draftAutosaveTimer = null;
+    persistCurrentRequestDraft();
+  }, DRAFT_AUTOSAVE_DELAY_MS);
+}
+
+function flushDraftAutosave(): void {
+  if (draftAutosaveTimer === null) {
+    return;
+  }
+  window.clearTimeout(draftAutosaveTimer);
+  draftAutosaveTimer = null;
+  persistCurrentRequestDraft();
+}
+
+function currentRequestDraftScope(): RequestDraftScope {
+  return {
+    collectionId: activeCollectionId,
+    requestId: activeSavedRequestId,
+  };
+}
+
+function persistCurrentRequestDraft(): void {
+  const scope = currentRequestDraftScope();
+  const currentDraft = getCurrentSavedRequestDraft();
+  const savedRequest = findSavedRequest(scope.collectionId, scope.requestId);
+  const canonicalDraft = savedRequest ? savedRequestToDraft(savedRequest) : null;
+
+  requestDrafts = canonicalDraft && requestLibraryDraftsEqual(currentDraft, canonicalDraft)
+    ? deletePersistedRequestDraft(requestDrafts, scope)
+    : setPersistedRequestDraft(requestDrafts, { scope, draft: currentDraft });
+
+  persistState();
+  renderDraftStatus();
+}
+
+function clearPersistedRequestDraft(scope: RequestDraftScope): void {
+  requestDrafts = deletePersistedRequestDraft(requestDrafts, scope);
+  renderDraftStatus();
+}
+
+function restoreDraftForCurrentSelection(fallbackDraft?: RequestLibraryDraft): boolean {
+  const persistedDraft = getPersistedRequestDraft(requestDrafts, currentRequestDraftScope());
+  if (persistedDraft) {
+    applyEditorDraft(persistedDraft.draft);
+    renderDraftStatus();
+    return true;
+  }
+  if (fallbackDraft) {
+    applyEditorDraft(fallbackDraft);
+  }
+  renderDraftStatus();
+  return false;
+}
+
+function applyEditorDraft(draft: RequestLibraryDraft): void {
+  requestNameInput.value = draft.name;
+  methodInput.value = draft.method || "GET";
+  urlInput.value = draft.url;
+  bodyInput.value = draft.body;
+  aggregationPluginInput.value = resolveAggregationPluginId(
+    draft.aggregation_plugin,
+    draft.aggregate_openai_sse,
+  );
+  timeoutInput.value = String(draft.timeout_seconds || 120);
+  headerRows = normalizeHeaderRows(draft.headers);
+  bodyEditorMode = "json";
+
+  renderHeaderRows();
+  syncBodyEditor();
+}
+
+function renderDraftStatus(): void {
+  const hasDraft = getPersistedRequestDraft(requestDrafts, currentRequestDraftScope()) !== null;
+  draftStatusText.textContent = hasDraft ? "Draft saved" : "";
+}
+
+function prunePersistedDrafts(): void {
+  requestDrafts = prunePersistedRequestDraftStore(requestDrafts, {
+    collectionIds: collectionStore.collections.map((collection) => collection.id),
+    requestIds: collectionStore.collections.flatMap((collection) =>
+      collection.requests.map((request) => request.id),
+    ),
+  });
 }
 
 function renderEnvironmentControls(): void {
@@ -727,12 +841,12 @@ function createHeaderActionButton(
 function updateHeaderRow(id: string, patch: Partial<EditableHeader>): void {
   headerRows = headerRows.map((header) => (header.id === id ? { ...header, ...patch } : header));
   renderHeaderRows();
-  persistState();
+  markRequestEditorChanged();
 }
 
 function patchHeaderRow(id: string, patch: Partial<EditableHeader>): void {
   headerRows = headerRows.map((header) => (header.id === id ? { ...header, ...patch } : header));
-  persistState();
+  markRequestEditorChanged();
 }
 
 function insertHeaderAfter(id: string): void {
@@ -744,7 +858,7 @@ function insertHeaderAfter(id: string): void {
   next.splice(index + 1, 0, createEmptyHeaderRow());
   headerRows = next;
   renderHeaderRows();
-  persistState();
+  markRequestEditorChanged();
 }
 
 function duplicateHeader(id: string): void {
@@ -763,7 +877,7 @@ function duplicateHeader(id: string): void {
   next.splice(index + 1, 0, duplicate);
   headerRows = next;
   renderHeaderRows();
-  persistState();
+  markRequestEditorChanged();
 }
 
 function removeHeader(id: string): void {
@@ -773,7 +887,7 @@ function removeHeader(id: string): void {
     headerRows = headerRows.filter((header) => header.id !== id);
   }
   renderHeaderRows();
-  persistState();
+  markRequestEditorChanged();
 }
 
 function syncBodyEditor(): void {
@@ -843,7 +957,7 @@ function prettifyBodyJSON(): void {
   bodyInput.value = pretty;
   bodyEditorMode = document.activeElement === bodyInput ? "text" : "json";
   syncBodyEditor();
-  persistState();
+  markRequestEditorChanged();
 }
 
 async function importCurl(): Promise<void> {
@@ -874,6 +988,7 @@ async function importCurl(): Promise<void> {
       body: string;
     };
 
+    flushDraftAutosave();
     methodInput.value = parsed.method || "GET";
     urlInput.value = parsed.url || "";
     headerRows = normalizeHeaderRows(
@@ -885,6 +1000,7 @@ async function importCurl(): Promise<void> {
     renderHeaderRows();
     syncBodyEditor();
     persistState();
+    persistCurrentRequestDraft();
   } catch (error) {
     setError(errorMessage(error, "Failed to import curl command."));
   } finally {
@@ -1437,6 +1553,7 @@ async function loadCollections(): Promise<void> {
 
     const parsed = normalizeCollectionStore(JSON.parse(responseText) as Partial<CollectionStore>);
     collectionStore = parsed;
+    prunePersistedDrafts();
 
     if (!findCollection(activeCollectionId)) {
       activeCollectionId = parsed.collections[0]?.id ?? null;
@@ -1448,6 +1565,10 @@ async function loadCollections(): Promise<void> {
       }
     }
 
+    const activeSavedRequest = findSavedRequest(activeCollectionId, activeSavedRequestId);
+    restoreDraftForCurrentSelection(
+      activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined,
+    );
     renderCollections();
     persistState();
     setCollectionsStatus(
@@ -1468,6 +1589,7 @@ async function createCollection(): Promise<void> {
     return;
   }
 
+  flushDraftAutosave();
   const previous = cloneCollectionStore(collectionStore);
   const nextCollection: RequestCollection = {
     id: makeId("col"),
@@ -1492,6 +1614,7 @@ async function createCollection(): Promise<void> {
 }
 
 async function saveCurrentRequestToCollection(): Promise<void> {
+  flushDraftAutosave();
   if (!activeCollectionId) {
     setCollectionsStatus("Create or select a collection first.", true);
     return;
@@ -1504,6 +1627,7 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   }
 
   const requestName = requestNameInput.value.trim() || "Untitled Request";
+  const previousScope = currentRequestDraftScope();
   const savedRequest = createSavedRequest({
     id: activeSavedRequestId ?? makeId("req"),
     draft: getCurrentSavedRequestDraft(),
@@ -1537,11 +1661,14 @@ async function saveCurrentRequestToCollection(): Promise<void> {
   }
 
   renderCollections();
+  clearPersistedRequestDraft(previousScope);
+  clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
   persistState();
   setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
 }
 
 async function duplicateCurrentRequest(): Promise<void> {
+  flushDraftAutosave();
   const currentDraft = getCurrentSavedRequestDraft();
   const targetCollection = findCollection(activeCollectionId);
   const existingNames = targetCollection
@@ -1555,6 +1682,7 @@ async function duplicateCurrentRequest(): Promise<void> {
     requestNameInput.value = duplicateDraft.name;
     activeSavedRequestId = null;
     persistState();
+    persistCurrentRequestDraft();
     setCollectionsStatus(
       `Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`,
     );
@@ -1587,6 +1715,7 @@ async function duplicateCurrentRequest(): Promise<void> {
   requestNameInput.value = savedRequest.name;
   activeSavedRequestId = savedRequest.id;
   renderCollections();
+  clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
   persistState();
   setCollectionsStatus(
     `Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`,
@@ -1601,22 +1730,10 @@ function loadSavedRequest(collectionId: string, requestId: string): void {
     return;
   }
 
+  flushDraftAutosave();
   activeCollectionId = collectionId;
   activeSavedRequestId = requestId;
-  requestNameInput.value = savedRequest.name;
-  methodInput.value = savedRequest.method || "GET";
-  urlInput.value = savedRequest.url;
-  bodyInput.value = savedRequest.body;
-  aggregationPluginInput.value = resolveAggregationPluginId(
-    savedRequest.aggregation_plugin,
-    savedRequest.aggregate_openai_sse,
-  );
-  timeoutInput.value = String(savedRequest.timeout_seconds || 120);
-  headerRows = normalizeHeaderRows(savedRequest.headers);
-  bodyEditorMode = "json";
-
-  renderHeaderRows();
-  syncBodyEditor();
+  restoreDraftForCurrentSelection(savedRequestToDraft(savedRequest));
   renderCollections();
   persistState();
   setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
@@ -1631,6 +1748,9 @@ async function deleteCollection(collectionId: string): Promise<void> {
     return;
   }
 
+  if (activeCollectionId === collectionId) {
+    flushDraftAutosave();
+  }
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
     collections: collectionStore.collections.filter((item) => item.id !== collectionId),
@@ -1645,6 +1765,8 @@ async function deleteCollection(collectionId: string): Promise<void> {
     return;
   }
 
+  prunePersistedDrafts();
+  restoreDraftForCurrentSelection();
   renderCollections();
   persistState();
   setCollectionsStatus(`Deleted collection "${collection.name}".`);
@@ -1660,6 +1782,9 @@ async function deleteSavedRequest(collectionId: string, requestId: string): Prom
     return;
   }
 
+  if (activeCollectionId === collectionId && activeSavedRequestId === requestId) {
+    flushDraftAutosave();
+  }
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
     collections: collectionStore.collections.map((item) => {
@@ -1681,6 +1806,8 @@ async function deleteSavedRequest(collectionId: string, requestId: string): Prom
     return;
   }
 
+  clearPersistedRequestDraft({ collectionId, requestId });
+  restoreDraftForCurrentSelection();
   renderCollections();
   persistState();
   setCollectionsStatus(`Deleted "${request.name}".`);
@@ -1699,10 +1826,15 @@ async function saveCollectionsToServer(previous: CollectionStore): Promise<boole
     }
 
     collectionStore = normalizeCollectionStore(JSON.parse(responseText) as Partial<CollectionStore>);
+    prunePersistedDrafts();
     if (activeCollectionId && !findCollection(activeCollectionId)) {
       activeCollectionId = collectionStore.collections[0]?.id ?? null;
       activeSavedRequestId = null;
     }
+    if (activeSavedRequestId && !findSavedRequest(activeCollectionId, activeSavedRequestId)) {
+      activeSavedRequestId = null;
+    }
+    renderDraftStatus();
     return true;
   } catch (error) {
     collectionStore = previous;
@@ -1736,10 +1868,12 @@ function renderCollections(): void {
     selectBtn.type = "button";
     selectBtn.className = "collection-select-btn";
     selectBtn.addEventListener("click", () => {
+      flushDraftAutosave();
       activeCollectionId = collection.id;
       if (!collection.requests.some((request) => request.id === activeSavedRequestId)) {
         activeSavedRequestId = null;
       }
+      restoreDraftForCurrentSelection();
       renderCollections();
       persistState();
       setCollectionsStatus(`Selected collection "${collection.name}".`);
@@ -1761,6 +1895,7 @@ function renderCollections(): void {
     saveBtn.ariaLabel = `Save current request to ${collection.name}`;
     saveBtn.title = `Save current request to ${collection.name}`;
     saveBtn.addEventListener("click", () => {
+      flushDraftAutosave();
       activeCollectionId = collection.id;
       void saveCurrentRequestToCollection();
     });
@@ -1900,6 +2035,29 @@ function findCollection(id: string | null): RequestCollection | undefined {
   return collectionStore.collections.find((collection) => collection.id === id);
 }
 
+function findSavedRequest(
+  collectionId: string | null,
+  requestId: string | null,
+): SavedRequest | undefined {
+  if (!requestId) {
+    return undefined;
+  }
+
+  const collection = findCollection(collectionId);
+  if (collection) {
+    return collection.requests.find((request) => request.id === requestId);
+  }
+
+  for (const item of collectionStore.collections) {
+    const request = item.requests.find((candidate) => candidate.id === requestId);
+    if (request) {
+      return request;
+    }
+  }
+
+  return undefined;
+}
+
 function setCollectionsStatus(message: string, isError = false): void {
   collectionsStatusText.textContent = message;
   collectionsStatusText.classList.toggle("error", isError);
@@ -2005,6 +2163,23 @@ function getCurrentSavedRequestDraft(): RequestLibraryDraft {
     aggregation_plugin: aggregationPlugin,
     aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
     timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+  };
+}
+
+function savedRequestToDraft(savedRequest: SavedRequest): RequestLibraryDraft {
+  const aggregationPlugin = resolveAggregationPluginId(
+    savedRequest.aggregation_plugin,
+    savedRequest.aggregate_openai_sse,
+  );
+  return {
+    name: savedRequest.name,
+    method: savedRequest.method || "GET",
+    url: savedRequest.url,
+    headers: savedRequest.headers.map((header) => ({ ...header })),
+    body: savedRequest.body,
+    aggregation_plugin: aggregationPlugin,
+    aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+    timeout_seconds: savedRequest.timeout_seconds || 120,
   };
 }
 

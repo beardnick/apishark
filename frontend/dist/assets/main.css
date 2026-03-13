@@ -1029,6 +1029,11 @@ button.ghost:hover:not(:disabled) {
   font-size: 0.76rem;
 }
 
+.draft-status {
+  min-height: 1em;
+  color: var(--success);
+}
+
 .collection-card-actions .small-btn,
 .request-item-actions .small-btn {
   width: 28px;

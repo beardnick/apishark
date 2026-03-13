@@ -3,12 +3,13 @@ import { aggregateFragmentsToText, normalizeAggregateFragments, trimAggregateFra
 import { AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, resolveAggregationPluginId, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
-import { createDuplicateRequestDraft, } from "./request-library.js";
+import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, setPersistedRequestDraft, } from "./request-library.js";
 const STORAGE_KEY = "apishark.state.v2";
 const RAW_OUTPUT_MAX_CHARS = 220000;
 const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1200;
+const DRAFT_AUTOSAVE_DELAY_MS = 350;
 const environmentSelect = byId("environmentSelect");
 const createEnvironmentBtn = byId("createEnvironmentBtn");
 const renameEnvironmentBtn = byId("renameEnvironmentBtn");
@@ -29,6 +30,7 @@ const bodyPrettifyBtn = byId("bodyPrettifyBtn");
 const bodyCollapseBtn = byId("bodyCollapseBtn");
 const bodyExpandBtn = byId("bodyExpandBtn");
 const aggregationPluginInput = byId("aggregationPluginInput");
+const draftStatusText = byId("draftStatusText");
 const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
 const copyExportCurlBtn = byId("copyExportCurlBtn");
@@ -72,8 +74,10 @@ let environments = [];
 let activeEnvironmentId = null;
 let headerRows = [];
 let collectionStore = { collections: [] };
+let requestDrafts = {};
 let activeCollectionId = null;
 let activeSavedRequestId = null;
+let draftAutosaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let bodyJsonController = null;
@@ -126,7 +130,7 @@ function wireEvents() {
     addHeaderBtn.addEventListener("click", () => {
         headerRows.push(createEmptyHeaderRow());
         renderHeaderRows();
-        persistState();
+        markRequestEditorChanged();
     });
     bodyInput.addEventListener("focus", () => {
         showBodyTextEditor();
@@ -143,7 +147,7 @@ function wireEvents() {
     bodyInput.addEventListener("input", () => {
         bodyEditorMode = "text";
         syncBodyEditor();
-        persistState();
+        markRequestEditorChanged();
     });
     bodyJsonViewer.addEventListener("click", () => {
         focusBodyEditor();
@@ -186,8 +190,9 @@ function wireEvents() {
         timeoutInput,
     ];
     for (const target of persistTargets) {
-        target.addEventListener("input", persistState);
-        target.addEventListener("change", persistState);
+        const handler = target === curlInput ? persistState : markRequestEditorChanged;
+        target.addEventListener("input", handler);
+        target.addEventListener("change", handler);
     }
 }
 function setupTabs() {
@@ -234,6 +239,7 @@ function defaultState() {
         aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
         aggregateOpenAISse: true,
         timeoutSeconds: 120,
+        requestDrafts: {},
         activeCollectionId: null,
         activeSavedRequestId: null,
     };
@@ -250,12 +256,14 @@ function applyInitialState() {
     bodyInput.value = state.bodyText;
     aggregationPluginInput.value = resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse);
     timeoutInput.value = String(state.timeoutSeconds);
+    requestDrafts = state.requestDrafts;
     activeCollectionId = state.activeCollectionId;
     activeSavedRequestId = state.activeSavedRequestId;
     bodyEditorMode = "json";
     renderEnvironmentControls();
     renderHeaderRows();
     syncBodyEditor();
+    renderDraftStatus();
 }
 function loadState() {
     const fallback = defaultState();
@@ -297,6 +305,7 @@ function loadState() {
             timeoutSeconds: typeof parsed.timeoutSeconds === "number" && Number.isFinite(parsed.timeoutSeconds)
                 ? parsed.timeoutSeconds
                 : fallback.timeoutSeconds,
+            requestDrafts: normalizePersistedRequestDraftStore(parsed.requestDrafts),
             activeCollectionId: typeof parsed.activeCollectionId === "string" ? parsed.activeCollectionId : null,
             activeSavedRequestId: typeof parsed.activeSavedRequestId === "string" ? parsed.activeSavedRequestId : null,
         };
@@ -318,10 +327,88 @@ function persistState() {
         aggregationPlugin: selectedAggregationPlugin(),
         aggregateOpenAISse: selectedAggregationPlugin() === AGGREGATION_PLUGIN_OPENAI,
         timeoutSeconds: toPositiveInt(timeoutInput.value, 120),
+        requestDrafts,
         activeCollectionId,
         activeSavedRequestId,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+function markRequestEditorChanged() {
+    persistState();
+    scheduleDraftAutosave();
+}
+function scheduleDraftAutosave() {
+    if (draftAutosaveTimer !== null) {
+        window.clearTimeout(draftAutosaveTimer);
+    }
+    draftAutosaveTimer = window.setTimeout(() => {
+        draftAutosaveTimer = null;
+        persistCurrentRequestDraft();
+    }, DRAFT_AUTOSAVE_DELAY_MS);
+}
+function flushDraftAutosave() {
+    if (draftAutosaveTimer === null) {
+        return;
+    }
+    window.clearTimeout(draftAutosaveTimer);
+    draftAutosaveTimer = null;
+    persistCurrentRequestDraft();
+}
+function currentRequestDraftScope() {
+    return {
+        collectionId: activeCollectionId,
+        requestId: activeSavedRequestId,
+    };
+}
+function persistCurrentRequestDraft() {
+    const scope = currentRequestDraftScope();
+    const currentDraft = getCurrentSavedRequestDraft();
+    const savedRequest = findSavedRequest(scope.collectionId, scope.requestId);
+    const canonicalDraft = savedRequest ? savedRequestToDraft(savedRequest) : null;
+    requestDrafts = canonicalDraft && requestLibraryDraftsEqual(currentDraft, canonicalDraft)
+        ? deletePersistedRequestDraft(requestDrafts, scope)
+        : setPersistedRequestDraft(requestDrafts, { scope, draft: currentDraft });
+    persistState();
+    renderDraftStatus();
+}
+function clearPersistedRequestDraft(scope) {
+    requestDrafts = deletePersistedRequestDraft(requestDrafts, scope);
+    renderDraftStatus();
+}
+function restoreDraftForCurrentSelection(fallbackDraft) {
+    const persistedDraft = getPersistedRequestDraft(requestDrafts, currentRequestDraftScope());
+    if (persistedDraft) {
+        applyEditorDraft(persistedDraft.draft);
+        renderDraftStatus();
+        return true;
+    }
+    if (fallbackDraft) {
+        applyEditorDraft(fallbackDraft);
+    }
+    renderDraftStatus();
+    return false;
+}
+function applyEditorDraft(draft) {
+    requestNameInput.value = draft.name;
+    methodInput.value = draft.method || "GET";
+    urlInput.value = draft.url;
+    bodyInput.value = draft.body;
+    aggregationPluginInput.value = resolveAggregationPluginId(draft.aggregation_plugin, draft.aggregate_openai_sse);
+    timeoutInput.value = String(draft.timeout_seconds || 120);
+    headerRows = normalizeHeaderRows(draft.headers);
+    bodyEditorMode = "json";
+    renderHeaderRows();
+    syncBodyEditor();
+}
+function renderDraftStatus() {
+    const hasDraft = getPersistedRequestDraft(requestDrafts, currentRequestDraftScope()) !== null;
+    draftStatusText.textContent = hasDraft ? "Draft saved" : "";
+}
+function prunePersistedDrafts() {
+    requestDrafts = prunePersistedRequestDraftStore(requestDrafts, {
+        collectionIds: collectionStore.collections.map((collection) => collection.id),
+        requestIds: collectionStore.collections.flatMap((collection) => collection.requests.map((request) => request.id)),
+    });
 }
 function renderEnvironmentControls() {
     environments = normalizeEnvironments(environments);
@@ -503,11 +590,11 @@ function createHeaderActionButton(symbol, label, onClick, disabled, danger = fal
 function updateHeaderRow(id, patch) {
     headerRows = headerRows.map((header) => (header.id === id ? { ...header, ...patch } : header));
     renderHeaderRows();
-    persistState();
+    markRequestEditorChanged();
 }
 function patchHeaderRow(id, patch) {
     headerRows = headerRows.map((header) => (header.id === id ? { ...header, ...patch } : header));
-    persistState();
+    markRequestEditorChanged();
 }
 function insertHeaderAfter(id) {
     const index = headerRows.findIndex((header) => header.id === id);
@@ -518,7 +605,7 @@ function insertHeaderAfter(id) {
     next.splice(index + 1, 0, createEmptyHeaderRow());
     headerRows = next;
     renderHeaderRows();
-    persistState();
+    markRequestEditorChanged();
 }
 function duplicateHeader(id) {
     const index = headerRows.findIndex((header) => header.id === id);
@@ -536,7 +623,7 @@ function duplicateHeader(id) {
     next.splice(index + 1, 0, duplicate);
     headerRows = next;
     renderHeaderRows();
-    persistState();
+    markRequestEditorChanged();
 }
 function removeHeader(id) {
     if (headerRows.length === 1) {
@@ -546,7 +633,7 @@ function removeHeader(id) {
         headerRows = headerRows.filter((header) => header.id !== id);
     }
     renderHeaderRows();
-    persistState();
+    markRequestEditorChanged();
 }
 function syncBodyEditor() {
     const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
@@ -604,7 +691,7 @@ function prettifyBodyJSON() {
     bodyInput.value = pretty;
     bodyEditorMode = document.activeElement === bodyInput ? "text" : "json";
     syncBodyEditor();
-    persistState();
+    markRequestEditorChanged();
 }
 async function importCurl() {
     setError("");
@@ -625,6 +712,7 @@ async function importCurl() {
             throw new Error(responseText || `Import failed (${response.status})`);
         }
         const parsed = JSON.parse(responseText);
+        flushDraftAutosave();
         methodInput.value = parsed.method || "GET";
         urlInput.value = parsed.url || "";
         headerRows = normalizeHeaderRows((parsed.headers || []).map((header) => ({ ...header, enabled: true })));
@@ -634,6 +722,7 @@ async function importCurl() {
         renderHeaderRows();
         syncBodyEditor();
         persistState();
+        persistCurrentRequestDraft();
     }
     catch (error) {
         setError(errorMessage(error, "Failed to import curl command."));
@@ -1114,6 +1203,7 @@ async function loadCollections() {
         }
         const parsed = normalizeCollectionStore(JSON.parse(responseText));
         collectionStore = parsed;
+        prunePersistedDrafts();
         if (!findCollection(activeCollectionId)) {
             activeCollectionId = parsed.collections[0]?.id ?? null;
         }
@@ -1123,6 +1213,8 @@ async function loadCollections() {
                 activeSavedRequestId = null;
             }
         }
+        const activeSavedRequest = findSavedRequest(activeCollectionId, activeSavedRequestId);
+        restoreDraftForCurrentSelection(activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined);
         renderCollections();
         persistState();
         setCollectionsStatus(parsed.collections.length === 0
@@ -1140,6 +1232,7 @@ async function createCollection() {
         setCollectionsStatus("Enter a collection name first.", true);
         return;
     }
+    flushDraftAutosave();
     const previous = cloneCollectionStore(collectionStore);
     const nextCollection = {
         id: makeId("col"),
@@ -1160,6 +1253,7 @@ async function createCollection() {
     setCollectionsStatus(`Selected collection "${name}".`);
 }
 async function saveCurrentRequestToCollection() {
+    flushDraftAutosave();
     if (!activeCollectionId) {
         setCollectionsStatus("Create or select a collection first.", true);
         return;
@@ -1170,6 +1264,7 @@ async function saveCurrentRequestToCollection() {
         return;
     }
     const requestName = requestNameInput.value.trim() || "Untitled Request";
+    const previousScope = currentRequestDraftScope();
     const savedRequest = createSavedRequest({
         id: activeSavedRequestId ?? makeId("req"),
         draft: getCurrentSavedRequestDraft(),
@@ -1199,10 +1294,13 @@ async function saveCurrentRequestToCollection() {
         return;
     }
     renderCollections();
+    clearPersistedRequestDraft(previousScope);
+    clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
     persistState();
     setCollectionsStatus(`Saved "${requestName}" to "${collection.name}".`);
 }
 async function duplicateCurrentRequest() {
+    flushDraftAutosave();
     const currentDraft = getCurrentSavedRequestDraft();
     const targetCollection = findCollection(activeCollectionId);
     const existingNames = targetCollection
@@ -1213,6 +1311,7 @@ async function duplicateCurrentRequest() {
         requestNameInput.value = duplicateDraft.name;
         activeSavedRequestId = null;
         persistState();
+        persistCurrentRequestDraft();
         setCollectionsStatus(`Prepared duplicate "${duplicateDraft.name}". Select a collection and save it to keep both versions.`);
         return;
     }
@@ -1240,6 +1339,7 @@ async function duplicateCurrentRequest() {
     requestNameInput.value = savedRequest.name;
     activeSavedRequestId = savedRequest.id;
     renderCollections();
+    clearPersistedRequestDraft({ collectionId: activeCollectionId, requestId: savedRequest.id });
     persistState();
     setCollectionsStatus(`Duplicated "${sourceName}" to "${savedRequest.name}" in "${targetCollection.name}".`);
 }
@@ -1250,18 +1350,10 @@ function loadSavedRequest(collectionId, requestId) {
         setCollectionsStatus("Saved request no longer exists.", true);
         return;
     }
+    flushDraftAutosave();
     activeCollectionId = collectionId;
     activeSavedRequestId = requestId;
-    requestNameInput.value = savedRequest.name;
-    methodInput.value = savedRequest.method || "GET";
-    urlInput.value = savedRequest.url;
-    bodyInput.value = savedRequest.body;
-    aggregationPluginInput.value = resolveAggregationPluginId(savedRequest.aggregation_plugin, savedRequest.aggregate_openai_sse);
-    timeoutInput.value = String(savedRequest.timeout_seconds || 120);
-    headerRows = normalizeHeaderRows(savedRequest.headers);
-    bodyEditorMode = "json";
-    renderHeaderRows();
-    syncBodyEditor();
+    restoreDraftForCurrentSelection(savedRequestToDraft(savedRequest));
     renderCollections();
     persistState();
     setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
@@ -1274,6 +1366,9 @@ async function deleteCollection(collectionId) {
     if (!window.confirm(`Delete collection "${collection.name}"?`)) {
         return;
     }
+    if (activeCollectionId === collectionId) {
+        flushDraftAutosave();
+    }
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
         collections: collectionStore.collections.filter((item) => item.id !== collectionId),
@@ -1285,6 +1380,8 @@ async function deleteCollection(collectionId) {
     if (!(await saveCollectionsToServer(previous))) {
         return;
     }
+    prunePersistedDrafts();
+    restoreDraftForCurrentSelection();
     renderCollections();
     persistState();
     setCollectionsStatus(`Deleted collection "${collection.name}".`);
@@ -1297,6 +1394,9 @@ async function deleteSavedRequest(collectionId, requestId) {
     }
     if (!window.confirm(`Delete saved request "${request.name}"?`)) {
         return;
+    }
+    if (activeCollectionId === collectionId && activeSavedRequestId === requestId) {
+        flushDraftAutosave();
     }
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
@@ -1316,6 +1416,8 @@ async function deleteSavedRequest(collectionId, requestId) {
     if (!(await saveCollectionsToServer(previous))) {
         return;
     }
+    clearPersistedRequestDraft({ collectionId, requestId });
+    restoreDraftForCurrentSelection();
     renderCollections();
     persistState();
     setCollectionsStatus(`Deleted "${request.name}".`);
@@ -1332,10 +1434,15 @@ async function saveCollectionsToServer(previous) {
             throw new Error(responseText || `Save failed (${response.status})`);
         }
         collectionStore = normalizeCollectionStore(JSON.parse(responseText));
+        prunePersistedDrafts();
         if (activeCollectionId && !findCollection(activeCollectionId)) {
             activeCollectionId = collectionStore.collections[0]?.id ?? null;
             activeSavedRequestId = null;
         }
+        if (activeSavedRequestId && !findSavedRequest(activeCollectionId, activeSavedRequestId)) {
+            activeSavedRequestId = null;
+        }
+        renderDraftStatus();
         return true;
     }
     catch (error) {
@@ -1364,10 +1471,12 @@ function renderCollections() {
         selectBtn.type = "button";
         selectBtn.className = "collection-select-btn";
         selectBtn.addEventListener("click", () => {
+            flushDraftAutosave();
             activeCollectionId = collection.id;
             if (!collection.requests.some((request) => request.id === activeSavedRequestId)) {
                 activeSavedRequestId = null;
             }
+            restoreDraftForCurrentSelection();
             renderCollections();
             persistState();
             setCollectionsStatus(`Selected collection "${collection.name}".`);
@@ -1387,6 +1496,7 @@ function renderCollections() {
         saveBtn.ariaLabel = `Save current request to ${collection.name}`;
         saveBtn.title = `Save current request to ${collection.name}`;
         saveBtn.addEventListener("click", () => {
+            flushDraftAutosave();
             activeCollectionId = collection.id;
             void saveCurrentRequestToCollection();
         });
@@ -1506,6 +1616,22 @@ function findCollection(id) {
     }
     return collectionStore.collections.find((collection) => collection.id === id);
 }
+function findSavedRequest(collectionId, requestId) {
+    if (!requestId) {
+        return undefined;
+    }
+    const collection = findCollection(collectionId);
+    if (collection) {
+        return collection.requests.find((request) => request.id === requestId);
+    }
+    for (const item of collectionStore.collections) {
+        const request = item.requests.find((candidate) => candidate.id === requestId);
+        if (request) {
+            return request;
+        }
+    }
+    return undefined;
+}
 function setCollectionsStatus(message, isError = false) {
     collectionsStatusText.textContent = message;
     collectionsStatusText.classList.toggle("error", isError);
@@ -1599,6 +1725,19 @@ function getCurrentSavedRequestDraft() {
         aggregation_plugin: aggregationPlugin,
         aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
         timeout_seconds: toPositiveInt(timeoutInput.value, 120),
+    };
+}
+function savedRequestToDraft(savedRequest) {
+    const aggregationPlugin = resolveAggregationPluginId(savedRequest.aggregation_plugin, savedRequest.aggregate_openai_sse);
+    return {
+        name: savedRequest.name,
+        method: savedRequest.method || "GET",
+        url: savedRequest.url,
+        headers: savedRequest.headers.map((header) => ({ ...header })),
+        body: savedRequest.body,
+        aggregation_plugin: aggregationPlugin,
+        aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
+        timeout_seconds: savedRequest.timeout_seconds || 120,
     };
 }
 function createSavedRequest(input) {
