@@ -116,6 +116,29 @@
             ></textarea>
             <button id="importCurlBtn" type="button">Import to request</button>
           </section>
+
+          <section id="pluginSection" class="pm-side-section">
+            <div class="section-head">
+              <div>
+                <h3>Aggregation plugins</h3>
+                <p class="hint compact">
+                  Import JSON or JS plugin packages into this project only.
+                </p>
+              </div>
+            </div>
+
+            <input
+              id="pluginImportInput"
+              type="file"
+              accept=".json,.js,.mjs,application/json,text/javascript"
+              hidden
+            />
+            <button id="importPluginBtn" type="button">Import plugin</button>
+            <p id="pluginsStatusText" class="hint compact">
+              Imported plugins are stored in <code>./.apishark/plugins.json</code>.
+            </p>
+            <div id="pluginsList" class="plugin-list"></div>
+          </section>
         </div>
       </aside>
 
@@ -167,8 +190,9 @@
             <label for="aggregationPluginInput" class="timeout-label">
               Aggregation
               <select id="aggregationPluginInput">
+                <option value="__collection__">Collection default</option>
                 <option value="none">None</option>
-                <option value="openai">Built-in OpenAI</option>
+                <option value="openai">OpenAI</option>
               </select>
             </label>
             <label for="timeoutInput" class="timeout-label">
@@ -177,6 +201,9 @@
             </label>
           </div>
           <p id="draftStatusText" class="hint compact draft-status"></p>
+          <p id="effectiveAggregationText" class="hint compact">
+            Effective: OpenAI via request override.
+          </p>
 
           <section id="curlExportPanel" class="request-export-panel is-hidden">
             <div class="panel-head">
@@ -432,7 +459,7 @@
               <p class="hint compact">
                 Long aggregated output is capped to keep the page responsive.
               </p>
-              <pre id="aggregateOutput" class="output output-tall"></pre>
+              <div id="aggregateOutput" class="output output-tall aggregate-output"></div>
             </section>
 
             <section id="responseHeadersPanel" class="pm-panel" data-tab-panel="response">

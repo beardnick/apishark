@@ -891,6 +891,39 @@ button.ghost:hover:not(:disabled) {
   padding: 1px 5px;
 }
 
+.aggregate-output {
+  display: block;
+}
+
+.aggregate-media {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.aggregate-media:first-child {
+  margin-top: 0;
+}
+
+.aggregate-media:last-child {
+  margin-bottom: 0;
+}
+
+.aggregate-media-element {
+  display: block;
+  max-width: min(100%, 720px);
+  max-height: 420px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.aggregate-media-caption {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
 .raw-fallback.is-hidden,
 .json-viewer-shell.is-hidden,
 .sse-inspector,
@@ -976,6 +1009,29 @@ button.ghost:hover:not(:disabled) {
   gap: var(--space-3);
 }
 
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.plugin-title {
+  display: block;
+  font-size: 0.82rem;
+}
+
+.plugin-meta,
+.plugin-description {
+  margin: 2px 0 0;
+}
+
 .inline-form {
   justify-content: space-between;
 }
@@ -1032,6 +1088,18 @@ button.ghost:hover:not(:disabled) {
 .draft-status {
   min-height: 1em;
   color: var(--success);
+}
+
+.collection-plugin-row {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-right: 14px;
+}
+
+.collection-plugin-select {
+  min-height: 34px;
+  font-size: 0.8rem;
 }
 
 .collection-card-actions .small-btn,
@@ -1135,6 +1203,10 @@ button.ghost:hover:not(:disabled) {
 
 #timeoutInput {
   width: 78px;
+}
+
+#effectiveAggregationText {
+  margin: -4px 0 0;
 }
 
 #environmentSelect {

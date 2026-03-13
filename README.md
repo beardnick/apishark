@@ -16,6 +16,7 @@ into the Go executable via `embed`.
 - Plugin-based response aggregation fed by raw streaming events
 - Sent/response header inspection with environment-resolved request headers
 - Muted styling for aggregated thinking/reasoning segments
+- Native aggregated image/video rendering for plugin-produced media fragments
 
 ## Run
 
@@ -62,6 +63,9 @@ Each event is delivered incrementally, one chunk or SSE line at a time, with:
 
 Frontend aggregation plugins implement a small lifecycle contract:
 `init`, `onRawEvent`, `onNormalizedEvent`, `onDone`, and `finalize`.
+Plugin updates can `append` or `replace` text/thinking fragments as well as
+media fragments (`image` / `video`) with safe HTTP(S), `blob:`, or matching
+media `data:` URLs.
 Built-in profiles currently include `none` and `openai`. Plugin failures do not
 break the request flow; the UI falls back to raw/plain rendering and shows a
 readable aggregation error.

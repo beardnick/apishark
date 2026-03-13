@@ -1,3 +1,9 @@
+import {
+  AGGREGATION_PLUGIN_NONE,
+  aggregationPluginLabel,
+  resolveAggregationPluginId,
+} from "./aggregation-runtime.js";
+
 export type RequestLibraryHeader = {
   key: string;
   value: string;
@@ -11,6 +17,7 @@ export type RequestLibraryDraft = {
   headers: RequestLibraryHeader[];
   body: string;
   aggregation_plugin: string;
+  use_collection_aggregation_plugin: boolean;
   aggregate_openai_sse: boolean;
   timeout_seconds: number;
 };
@@ -30,6 +37,11 @@ export type PersistedRequestDraft = {
 
 export type PersistedRequestDraftStore = Record<string, PersistedRequestDraft>;
 
+export type EffectiveAggregationPlugin = {
+  pluginId: string;
+  source: "request" | "collection" | "none";
+  label: string;
+};
 const duplicateSuffixPattern = /^(.*?)(?: copy(?: (\d+))?)?$/;
 
 export function nextDuplicateRequestName(name: string, existingNames: string[]): string {
@@ -213,6 +225,27 @@ export function normalizePersistedRequestDraftStore(input: unknown): PersistedRe
   return Object.fromEntries(normalizedEntries.map((entry) => [entry.key, entry]));
 }
 
+export function resolveEffectiveAggregationPlugin(input: {
+  requestPlugin: string | null | undefined;
+  useCollectionPlugin: boolean;
+  collectionPlugin: string | null | undefined;
+}): EffectiveAggregationPlugin {
+  if (input.useCollectionPlugin) {
+    const collectionPlugin = resolveAggregationPluginId(input.collectionPlugin);
+    return {
+      pluginId: collectionPlugin,
+      source: collectionPlugin === AGGREGATION_PLUGIN_NONE ? "none" : "collection",
+      label: aggregationPluginLabel(collectionPlugin),
+    };
+  }
+
+  const requestPlugin = resolveAggregationPluginId(input.requestPlugin);
+  return {
+    pluginId: requestPlugin,
+    source: requestPlugin === AGGREGATION_PLUGIN_NONE ? "none" : "request",
+    label: aggregationPluginLabel(requestPlugin),
+  };
+}
 function duplicateBaseName(name: string): string {
   const match = name.match(duplicateSuffixPattern);
   const baseName = match?.[1]?.trim();
@@ -274,6 +307,7 @@ function normalizeRequestLibraryDraft(input: Partial<RequestLibraryDraft> | unde
       : [],
     body: typeof input.body === "string" ? input.body : "",
     aggregation_plugin: typeof input.aggregation_plugin === "string" ? input.aggregation_plugin : "none",
+    use_collection_aggregation_plugin: input.use_collection_aggregation_plugin !== false,
     aggregate_openai_sse: input.aggregate_openai_sse === true,
     timeout_seconds:
       typeof input.timeout_seconds === "number" && Number.isFinite(input.timeout_seconds)
