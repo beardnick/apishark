@@ -12,6 +12,58 @@ type BodyEditorToken = {
   className: BodyEditorTokenClass | null;
 };
 
+type BodyEditorRenderSegment =
+  | {
+      kind: "visible";
+      text: string;
+    }
+  | {
+      kind: "placeholder";
+      text: string;
+      sourceText: string;
+    };
+
+type BodyEditorProjection = {
+  hasJSON: boolean;
+  isCollapsedView: boolean;
+  segments: BodyEditorRenderSegment[];
+};
+
+type JsonRangeNode =
+  | JsonRangeObjectNode
+  | JsonRangeArrayNode
+  | JsonRangePrimitiveNode;
+
+type JsonRangeObjectNode = {
+  type: "object";
+  start: number;
+  end: number;
+  entries: Array<{
+    key: JsonRangePrimitiveNode;
+    value: JsonRangeNode;
+  }>;
+};
+
+type JsonRangeArrayNode = {
+  type: "array";
+  start: number;
+  end: number;
+  items: JsonRangeNode[];
+};
+
+type JsonRangePrimitiveNode = {
+  type: "string" | "number" | "boolean" | "null";
+  start: number;
+  end: number;
+};
+
+type BodyEditorTextCarrier = {
+  __bodyEditorSourceText?: string;
+};
+
+const BODY_EDITOR_SOURCE_TEXT_KEY = "__bodyEditorSourceText";
+const TEXT_NODE = 3;
+
 export type BodyEditorSelection = {
   start: number;
   end: number;
@@ -47,37 +99,48 @@ export function renderBodyEditor(
   text: string,
   options: BodyEditorRenderOptions = {},
 ): BodyEditorRenderResult {
-  const collapsedText = options.collapsed ? collapseJSONText(text) : null;
-  const displayText = collapsedText ?? text;
-  const hasJSON = text.trim() !== "" && collapsedText !== null;
+  const projection = buildBodyEditorProjection(text, Boolean(options.collapsed));
 
   container.textContent = "";
   container.classList.add("body-code-editor");
-  container.classList.toggle("is-collapsed", collapsedText !== null);
-  container.classList.toggle("is-empty", displayText.length === 0);
-  container.contentEditable = String(Boolean(options.editable) && collapsedText === null);
+  container.classList.toggle("is-collapsed", projection.isCollapsedView);
+  container.classList.toggle("is-empty", projection.segments.length === 0);
+  container.contentEditable = String(Boolean(options.editable));
   container.setAttribute("aria-readonly", container.contentEditable === "false" ? "true" : "false");
 
-  for (const token of tokenizeBodyEditorText(displayText)) {
-    if (!token.className) {
-      container.append(document.createTextNode(token.text));
+  for (const segment of projection.segments) {
+    if (segment.kind === "placeholder") {
+      const span = document.createElement("span");
+      span.className = "json-fold-placeholder";
+      span.textContent = segment.text;
+      span.contentEditable = "false";
+      span.setAttribute("aria-label", "Folded JSON block");
+      (span as HTMLElement & BodyEditorTextCarrier)[BODY_EDITOR_SOURCE_TEXT_KEY] = segment.sourceText;
+      container.append(span);
       continue;
     }
 
-    const span = document.createElement("span");
-    span.className = token.className;
-    span.textContent = token.text;
-    container.append(span);
+    for (const token of tokenizeBodyEditorText(segment.text)) {
+      if (!token.className) {
+        container.append(document.createTextNode(token.text));
+        continue;
+      }
+
+      const span = document.createElement("span");
+      span.className = token.className;
+      span.textContent = token.text;
+      container.append(span);
+    }
   }
 
   return {
-    hasJSON,
-    isCollapsedView: collapsedText !== null,
+    hasJSON: projection.hasJSON,
+    isCollapsedView: projection.isCollapsedView,
   };
 }
 
 export function readBodyEditorText(container: HTMLElement): string {
-  return container.innerText.replace(/\r\n?/g, "\n");
+  return readBodyEditorNodeText(container).replace(/\r\n?/g, "\n");
 }
 
 export function captureBodyEditorSelection(container: HTMLElement): BodyEditorSelection | null {
@@ -157,15 +220,12 @@ export function insertTextAtBodyEditorSelection(container: HTMLElement, text: st
 }
 
 export function collapseJSONText(text: string): string | null {
-  if (!text.trim()) {
+  const projection = buildBodyEditorProjection(text, true);
+  if (!projection.hasJSON) {
     return null;
   }
 
-  try {
-    return renderCollapsedJSON(JSON.parse(text) as unknown, 0, true);
-  } catch {
-    return null;
-  }
+  return projection.segments.map((segment) => segment.text).join("");
 }
 
 export function tokenizeBodyEditorText(text: string): BodyEditorToken[] {
@@ -239,62 +299,293 @@ export function tokenizeBodyEditorText(text: string): BodyEditorToken[] {
   return tokens;
 }
 
-function renderCollapsedJSON(value: unknown, depth: number, isRoot: boolean): string {
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return "[]";
-    }
-
-    if (!isRoot) {
-      return "[…]";
-    }
-
-    const indent = indentFor(depth);
-    const childIndent = indentFor(depth + 1);
-    return `[\n${value
-      .map((item) => `${childIndent}${renderCollapsedJSON(item, depth + 1, false)}`)
-      .join(",\n")}\n${indent}]`;
+function buildBodyEditorProjection(text: string, collapsed: boolean): BodyEditorProjection {
+  const parsed = parseJSONWithRanges(text);
+  if (!parsed) {
+    return {
+      hasJSON: false,
+      isCollapsedView: false,
+      segments: text ? [{ kind: "visible", text }] : [],
+    };
   }
 
-  if (isPlainObject(value)) {
-    const entries = Object.entries(value);
-    if (entries.length === 0) {
-      return "{}";
-    }
-
-    if (!isRoot) {
-      return "{…}";
-    }
-
-    const indent = indentFor(depth);
-    const childIndent = indentFor(depth + 1);
-    return `{\n${entries
-      .map(
-        ([key, childValue]) =>
-          `${childIndent}${JSON.stringify(key)}: ${renderCollapsedJSON(childValue, depth + 1, false)}`,
-      )
-      .join(",\n")}\n${indent}}`;
+  if (!collapsed) {
+    return {
+      hasJSON: true,
+      isCollapsedView: false,
+      segments: text ? [{ kind: "visible", text }] : [],
+    };
   }
 
-  return formatPrimitiveJSON(value);
+  return {
+    hasJSON: true,
+    isCollapsedView: true,
+    segments: buildCollapsedProjectionSegments(text, parsed),
+  };
 }
 
-function formatPrimitiveJSON(value: unknown): string {
-  if (typeof value === "string") {
-    return JSON.stringify(value);
+function buildCollapsedProjectionSegments(text: string, root: JsonRangeNode): BodyEditorRenderSegment[] {
+  const segments: BodyEditorRenderSegment[] = [];
+
+  if (root.start > 0) {
+    segments.push({ kind: "visible", text: text.slice(0, root.start) });
   }
-  if (value === null) {
-    return "null";
+
+  if (isCompositeNode(root)) {
+    segments.push(...buildCollapsedCompositeSegments(text, root));
+  } else {
+    segments.push({ kind: "visible", text: text.slice(root.start, root.end) });
   }
-  return String(value);
+
+  if (root.end < text.length) {
+    segments.push({ kind: "visible", text: text.slice(root.end) });
+  }
+
+  return segments.filter((segment) => segment.text.length > 0);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function buildCollapsedCompositeSegments(
+  text: string,
+  node: JsonRangeObjectNode | JsonRangeArrayNode,
+): BodyEditorRenderSegment[] {
+  const compositeChildren =
+    node.type === "object"
+      ? node.entries.map((entry) => entry.value).filter(isCompositeNode)
+      : node.items.filter(isCompositeNode);
+
+  if (compositeChildren.length === 0) {
+    return [{ kind: "visible", text: text.slice(node.start, node.end) }];
+  }
+
+  const segments: BodyEditorRenderSegment[] = [];
+  let cursor = node.start;
+
+  for (const child of compositeChildren) {
+    if (cursor < child.start) {
+      segments.push({ kind: "visible", text: text.slice(cursor, child.start) });
+    }
+
+    segments.push({
+      kind: "placeholder",
+      text: placeholderTextForNode(child),
+      sourceText: text.slice(child.start, child.end),
+    });
+    cursor = child.end;
+  }
+
+  if (cursor < node.end) {
+    segments.push({ kind: "visible", text: text.slice(cursor, node.end) });
+  }
+
+  return segments.filter((segment) => segment.text.length > 0);
 }
 
-function indentFor(depth: number): string {
-  return "  ".repeat(depth);
+function placeholderTextForNode(node: JsonRangeObjectNode | JsonRangeArrayNode): string {
+  return node.type === "array" ? "[…]" : "{…}";
+}
+
+function isCompositeNode(node: JsonRangeNode): node is JsonRangeObjectNode | JsonRangeArrayNode {
+  return node.type === "object" || node.type === "array";
+}
+
+function parseJSONWithRanges(text: string): JsonRangeNode | null {
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    JSON.parse(text);
+    return new JsonRangeParser(text).parseDocument();
+  } catch {
+    return null;
+  }
+}
+
+class JsonRangeParser {
+  private readonly text: string;
+  private index = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  parseDocument(): JsonRangeNode {
+    this.skipWhitespace();
+    const value = this.parseValue();
+    this.skipWhitespace();
+    if (this.index !== this.text.length) {
+      throw new Error("Unexpected trailing content.");
+    }
+    return value;
+  }
+
+  private parseValue(): JsonRangeNode {
+    this.skipWhitespace();
+    const char = this.text[this.index];
+
+    if (char === "{") {
+      return this.parseObject();
+    }
+    if (char === "[") {
+      return this.parseArray();
+    }
+    if (char === '"') {
+      return this.parseString();
+    }
+    if (char === "-" || /\d/.test(char ?? "")) {
+      return this.parseNumber();
+    }
+    if (this.text.startsWith("true", this.index)) {
+      return this.parseLiteral("true", "boolean");
+    }
+    if (this.text.startsWith("false", this.index)) {
+      return this.parseLiteral("false", "boolean");
+    }
+    if (this.text.startsWith("null", this.index)) {
+      return this.parseLiteral("null", "null");
+    }
+
+    throw new Error("Unexpected JSON token.");
+  }
+
+  private parseObject(): JsonRangeObjectNode {
+    const start = this.index;
+    this.index += 1;
+    this.skipWhitespace();
+
+    const entries: JsonRangeObjectNode["entries"] = [];
+    if (this.text[this.index] === "}") {
+      this.index += 1;
+      return { type: "object", start, end: this.index, entries };
+    }
+
+    while (this.index < this.text.length) {
+      const key = this.parseString();
+      this.skipWhitespace();
+      this.expect(":");
+      this.index += 1;
+      const value = this.parseValue();
+      entries.push({ key, value });
+      this.skipWhitespace();
+
+      if (this.text[this.index] === "}") {
+        this.index += 1;
+        return { type: "object", start, end: this.index, entries };
+      }
+
+      this.expect(",");
+      this.index += 1;
+      this.skipWhitespace();
+    }
+
+    throw new Error("Unterminated object.");
+  }
+
+  private parseArray(): JsonRangeArrayNode {
+    const start = this.index;
+    this.index += 1;
+    this.skipWhitespace();
+
+    const items: JsonRangeArrayNode["items"] = [];
+    if (this.text[this.index] === "]") {
+      this.index += 1;
+      return { type: "array", start, end: this.index, items };
+    }
+
+    while (this.index < this.text.length) {
+      items.push(this.parseValue());
+      this.skipWhitespace();
+
+      if (this.text[this.index] === "]") {
+        this.index += 1;
+        return { type: "array", start, end: this.index, items };
+      }
+
+      this.expect(",");
+      this.index += 1;
+      this.skipWhitespace();
+    }
+
+    throw new Error("Unterminated array.");
+  }
+
+  private parseString(): JsonRangePrimitiveNode {
+    const start = this.index;
+    if (this.text[this.index] !== '"') {
+      throw new Error("Expected string.");
+    }
+
+    this.index += 1;
+    while (this.index < this.text.length) {
+      const char = this.text[this.index];
+      if (char === "\\") {
+        this.index += 2;
+        continue;
+      }
+      if (char === '"') {
+        this.index += 1;
+        return { type: "string", start, end: this.index };
+      }
+      this.index += 1;
+    }
+
+    throw new Error("Unterminated string.");
+  }
+
+  private parseNumber(): JsonRangePrimitiveNode {
+    const start = this.index;
+    const match = this.text
+      .slice(this.index)
+      .match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (!match) {
+      throw new Error("Invalid number.");
+    }
+
+    this.index += match[0].length;
+    return { type: "number", start, end: this.index };
+  }
+
+  private parseLiteral(
+    value: "true" | "false" | "null",
+    type: JsonRangePrimitiveNode["type"],
+  ): JsonRangePrimitiveNode {
+    const start = this.index;
+    this.index += value.length;
+    return { type, start, end: this.index };
+  }
+
+  private skipWhitespace(): void {
+    while (this.index < this.text.length && /\s/.test(this.text[this.index])) {
+      this.index += 1;
+    }
+  }
+
+  private expect(token: string): void {
+    if (this.text[this.index] !== token) {
+      throw new Error(`Expected "${token}".`);
+    }
+  }
+}
+
+function readBodyEditorNodeText(node: Node): string {
+  const carriedText = (node as Node & BodyEditorTextCarrier)[BODY_EDITOR_SOURCE_TEXT_KEY];
+  if (typeof carriedText === "string") {
+    return carriedText;
+  }
+
+  if (node.nodeType === TEXT_NODE) {
+    return node.textContent ?? "";
+  }
+
+  if (node.childNodes.length === 0) {
+    return node.textContent ?? "";
+  }
+
+  let text = "";
+  for (const child of Array.from(node.childNodes)) {
+    text += readBodyEditorNodeText(child);
+  }
+  return text;
 }
 
 function scanJSONStringEnd(text: string, start: number): number {

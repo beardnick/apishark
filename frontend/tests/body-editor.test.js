@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   collapseJSONText,
+  readBodyEditorText,
   renderBodyEditor,
   resolveBodyEditorRenderOptions,
   tokenizeBodyEditorText,
@@ -145,7 +146,7 @@ class FakeDocument {
 test("collapseJSONText keeps root keys while collapsing nested structures", () => {
   assert.equal(
     collapseJSONText('{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}'),
-    '{\n  "stream": true,\n  "messages": […],\n  "meta": {…}\n}',
+    '{"stream":true,"messages":[…],"meta":{…}}',
   );
   assert.equal(collapseJSONText("not json"), null);
 });
@@ -200,11 +201,11 @@ test("focused body editor keeps collapsed JSON until the user explicitly expands
 
     assert.equal(collapsed.hasJSON, true);
     assert.equal(collapsed.isCollapsedView, true);
-    assert.equal(container.contentEditable, "false");
+    assert.equal(container.contentEditable, "true");
     assert.equal(container.classList.contains("is-collapsed"), true);
     assert.equal(
       container.textContent,
-      '{\n  "stream": true,\n  "messages": […],\n  "meta": {…}\n}',
+      '{"stream":true,"messages":[…],"meta":{…}}',
     );
 
     const expanded = renderBodyEditor(
@@ -221,6 +222,89 @@ test("focused body editor keeps collapsed JSON until the user explicitly expands
     assert.equal(container.contentEditable, "true");
     assert.equal(container.classList.contains("is-collapsed"), false);
     assert.equal(container.textContent, bodyText);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test("collapsed body editor preserves hidden JSON while allowing visible edits", () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = new FakeDocument();
+
+  try {
+    const container = document.createElement("div");
+    renderBodyEditor(
+      container,
+      '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}',
+      resolveBodyEditorRenderOptions({
+        requestedCollapsed: true,
+        isActive: true,
+        requestIsLoading: false,
+      }),
+    );
+
+    const streamValue = container.childNodes.find(
+      (node) => node.textContent === "true",
+    );
+    assert.ok(streamValue);
+    streamValue.textContent = "false";
+
+    assert.equal(
+      readBodyEditorText(container),
+      '{"stream":false,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}',
+    );
+
+    const placeholders = container.childNodes.filter(
+      (node) => node.className === "json-fold-placeholder",
+    );
+    assert.equal(placeholders.length, 2);
+    assert.equal(placeholders[0].contentEditable, "false");
+    assert.equal(placeholders[1].contentEditable, "false");
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test("collapsed body editor stays folded across rerenders after editing", () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = new FakeDocument();
+
+  try {
+    const container = document.createElement("div");
+    const originalText = '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}';
+    renderBodyEditor(
+      container,
+      originalText,
+      resolveBodyEditorRenderOptions({
+        requestedCollapsed: true,
+        isActive: true,
+        requestIsLoading: false,
+      }),
+    );
+
+    const streamValue = container.childNodes.find(
+      (node) => node.textContent === "true",
+    );
+    assert.ok(streamValue);
+    streamValue.textContent = "false";
+
+    const rerendered = renderBodyEditor(
+      container,
+      readBodyEditorText(container),
+      resolveBodyEditorRenderOptions({
+        requestedCollapsed: true,
+        isActive: true,
+        requestIsLoading: false,
+      }),
+    );
+
+    assert.equal(rerendered.hasJSON, true);
+    assert.equal(rerendered.isCollapsedView, true);
+    assert.equal(container.classList.contains("is-collapsed"), true);
+    assert.equal(
+      container.textContent,
+      '{"stream":false,"messages":[…],"meta":{…}}',
+    );
   } finally {
     globalThis.document = originalDocument;
   }

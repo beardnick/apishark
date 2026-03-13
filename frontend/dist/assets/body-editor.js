@@ -1,3 +1,5 @@
+const BODY_EDITOR_SOURCE_TEXT_KEY = "__bodyEditorSourceText";
+const TEXT_NODE = 3;
 export function resolveBodyEditorRenderOptions(input) {
     return {
         collapsed: input.requestedCollapsed,
@@ -5,32 +7,42 @@ export function resolveBodyEditorRenderOptions(input) {
     };
 }
 export function renderBodyEditor(container, text, options = {}) {
-    const collapsedText = options.collapsed ? collapseJSONText(text) : null;
-    const displayText = collapsedText ?? text;
-    const hasJSON = text.trim() !== "" && collapsedText !== null;
+    const projection = buildBodyEditorProjection(text, Boolean(options.collapsed));
     container.textContent = "";
     container.classList.add("body-code-editor");
-    container.classList.toggle("is-collapsed", collapsedText !== null);
-    container.classList.toggle("is-empty", displayText.length === 0);
-    container.contentEditable = String(Boolean(options.editable) && collapsedText === null);
+    container.classList.toggle("is-collapsed", projection.isCollapsedView);
+    container.classList.toggle("is-empty", projection.segments.length === 0);
+    container.contentEditable = String(Boolean(options.editable));
     container.setAttribute("aria-readonly", container.contentEditable === "false" ? "true" : "false");
-    for (const token of tokenizeBodyEditorText(displayText)) {
-        if (!token.className) {
-            container.append(document.createTextNode(token.text));
+    for (const segment of projection.segments) {
+        if (segment.kind === "placeholder") {
+            const span = document.createElement("span");
+            span.className = "json-fold-placeholder";
+            span.textContent = segment.text;
+            span.contentEditable = "false";
+            span.setAttribute("aria-label", "Folded JSON block");
+            span[BODY_EDITOR_SOURCE_TEXT_KEY] = segment.sourceText;
+            container.append(span);
             continue;
         }
-        const span = document.createElement("span");
-        span.className = token.className;
-        span.textContent = token.text;
-        container.append(span);
+        for (const token of tokenizeBodyEditorText(segment.text)) {
+            if (!token.className) {
+                container.append(document.createTextNode(token.text));
+                continue;
+            }
+            const span = document.createElement("span");
+            span.className = token.className;
+            span.textContent = token.text;
+            container.append(span);
+        }
     }
     return {
-        hasJSON,
-        isCollapsedView: collapsedText !== null,
+        hasJSON: projection.hasJSON,
+        isCollapsedView: projection.isCollapsedView,
     };
 }
 export function readBodyEditorText(container) {
-    return container.innerText.replace(/\r\n?/g, "\n");
+    return readBodyEditorNodeText(container).replace(/\r\n?/g, "\n");
 }
 export function captureBodyEditorSelection(container) {
     const selection = window.getSelection();
@@ -94,15 +106,11 @@ export function insertTextAtBodyEditorSelection(container, text) {
     selection.addRange(range);
 }
 export function collapseJSONText(text) {
-    if (!text.trim()) {
+    const projection = buildBodyEditorProjection(text, true);
+    if (!projection.hasJSON) {
         return null;
     }
-    try {
-        return renderCollapsedJSON(JSON.parse(text), 0, true);
-    }
-    catch {
-        return null;
-    }
+    return projection.segments.map((segment) => segment.text).join("");
 }
 export function tokenizeBodyEditorText(text) {
     const tokens = [];
@@ -163,50 +171,239 @@ export function tokenizeBodyEditorText(text) {
     }
     return tokens;
 }
-function renderCollapsedJSON(value, depth, isRoot) {
-    if (Array.isArray(value)) {
-        if (value.length === 0) {
-            return "[]";
-        }
-        if (!isRoot) {
-            return "[…]";
-        }
-        const indent = indentFor(depth);
-        const childIndent = indentFor(depth + 1);
-        return `[\n${value
-            .map((item) => `${childIndent}${renderCollapsedJSON(item, depth + 1, false)}`)
-            .join(",\n")}\n${indent}]`;
+function buildBodyEditorProjection(text, collapsed) {
+    const parsed = parseJSONWithRanges(text);
+    if (!parsed) {
+        return {
+            hasJSON: false,
+            isCollapsedView: false,
+            segments: text ? [{ kind: "visible", text }] : [],
+        };
     }
-    if (isPlainObject(value)) {
-        const entries = Object.entries(value);
-        if (entries.length === 0) {
-            return "{}";
-        }
-        if (!isRoot) {
-            return "{…}";
-        }
-        const indent = indentFor(depth);
-        const childIndent = indentFor(depth + 1);
-        return `{\n${entries
-            .map(([key, childValue]) => `${childIndent}${JSON.stringify(key)}: ${renderCollapsedJSON(childValue, depth + 1, false)}`)
-            .join(",\n")}\n${indent}}`;
+    if (!collapsed) {
+        return {
+            hasJSON: true,
+            isCollapsedView: false,
+            segments: text ? [{ kind: "visible", text }] : [],
+        };
     }
-    return formatPrimitiveJSON(value);
+    return {
+        hasJSON: true,
+        isCollapsedView: true,
+        segments: buildCollapsedProjectionSegments(text, parsed),
+    };
 }
-function formatPrimitiveJSON(value) {
-    if (typeof value === "string") {
-        return JSON.stringify(value);
+function buildCollapsedProjectionSegments(text, root) {
+    const segments = [];
+    if (root.start > 0) {
+        segments.push({ kind: "visible", text: text.slice(0, root.start) });
     }
-    if (value === null) {
-        return "null";
+    if (isCompositeNode(root)) {
+        segments.push(...buildCollapsedCompositeSegments(text, root));
     }
-    return String(value);
+    else {
+        segments.push({ kind: "visible", text: text.slice(root.start, root.end) });
+    }
+    if (root.end < text.length) {
+        segments.push({ kind: "visible", text: text.slice(root.end) });
+    }
+    return segments.filter((segment) => segment.text.length > 0);
 }
-function isPlainObject(value) {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+function buildCollapsedCompositeSegments(text, node) {
+    const compositeChildren = node.type === "object"
+        ? node.entries.map((entry) => entry.value).filter(isCompositeNode)
+        : node.items.filter(isCompositeNode);
+    if (compositeChildren.length === 0) {
+        return [{ kind: "visible", text: text.slice(node.start, node.end) }];
+    }
+    const segments = [];
+    let cursor = node.start;
+    for (const child of compositeChildren) {
+        if (cursor < child.start) {
+            segments.push({ kind: "visible", text: text.slice(cursor, child.start) });
+        }
+        segments.push({
+            kind: "placeholder",
+            text: placeholderTextForNode(child),
+            sourceText: text.slice(child.start, child.end),
+        });
+        cursor = child.end;
+    }
+    if (cursor < node.end) {
+        segments.push({ kind: "visible", text: text.slice(cursor, node.end) });
+    }
+    return segments.filter((segment) => segment.text.length > 0);
 }
-function indentFor(depth) {
-    return "  ".repeat(depth);
+function placeholderTextForNode(node) {
+    return node.type === "array" ? "[…]" : "{…}";
+}
+function isCompositeNode(node) {
+    return node.type === "object" || node.type === "array";
+}
+function parseJSONWithRanges(text) {
+    if (!text.trim()) {
+        return null;
+    }
+    try {
+        JSON.parse(text);
+        return new JsonRangeParser(text).parseDocument();
+    }
+    catch {
+        return null;
+    }
+}
+class JsonRangeParser {
+    constructor(text) {
+        this.index = 0;
+        this.text = text;
+    }
+    parseDocument() {
+        this.skipWhitespace();
+        const value = this.parseValue();
+        this.skipWhitespace();
+        if (this.index !== this.text.length) {
+            throw new Error("Unexpected trailing content.");
+        }
+        return value;
+    }
+    parseValue() {
+        this.skipWhitespace();
+        const char = this.text[this.index];
+        if (char === "{") {
+            return this.parseObject();
+        }
+        if (char === "[") {
+            return this.parseArray();
+        }
+        if (char === '"') {
+            return this.parseString();
+        }
+        if (char === "-" || /\d/.test(char ?? "")) {
+            return this.parseNumber();
+        }
+        if (this.text.startsWith("true", this.index)) {
+            return this.parseLiteral("true", "boolean");
+        }
+        if (this.text.startsWith("false", this.index)) {
+            return this.parseLiteral("false", "boolean");
+        }
+        if (this.text.startsWith("null", this.index)) {
+            return this.parseLiteral("null", "null");
+        }
+        throw new Error("Unexpected JSON token.");
+    }
+    parseObject() {
+        const start = this.index;
+        this.index += 1;
+        this.skipWhitespace();
+        const entries = [];
+        if (this.text[this.index] === "}") {
+            this.index += 1;
+            return { type: "object", start, end: this.index, entries };
+        }
+        while (this.index < this.text.length) {
+            const key = this.parseString();
+            this.skipWhitespace();
+            this.expect(":");
+            this.index += 1;
+            const value = this.parseValue();
+            entries.push({ key, value });
+            this.skipWhitespace();
+            if (this.text[this.index] === "}") {
+                this.index += 1;
+                return { type: "object", start, end: this.index, entries };
+            }
+            this.expect(",");
+            this.index += 1;
+            this.skipWhitespace();
+        }
+        throw new Error("Unterminated object.");
+    }
+    parseArray() {
+        const start = this.index;
+        this.index += 1;
+        this.skipWhitespace();
+        const items = [];
+        if (this.text[this.index] === "]") {
+            this.index += 1;
+            return { type: "array", start, end: this.index, items };
+        }
+        while (this.index < this.text.length) {
+            items.push(this.parseValue());
+            this.skipWhitespace();
+            if (this.text[this.index] === "]") {
+                this.index += 1;
+                return { type: "array", start, end: this.index, items };
+            }
+            this.expect(",");
+            this.index += 1;
+            this.skipWhitespace();
+        }
+        throw new Error("Unterminated array.");
+    }
+    parseString() {
+        const start = this.index;
+        if (this.text[this.index] !== '"') {
+            throw new Error("Expected string.");
+        }
+        this.index += 1;
+        while (this.index < this.text.length) {
+            const char = this.text[this.index];
+            if (char === "\\") {
+                this.index += 2;
+                continue;
+            }
+            if (char === '"') {
+                this.index += 1;
+                return { type: "string", start, end: this.index };
+            }
+            this.index += 1;
+        }
+        throw new Error("Unterminated string.");
+    }
+    parseNumber() {
+        const start = this.index;
+        const match = this.text
+            .slice(this.index)
+            .match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+        if (!match) {
+            throw new Error("Invalid number.");
+        }
+        this.index += match[0].length;
+        return { type: "number", start, end: this.index };
+    }
+    parseLiteral(value, type) {
+        const start = this.index;
+        this.index += value.length;
+        return { type, start, end: this.index };
+    }
+    skipWhitespace() {
+        while (this.index < this.text.length && /\s/.test(this.text[this.index])) {
+            this.index += 1;
+        }
+    }
+    expect(token) {
+        if (this.text[this.index] !== token) {
+            throw new Error(`Expected "${token}".`);
+        }
+    }
+}
+function readBodyEditorNodeText(node) {
+    const carriedText = node[BODY_EDITOR_SOURCE_TEXT_KEY];
+    if (typeof carriedText === "string") {
+        return carriedText;
+    }
+    if (node.nodeType === TEXT_NODE) {
+        return node.textContent ?? "";
+    }
+    if (node.childNodes.length === 0) {
+        return node.textContent ?? "";
+    }
+    let text = "";
+    for (const child of Array.from(node.childNodes)) {
+        text += readBodyEditorNodeText(child);
+    }
+    return text;
 }
 function scanJSONStringEnd(text, start) {
     let index = start + 1;
