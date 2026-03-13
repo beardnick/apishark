@@ -1,4 +1,4 @@
-import { captureBodyEditorSelection, focusBodyEditor as focusVisibleBodyEditor, insertTextAtBodyEditorSelection, readBodyEditorText, renderBodyEditor, restoreBodyEditorSelection, } from "./body-editor.js";
+import { captureBodyEditorSelection, focusBodyEditor as focusVisibleBodyEditor, insertTextAtBodyEditorSelection, readBodyEditorText, renderBodyEditor, resolveBodyEditorRenderOptions, restoreBodyEditorSelection, } from "./body-editor.js";
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragment, isAggregateTextFragment, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
@@ -699,10 +699,11 @@ function removeHeader(id) {
 function syncBodyEditor() {
     const isActive = document.activeElement === bodyEditor;
     const selection = isActive ? captureBodyEditorSelection(bodyEditor) : null;
-    const result = renderBodyEditor(bodyEditor, bodyInput.value, {
-        collapsed: bodyEditorCollapsed && !isActive,
-        editable: !requestIsLoading,
-    });
+    const result = renderBodyEditor(bodyEditor, bodyInput.value, resolveBodyEditorRenderOptions({
+        requestedCollapsed: bodyEditorCollapsed,
+        isActive,
+        requestIsLoading,
+    }));
     bodyEditorHasJSON = result.hasJSON;
     if (!result.hasJSON) {
         bodyEditorCollapsed = false;

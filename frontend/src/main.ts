@@ -4,6 +4,7 @@ import {
   insertTextAtBodyEditorSelection,
   readBodyEditorText,
   renderBodyEditor,
+  resolveBodyEditorRenderOptions,
   restoreBodyEditorSelection,
 } from "./body-editor.js";
 import {
@@ -983,10 +984,15 @@ function removeHeader(id: string): void {
 function syncBodyEditor(): void {
   const isActive = document.activeElement === bodyEditor;
   const selection = isActive ? captureBodyEditorSelection(bodyEditor) : null;
-  const result = renderBodyEditor(bodyEditor, bodyInput.value, {
-    collapsed: bodyEditorCollapsed && !isActive,
-    editable: !requestIsLoading,
-  });
+  const result = renderBodyEditor(
+    bodyEditor,
+    bodyInput.value,
+    resolveBodyEditorRenderOptions({
+      requestedCollapsed: bodyEditorCollapsed,
+      isActive,
+      requestIsLoading,
+    }),
+  );
 
   bodyEditorHasJSON = result.hasJSON;
   if (!result.hasJSON) {

@@ -22,15 +22,30 @@ export type BodyEditorRenderResult = {
   isCollapsedView: boolean;
 };
 
-type RenderOptions = {
+export type BodyEditorRenderOptions = {
   collapsed?: boolean;
   editable?: boolean;
 };
 
+export type ResolveBodyEditorRenderOptionsInput = {
+  requestedCollapsed: boolean;
+  isActive: boolean;
+  requestIsLoading: boolean;
+};
+
+export function resolveBodyEditorRenderOptions(
+  input: ResolveBodyEditorRenderOptionsInput,
+): BodyEditorRenderOptions {
+  return {
+    collapsed: input.requestedCollapsed,
+    editable: !input.requestIsLoading,
+  };
+}
+
 export function renderBodyEditor(
   container: HTMLElement,
   text: string,
-  options: RenderOptions = {},
+  options: BodyEditorRenderOptions = {},
 ): BodyEditorRenderResult {
   const collapsedText = options.collapsed ? collapseJSONText(text) : null;
   const displayText = collapsedText ?? text;

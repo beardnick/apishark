@@ -1,3 +1,9 @@
+export function resolveBodyEditorRenderOptions(input) {
+    return {
+        collapsed: input.requestedCollapsed,
+        editable: !input.requestIsLoading,
+    };
+}
 export function renderBodyEditor(container, text, options = {}) {
     const collapsedText = options.collapsed ? collapseJSONText(text) : null;
     const displayText = collapsedText ?? text;
