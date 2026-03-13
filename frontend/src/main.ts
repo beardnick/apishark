@@ -1,11 +1,6 @@
 import {
-  captureBodyEditorSelection,
-  focusBodyEditor as focusVisibleBodyEditor,
-  insertTextAtBodyEditorSelection,
-  readBodyEditorText,
   renderBodyEditor,
   resolveBodyEditorRenderOptions,
-  restoreBodyEditorSelection,
 } from "./body-editor.js";
 import {
   prettifyJSONText,
@@ -172,6 +167,7 @@ const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
+const bodyEditorLineNumbers = byId<HTMLElement>("bodyEditorLineNumbers");
 const bodyEditor = byId<HTMLElement>("bodyEditor");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
@@ -237,7 +233,6 @@ let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let bodyEditorCollapsed = false;
 let bodyEditorHasJSON = false;
-let bodyEditorIsComposing = false;
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
@@ -308,51 +303,52 @@ function wireEvents(): void {
     markRequestEditorChanged();
   });
 
-  bodyEditor.addEventListener("focus", () => {
+  bodyInput.addEventListener("focus", () => {
     syncBodyEditor();
   });
-  bodyEditor.addEventListener("blur", () => {
+  bodyInput.addEventListener("blur", () => {
     window.setTimeout(() => {
       syncBodyEditor();
     }, 0);
   });
-  bodyEditor.addEventListener("input", () => {
-    if (bodyEditorIsComposing) {
-      bodyInput.value = readBodyEditorText(bodyEditor);
+  bodyInput.addEventListener("input", () => {
+    handleBodyEditorInput();
+  });
+  bodyInput.addEventListener("scroll", () => {
+    syncBodyEditorScroll();
+  });
+  bodyEditor.addEventListener("scroll", () => {
+    if (!bodyEditorCollapsed) {
       return;
     }
-    handleBodyEditorInput();
+
+    bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
   });
-  bodyEditor.addEventListener("compositionstart", () => {
-    bodyEditorIsComposing = true;
+  bodyEditorLineNumbers.addEventListener("click", () => {
+    if (!requestIsLoading) {
+      focusBodyEditor();
+    }
   });
-  bodyEditor.addEventListener("compositionend", () => {
-    bodyEditorIsComposing = false;
-    handleBodyEditorInput();
+  bodyEditor.addEventListener("click", () => {
+    if (bodyEditorCollapsed && !requestIsLoading) {
+      expandBodyJSON();
+      focusBodyEditor();
+    }
   });
-  bodyEditor.addEventListener("keydown", (event) => {
+  bodyInput.addEventListener("keydown", (event) => {
     if (requestIsLoading) {
       event.preventDefault();
-      return;
-    }
-    if (bodyEditorIsComposing) {
       return;
     }
 
     if (event.key === "Tab") {
       event.preventDefault();
-      insertTextAtBodyEditorSelection(bodyEditor, "  ");
+      insertTextAtTextAreaSelection(bodyInput, "  ");
       handleBodyEditorInput();
       return;
     }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      insertTextAtBodyEditorSelection(bodyEditor, "\n");
-      handleBodyEditorInput();
-    }
   });
-  bodyEditor.addEventListener("paste", (event) => {
+  bodyInput.addEventListener("paste", (event) => {
     if (requestIsLoading) {
       event.preventDefault();
       return;
@@ -364,7 +360,7 @@ function wireEvents(): void {
     }
 
     event.preventDefault();
-    insertTextAtBodyEditorSelection(bodyEditor, text);
+    insertTextAtTextAreaSelection(bodyInput, text);
     handleBodyEditorInput();
   });
 
@@ -981,15 +977,37 @@ function removeHeader(id: string): void {
   markRequestEditorChanged();
 }
 
+function insertTextAtTextAreaSelection(element: HTMLTextAreaElement, text: string): void {
+  const start = element.selectionStart ?? 0;
+  const end = element.selectionEnd ?? start;
+  element.setRangeText(text, start, end, "end");
+}
+
+function renderBodyEditorLineNumbers(lineCount: number): void {
+  const lines = Math.max(1, lineCount);
+  bodyEditorLineNumbers.textContent = Array.from({ length: lines }, (_, index) => String(index + 1)).join(
+    "\n",
+  );
+}
+
+function syncBodyEditorScroll(): void {
+  if (bodyEditorCollapsed) {
+    bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
+    return;
+  }
+
+  bodyEditor.scrollTop = bodyInput.scrollTop;
+  bodyEditor.scrollLeft = bodyInput.scrollLeft;
+  bodyEditorLineNumbers.scrollTop = bodyInput.scrollTop;
+}
+
 function syncBodyEditor(): void {
-  const isActive = document.activeElement === bodyEditor;
-  const selection = isActive ? captureBodyEditorSelection(bodyEditor) : null;
   const result = renderBodyEditor(
     bodyEditor,
     bodyInput.value,
     resolveBodyEditorRenderOptions({
       requestedCollapsed: bodyEditorCollapsed,
-      isActive,
+      isActive: document.activeElement === bodyInput,
       requestIsLoading,
     }),
   );
@@ -1001,20 +1019,18 @@ function syncBodyEditor(): void {
 
   bodyEditorShell.classList.toggle("has-json", result.hasJSON);
   bodyEditorShell.classList.toggle("is-collapsed", result.isCollapsedView);
-  bodyEditor.tabIndex = requestIsLoading ? -1 : 0;
+  bodyInput.classList.toggle("is-hidden", result.isCollapsedView);
+  bodyInput.readOnly = result.isCollapsedView || requestIsLoading;
+  bodyInput.tabIndex = result.isCollapsedView || requestIsLoading ? -1 : 0;
+  bodyEditor.setAttribute("aria-hidden", result.isCollapsedView ? "false" : "true");
   bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading;
   bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading;
-
-  if (isActive && bodyEditor.contentEditable === "true") {
-    restoreBodyEditorSelection(bodyEditor, selection);
-  }
+  renderBodyEditorLineNumbers(result.lineCount);
+  syncBodyEditorScroll();
 }
 
 function handleBodyEditorInput(): void {
-  const selection = captureBodyEditorSelection(bodyEditor);
-  bodyInput.value = readBodyEditorText(bodyEditor);
   syncBodyEditor();
-  restoreBodyEditorSelection(bodyEditor, selection);
   markRequestEditorChanged();
 }
 
@@ -1022,9 +1038,16 @@ function focusBodyEditor(selectAll = false): void {
   if (requestIsLoading) {
     return;
   }
-  bodyEditor.focus();
+
+  if (bodyEditorCollapsed) {
+    expandBodyJSON();
+  }
+
+  bodyInput.focus();
+  if (selectAll) {
+    bodyInput.select();
+  }
   syncBodyEditor();
-  focusVisibleBodyEditor(bodyEditor, selectAll);
 }
 
 function collapseBodyJSON(): void {

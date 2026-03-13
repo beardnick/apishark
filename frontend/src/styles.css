@@ -468,38 +468,81 @@ textarea {
   box-shadow: var(--focus-ring);
 }
 
-.body-input-source {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
+.body-editor-frame {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  min-height: 220px;
 }
 
-.body-code-editor {
-  min-height: 220px;
-  padding: 10px 12px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+.body-editor-line-numbers {
+  padding: 12px 8px 12px 12px;
+  border-right: 1px solid rgba(196, 188, 174, 0.55);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(240, 235, 228, 0.65));
+  color: var(--text-muted);
+  text-align: right;
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 0.79rem;
-  line-height: 1.42;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  user-select: none;
+  overflow: hidden;
+}
+
+.body-editor-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 220px;
+}
+
+.body-code-editor {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  min-height: 220px;
+  padding: 12px 14px;
+  overflow: hidden;
+  white-space: pre;
+  font-family:
+    "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
   outline: none;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.body-code-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-height: 220px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 14px;
+  resize: none;
+  overflow: auto;
+  white-space: pre;
+  color: transparent;
   caret-color: var(--text);
+  -webkit-text-fill-color: transparent;
+  font-family:
+    "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  outline: none;
 }
 
-.body-code-editor[contenteditable="true"] {
-  cursor: text;
+.body-code-input::selection {
+  background: rgba(37, 99, 235, 0.22);
 }
 
-.body-code-editor[contenteditable="false"] {
-  cursor: default;
+.body-code-input::placeholder {
+  color: transparent;
 }
 
 .body-code-editor.is-empty::before {
@@ -507,11 +550,50 @@ textarea {
   color: var(--text-muted);
 }
 
-.body-code-editor .json-fold-placeholder {
-  color: var(--text-muted);
+.body-code-input.is-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
-.body-code-editor[aria-disabled="true"] {
+.body-editor-shell.is-collapsed .body-code-editor {
+  overflow: auto;
+  pointer-events: auto;
+}
+
+.body-editor-shell.is-collapsed .body-code-input {
+  display: none;
+}
+
+.body-editor-shell.is-collapsed .body-editor-line-numbers {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.82), rgba(241, 245, 249, 0.92));
+}
+
+.body-editor-shell.is-collapsed .body-code-editor::before {
+  content: "Folded view - expand to edit";
+  position: sticky;
+  top: 0;
+  display: block;
+  margin: -12px -14px 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(196, 188, 174, 0.5);
+  background: rgba(248, 250, 252, 0.95);
+  color: var(--text-muted);
+  font-family:
+    "Aptos", "Segoe UI Variable Text", "IBM Plex Sans", "SF Pro Text", "Helvetica Neue",
+    sans-serif;
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+}
+
+.body-code-editor .json-fold-placeholder {
+  color: var(--text-muted);
+  background: rgba(107, 114, 128, 0.08);
+  border: 1px solid rgba(107, 114, 128, 0.14);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.body-code-input:disabled {
   cursor: not-allowed;
 }
 
@@ -618,6 +700,25 @@ button.ghost:hover:not(:disabled) {
   width: var(--control-height);
   height: var(--control-height);
   min-height: var(--control-height);
+}
+
+.body-toolbar-btn {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  gap: 5px;
+  color: var(--text-muted);
+  border-color: transparent;
+}
+
+.body-toolbar-btn:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--text);
+}
+
+.body-toolbar-btn .action-symbol {
+  width: 14px;
 }
 
 .action-btn:hover:not(:disabled),

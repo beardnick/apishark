@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   collapseJSONText,
-  readBodyEditorText,
   renderBodyEditor,
   resolveBodyEditorRenderOptions,
   tokenizeBodyEditorText,
@@ -30,8 +29,7 @@ class FakeTextNode extends FakeNode {
 }
 
 class FakeClassList {
-  constructor(owner) {
-    this.owner = owner;
+  constructor() {
     this.tokens = new Set();
   }
 
@@ -83,8 +81,7 @@ class FakeElement extends FakeNode {
     this.attributes = {};
     this.childNodes = [];
     this._textContent = "";
-    this._classList = new FakeClassList(this);
-    this.contentEditable = "inherit";
+    this._classList = new FakeClassList();
   }
 
   get classList() {
@@ -143,16 +140,16 @@ class FakeDocument {
   }
 }
 
-test("collapseJSONText keeps root keys while collapsing nested structures", () => {
+test("collapseJSONText formats folded JSON into a readable preview", () => {
   assert.equal(
     collapseJSONText('{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}'),
-    '{"stream":true,"messages":[…],"meta":{…}}',
+    '{\n  "stream": true,\n  "messages": [...],\n  "meta": {...}\n}',
   );
   assert.equal(collapseJSONText("not json"), null);
 });
 
 test("tokenizeBodyEditorText classifies JSON keys, values, punctuation, and fold placeholders", () => {
-  const tokens = tokenizeBodyEditorText('{\n  "meta": {…},\n  "ok": false,\n  "count": 3,\n  "empty": null\n}');
+  const tokens = tokenizeBodyEditorText('{\n  "meta": {...},\n  "ok": false,\n  "count": 3,\n  "empty": null\n}');
   const classified = tokens.filter((token) => token.className !== null);
 
   assert.deepEqual(
@@ -162,7 +159,7 @@ test("tokenizeBodyEditorText classifies JSON keys, values, punctuation, and fold
       ['"meta"', "json-key"],
       [":", "json-punctuation"],
       ["{", "json-punctuation"],
-      ["…", "json-fold-placeholder"],
+      ["...", "json-fold-placeholder"],
       ["}", "json-punctuation"],
       [",", "json-punctuation"],
       ['"ok"', "json-key"],
@@ -181,34 +178,15 @@ test("tokenizeBodyEditorText classifies JSON keys, values, punctuation, and fold
   );
 });
 
-test("focused body editor keeps collapsed JSON until the user explicitly expands it", () => {
+test("renderBodyEditor keeps expanded JSON editable and syntax highlighted", () => {
   const originalDocument = globalThis.document;
   globalThis.document = new FakeDocument();
 
   try {
-    const container = document.createElement("div");
-    const bodyText = '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}';
+    const container = document.createElement("pre");
+    const bodyText = '{\n  "stream": true,\n  "messages": []\n}';
 
-    const collapsed = renderBodyEditor(
-      container,
-      bodyText,
-      resolveBodyEditorRenderOptions({
-        requestedCollapsed: true,
-        isActive: true,
-        requestIsLoading: false,
-      }),
-    );
-
-    assert.equal(collapsed.hasJSON, true);
-    assert.equal(collapsed.isCollapsedView, true);
-    assert.equal(container.contentEditable, "true");
-    assert.equal(container.classList.contains("is-collapsed"), true);
-    assert.equal(
-      container.textContent,
-      '{"stream":true,"messages":[…],"meta":{…}}',
-    );
-
-    const expanded = renderBodyEditor(
+    const rendered = renderBodyEditor(
       container,
       bodyText,
       resolveBodyEditorRenderOptions({
@@ -218,93 +196,73 @@ test("focused body editor keeps collapsed JSON until the user explicitly expands
       }),
     );
 
-    assert.equal(expanded.isCollapsedView, false);
-    assert.equal(container.contentEditable, "true");
+    assert.equal(rendered.hasJSON, true);
+    assert.equal(rendered.isCollapsedView, false);
+    assert.equal(rendered.displayText, bodyText);
+    assert.equal(rendered.lineCount, 4);
     assert.equal(container.classList.contains("is-collapsed"), false);
+    assert.equal(container.attributes["data-mode"], "editor");
     assert.equal(container.textContent, bodyText);
   } finally {
     globalThis.document = originalDocument;
   }
 });
 
-test("collapsed body editor preserves hidden JSON while allowing visible edits", () => {
+test("renderBodyEditor shows a folded preview and line count when collapsed", () => {
   const originalDocument = globalThis.document;
   globalThis.document = new FakeDocument();
 
   try {
-    const container = document.createElement("div");
-    renderBodyEditor(
+    const container = document.createElement("pre");
+    const rendered = renderBodyEditor(
       container,
       '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}',
       resolveBodyEditorRenderOptions({
         requestedCollapsed: true,
-        isActive: true,
+        isActive: false,
         requestIsLoading: false,
       }),
     );
 
-    const streamValue = container.childNodes.find(
-      (node) => node.textContent === "true",
-    );
-    assert.ok(streamValue);
-    streamValue.textContent = "false";
-
-    assert.equal(
-      readBodyEditorText(container),
-      '{"stream":false,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}',
-    );
+    assert.equal(rendered.hasJSON, true);
+    assert.equal(rendered.isCollapsedView, true);
+    assert.equal(rendered.displayText, '{\n  "stream": true,\n  "messages": [...],\n  "meta": {...}\n}');
+    assert.equal(rendered.lineCount, 5);
+    assert.equal(container.classList.contains("is-collapsed"), true);
+    assert.equal(container.attributes["data-mode"], "folded");
+    assert.equal(container.textContent, rendered.displayText);
 
     const placeholders = container.childNodes.filter(
       (node) => node.className === "json-fold-placeholder",
     );
     assert.equal(placeholders.length, 2);
-    assert.equal(placeholders[0].contentEditable, "false");
-    assert.equal(placeholders[1].contentEditable, "false");
   } finally {
     globalThis.document = originalDocument;
   }
 });
 
-test("collapsed body editor stays folded across rerenders after editing", () => {
+test("renderBodyEditor leaves invalid JSON as plain text and does not force collapse", () => {
   const originalDocument = globalThis.document;
   globalThis.document = new FakeDocument();
 
   try {
-    const container = document.createElement("div");
-    const originalText = '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}';
-    renderBodyEditor(
+    const container = document.createElement("pre");
+    const rendered = renderBodyEditor(
       container,
-      originalText,
+      '{"stream": true,,}',
       resolveBodyEditorRenderOptions({
         requestedCollapsed: true,
-        isActive: true,
+        isActive: false,
         requestIsLoading: false,
       }),
     );
 
-    const streamValue = container.childNodes.find(
-      (node) => node.textContent === "true",
-    );
-    assert.ok(streamValue);
-    streamValue.textContent = "false";
-
-    const rerendered = renderBodyEditor(
-      container,
-      readBodyEditorText(container),
-      resolveBodyEditorRenderOptions({
-        requestedCollapsed: true,
-        isActive: true,
-        requestIsLoading: false,
-      }),
-    );
-
-    assert.equal(rerendered.hasJSON, true);
-    assert.equal(rerendered.isCollapsedView, true);
-    assert.equal(container.classList.contains("is-collapsed"), true);
-    assert.equal(
-      container.textContent,
-      '{"stream":false,"messages":[…],"meta":{…}}',
-    );
+    assert.equal(rendered.hasJSON, false);
+    assert.equal(rendered.isCollapsedView, false);
+    assert.equal(rendered.displayText, '{"stream": true,,}');
+    assert.equal(rendered.lineCount, 1);
+    assert.equal(container.classList.contains("is-collapsed"), false);
+    assert.equal(container.textContent, '{"stream": true,,}');
   } finally {
     globalThis.document = originalDocument;
   }

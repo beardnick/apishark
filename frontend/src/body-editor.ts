@@ -1,3 +1,5 @@
+import { prettifyJSONText } from "./json-view.js";
+
 type BodyEditorTokenClass =
   | "json-key"
   | "json-string"
@@ -20,12 +22,12 @@ type BodyEditorRenderSegment =
   | {
       kind: "placeholder";
       text: string;
-      sourceText: string;
     };
 
 type BodyEditorProjection = {
   hasJSON: boolean;
   isCollapsedView: boolean;
+  displayText: string;
   segments: BodyEditorRenderSegment[];
 };
 
@@ -57,21 +59,11 @@ type JsonRangePrimitiveNode = {
   end: number;
 };
 
-type BodyEditorTextCarrier = {
-  __bodyEditorSourceText?: string;
-};
-
-const BODY_EDITOR_SOURCE_TEXT_KEY = "__bodyEditorSourceText";
-const TEXT_NODE = 3;
-
-export type BodyEditorSelection = {
-  start: number;
-  end: number;
-};
-
 export type BodyEditorRenderResult = {
   hasJSON: boolean;
   isCollapsedView: boolean;
+  displayText: string;
+  lineCount: number;
 };
 
 export type BodyEditorRenderOptions = {
@@ -100,123 +92,25 @@ export function renderBodyEditor(
   options: BodyEditorRenderOptions = {},
 ): BodyEditorRenderResult {
   const projection = buildBodyEditorProjection(text, Boolean(options.collapsed));
+  const displayText = projection.displayText;
 
   container.textContent = "";
   container.classList.add("body-code-editor");
   container.classList.toggle("is-collapsed", projection.isCollapsedView);
-  container.classList.toggle("is-empty", projection.segments.length === 0);
-  container.contentEditable = String(Boolean(options.editable));
-  container.setAttribute("aria-readonly", container.contentEditable === "false" ? "true" : "false");
+  container.classList.toggle("is-empty", displayText.length === 0);
+  container.classList.toggle("is-readonly", !options.editable || projection.isCollapsedView);
+  container.setAttribute("data-mode", projection.isCollapsedView ? "folded" : "editor");
 
   for (const segment of projection.segments) {
-    if (segment.kind === "placeholder") {
-      const span = document.createElement("span");
-      span.className = "json-fold-placeholder";
-      span.textContent = segment.text;
-      span.contentEditable = "false";
-      span.setAttribute("aria-label", "Folded JSON block");
-      (span as HTMLElement & BodyEditorTextCarrier)[BODY_EDITOR_SOURCE_TEXT_KEY] = segment.sourceText;
-      container.append(span);
-      continue;
-    }
-
-    for (const token of tokenizeBodyEditorText(segment.text)) {
-      if (!token.className) {
-        container.append(document.createTextNode(token.text));
-        continue;
-      }
-
-      const span = document.createElement("span");
-      span.className = token.className;
-      span.textContent = token.text;
-      container.append(span);
-    }
+    appendSegmentTokens(container, segment);
   }
 
   return {
     hasJSON: projection.hasJSON,
     isCollapsedView: projection.isCollapsedView,
+    displayText,
+    lineCount: countDisplayLines(displayText),
   };
-}
-
-export function readBodyEditorText(container: HTMLElement): string {
-  return readBodyEditorNodeText(container).replace(/\r\n?/g, "\n");
-}
-
-export function captureBodyEditorSelection(container: HTMLElement): BodyEditorSelection | null {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return null;
-  }
-
-  const range = selection.getRangeAt(0);
-  if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
-    return null;
-  }
-
-  return {
-    start: rangeOffsetFromRoot(container, range.startContainer, range.startOffset),
-    end: rangeOffsetFromRoot(container, range.endContainer, range.endOffset),
-  };
-}
-
-export function restoreBodyEditorSelection(
-  container: HTMLElement,
-  selection: BodyEditorSelection | null,
-): void {
-  if (!selection) {
-    return;
-  }
-
-  const start = resolveSelectionPoint(container, selection.start);
-  const end = resolveSelectionPoint(container, selection.end);
-  if (!start || !end) {
-    return;
-  }
-
-  const range = document.createRange();
-  range.setStart(start.node, start.offset);
-  range.setEnd(end.node, end.offset);
-
-  const currentSelection = window.getSelection();
-  currentSelection?.removeAllRanges();
-  currentSelection?.addRange(range);
-}
-
-export function focusBodyEditor(container: HTMLElement, selectAll = false): void {
-  container.focus();
-  if (!selectAll) {
-    return;
-  }
-  selectAllBodyEditorText(container);
-}
-
-export function selectAllBodyEditorText(container: HTMLElement): void {
-  const range = document.createRange();
-  range.selectNodeContents(container);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}
-
-export function insertTextAtBodyEditorSelection(container: HTMLElement, text: string): void {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return;
-  }
-
-  const range = selection.getRangeAt(0);
-  if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) {
-    return;
-  }
-
-  range.deleteContents();
-  const node = document.createTextNode(text);
-  range.insertNode(node);
-  range.setStartAfter(node);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
 }
 
 export function collapseJSONText(text: string): string | null {
@@ -225,7 +119,7 @@ export function collapseJSONText(text: string): string | null {
     return null;
   }
 
-  return projection.segments.map((segment) => segment.text).join("");
+  return projection.displayText;
 }
 
 export function tokenizeBodyEditorText(text: string): BodyEditorToken[] {
@@ -260,7 +154,7 @@ export function tokenizeBodyEditorText(text: string): BodyEditorToken[] {
       continue;
     }
 
-    if (text.startsWith("…", index) || text.startsWith("...", index)) {
+    if (text.startsWith("...", index) || text.startsWith("…", index)) {
       const placeholder = text.startsWith("...", index) ? "..." : "…";
       tokens.push({ text: placeholder, className: "json-fold-placeholder" });
       index += placeholder.length;
@@ -299,12 +193,36 @@ export function tokenizeBodyEditorText(text: string): BodyEditorToken[] {
   return tokens;
 }
 
+function appendSegmentTokens(container: HTMLElement, segment: BodyEditorRenderSegment): void {
+  if (segment.kind === "placeholder") {
+    const span = document.createElement("span");
+    span.className = "json-fold-placeholder";
+    span.textContent = segment.text;
+    span.setAttribute("aria-label", "Folded JSON block");
+    container.append(span);
+    return;
+  }
+
+  for (const token of tokenizeBodyEditorText(segment.text)) {
+    if (!token.className) {
+      container.append(document.createTextNode(token.text));
+      continue;
+    }
+
+    const span = document.createElement("span");
+    span.className = token.className;
+    span.textContent = token.text;
+    container.append(span);
+  }
+}
+
 function buildBodyEditorProjection(text: string, collapsed: boolean): BodyEditorProjection {
   const parsed = parseJSONWithRanges(text);
   if (!parsed) {
     return {
       hasJSON: false,
       isCollapsedView: false,
+      displayText: text,
       segments: text ? [{ kind: "visible", text }] : [],
     };
   }
@@ -313,14 +231,23 @@ function buildBodyEditorProjection(text: string, collapsed: boolean): BodyEditor
     return {
       hasJSON: true,
       isCollapsedView: false,
+      displayText: text,
       segments: text ? [{ kind: "visible", text }] : [],
     };
   }
 
+  const prettyText = prettifyJSONText(text) ?? text;
+  const prettyParsed = parseJSONWithRanges(prettyText);
+  const segments = prettyParsed
+    ? buildCollapsedProjectionSegments(prettyText, prettyParsed)
+    : buildCollapsedProjectionSegments(text, parsed);
+  const displayText = segments.map((segment) => segment.text).join("");
+
   return {
     hasJSON: true,
     isCollapsedView: true,
-    segments: buildCollapsedProjectionSegments(text, parsed),
+    displayText,
+    segments,
   };
 }
 
@@ -368,7 +295,6 @@ function buildCollapsedCompositeSegments(
     segments.push({
       kind: "placeholder",
       text: placeholderTextForNode(child),
-      sourceText: text.slice(child.start, child.end),
     });
     cursor = child.end;
   }
@@ -381,7 +307,15 @@ function buildCollapsedCompositeSegments(
 }
 
 function placeholderTextForNode(node: JsonRangeObjectNode | JsonRangeArrayNode): string {
-  return node.type === "array" ? "[…]" : "{…}";
+  return node.type === "array" ? "[...]" : "{...}";
+}
+
+function countDisplayLines(text: string): number {
+  if (!text) {
+    return 1;
+  }
+
+  return text.split("\n").length;
 }
 
 function isCompositeNode(node: JsonRangeNode): node is JsonRangeObjectNode | JsonRangeArrayNode {
@@ -534,23 +468,22 @@ class JsonRangeParser {
 
   private parseNumber(): JsonRangePrimitiveNode {
     const start = this.index;
-    const match = this.text
-      .slice(this.index)
-      .match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-    if (!match) {
+    const numberMatch = this.text.slice(this.index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (!numberMatch) {
       throw new Error("Invalid number.");
     }
 
-    this.index += match[0].length;
+    this.index += numberMatch[0].length;
     return { type: "number", start, end: this.index };
   }
 
   private parseLiteral(
-    value: "true" | "false" | "null",
+    literal: "true" | "false" | "null",
     type: JsonRangePrimitiveNode["type"],
   ): JsonRangePrimitiveNode {
     const start = this.index;
-    this.index += value.length;
+    this.expect(literal);
+    this.index += literal.length;
     return { type, start, end: this.index };
   }
 
@@ -560,43 +493,22 @@ class JsonRangeParser {
     }
   }
 
-  private expect(token: string): void {
-    if (this.text[this.index] !== token) {
-      throw new Error(`Expected "${token}".`);
+  private expect(value: string): void {
+    if (!this.text.startsWith(value, this.index)) {
+      throw new Error(`Expected ${value}.`);
     }
   }
-}
-
-function readBodyEditorNodeText(node: Node): string {
-  const carriedText = (node as Node & BodyEditorTextCarrier)[BODY_EDITOR_SOURCE_TEXT_KEY];
-  if (typeof carriedText === "string") {
-    return carriedText;
-  }
-
-  if (node.nodeType === TEXT_NODE) {
-    return node.textContent ?? "";
-  }
-
-  if (node.childNodes.length === 0) {
-    return node.textContent ?? "";
-  }
-
-  let text = "";
-  for (const child of Array.from(node.childNodes)) {
-    text += readBodyEditorNodeText(child);
-  }
-  return text;
 }
 
 function scanJSONStringEnd(text: string, start: number): number {
   let index = start + 1;
-
   while (index < text.length) {
-    if (text[index] === "\\") {
+    const char = text[index];
+    if (char === "\\") {
       index += 2;
       continue;
     }
-    if (text[index] === '"') {
+    if (char === '"') {
       return index + 1;
     }
     index += 1;
@@ -605,9 +517,9 @@ function scanJSONStringEnd(text: string, start: number): number {
   return text.length;
 }
 
-function scanWhile(text: string, start: number, matches: (value: string) => boolean): number {
+function scanWhile(text: string, start: number, predicate: (char: string) => boolean): number {
   let index = start;
-  while (index < text.length && matches(text[index])) {
+  while (index < text.length && predicate(text[index])) {
     index += 1;
   }
   return index;
@@ -622,67 +534,7 @@ function isBoundaryToken(text: string, start: number, value: string): boolean {
     return false;
   }
 
-  const next = text[start + value.length];
-  return next === undefined || /[\s,\]}]/.test(next);
-}
-
-function rangeOffsetFromRoot(root: HTMLElement, node: Node, offset: number): number {
-  const range = document.createRange();
-  range.selectNodeContents(root);
-  range.setEnd(node, offset);
-  return range.toString().length;
-}
-
-function resolveSelectionPoint(
-  root: HTMLElement,
-  targetOffset: number,
-): { node: Node; offset: number } | null {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let remaining = targetOffset;
-  let current: Node | null = walker.nextNode();
-
-  while (current) {
-    const textLength = current.textContent?.length ?? 0;
-    if (remaining <= textLength) {
-      return { node: current, offset: remaining };
-    }
-    remaining -= textLength;
-    current = walker.nextNode();
-  }
-
-  if (root.lastChild) {
-    const lastTextNode = deepestTextNode(root.lastChild);
-    if (lastTextNode) {
-      return {
-        node: lastTextNode,
-        offset: lastTextNode.textContent?.length ?? 0,
-      };
-    }
-
-    return {
-      node: root,
-      offset: root.childNodes.length,
-    };
-  }
-
-  return {
-    node: root,
-    offset: 0,
-  };
-}
-
-function deepestTextNode(node: Node): Node | null {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node;
-  }
-
-  let current = node.lastChild;
-  while (current) {
-    const match = deepestTextNode(current);
-    if (match) {
-      return match;
-    }
-    current = current.previousSibling;
-  }
-  return null;
+  const before = text[start - 1];
+  const after = text[start + value.length];
+  return !/[A-Za-z0-9_$]/.test(before ?? "") && !/[A-Za-z0-9_$]/.test(after ?? "");
 }

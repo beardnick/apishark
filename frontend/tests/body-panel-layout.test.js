@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("built body panel keeps a single editor shell with inline JSON tools", async () => {
+test("built body panel keeps a single editor shell with visible body editor controls", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const bodyPanelMatch = html.match(/<section id="bodyPanel"[\s\S]*?<\/section>/);
 
@@ -10,12 +10,17 @@ test("built body panel keeps a single editor shell with inline JSON tools", asyn
   const bodyPanel = bodyPanelMatch[0];
 
   assert.match(bodyPanel, /<div id="bodyEditorShell" class="body-editor-shell">/);
+  assert.match(bodyPanel, /id="bodyEditorLineNumbers"/);
+  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<pre[\s\S]*?id="bodyEditor"/);
   assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<textarea[\s\S]*?id="bodyInput"/);
-  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?id="bodyEditor"/);
   assert.match(bodyPanel, /id="copyBodyBtn"/);
   assert.match(bodyPanel, /id="bodyPrettifyBtn"/);
   assert.match(bodyPanel, /id="bodyCollapseBtn"/);
   assert.match(bodyPanel, /id="bodyExpandBtn"/);
+  assert.match(bodyPanel, />\s*Collapse\s*</);
+  assert.match(bodyPanel, />\s*Expand\s*</);
+  assert.match(bodyPanel, />\s*Copy\s*</);
+  assert.match(bodyPanel, />\s*Prettify\s*</);
 
   assert.ok(bodyPanel.indexOf('id="bodyCollapseBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
   assert.ok(bodyPanel.indexOf('id="bodyExpandBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));

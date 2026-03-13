@@ -288,63 +288,71 @@
                   <button
                     id="bodyCollapseBtn"
                     type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
-                    aria-label="Collapse all"
+                    class="ghost body-toolbar-btn"
+                    aria-label="Collapse body"
                     title="Collapse all"
                   >
                     <span class="action-symbol" aria-hidden="true">−</span>
+                    <span>Collapse</span>
                   </button>
                   <button
                     id="bodyExpandBtn"
                     type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
-                    aria-label="Expand all"
+                    class="ghost body-toolbar-btn"
+                    aria-label="Expand body"
                     title="Expand all"
                   >
                     <span class="action-symbol" aria-hidden="true">+</span>
+                    <span>Expand</span>
                   </button>
                   <button
                     id="copyBodyBtn"
                     type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
+                    class="ghost body-toolbar-btn"
                     aria-label="Copy request body"
                     title="Copy request body"
                   >
                     <span class="action-symbol" aria-hidden="true">⧉</span>
+                    <span>Copy</span>
                   </button>
                   <button
                     id="bodyPrettifyBtn"
                     type="button"
-                    class="ghost icon-btn toolbar-icon-btn"
+                    class="ghost body-toolbar-btn"
                     aria-label="Prettify JSON"
                     title="Prettify JSON"
                   >
                     <span class="action-symbol" aria-hidden="true">{}</span>
+                    <span>Prettify</span>
                   </button>
                 </div>
               </div>
 
               <div id="bodyEditorShell" class="body-editor-shell">
-                <textarea
-                  id="bodyInput"
-                  class="body-input-source"
-                  rows="11"
-                  placeholder='{"stream": true, "messages": []}'
-                  spellcheck="false"
-                  aria-hidden="true"
-                  tabindex="-1"
-                ></textarea>
-                <div
-                  id="bodyEditor"
-                  class="body-code-editor"
-                  contenteditable="true"
-                  spellcheck="false"
-                  role="textbox"
-                  aria-multiline="true"
-                  aria-labelledby="bodyEditorLabel"
-                  data-placeholder='{"stream": true, "messages": []}'
-                  tabindex="0"
-                ></div>
+                <div class="body-editor-frame">
+                  <div
+                    id="bodyEditorLineNumbers"
+                    class="body-editor-line-numbers"
+                    aria-hidden="true"
+                  ></div>
+                  <div class="body-editor-stage">
+                    <pre
+                      id="bodyEditor"
+                      class="body-code-editor"
+                      aria-hidden="true"
+                      data-placeholder='{"stream": true, "messages": []}'
+                    ></pre>
+                    <textarea
+                      id="bodyInput"
+                      class="body-code-input"
+                      rows="11"
+                      wrap="off"
+                      placeholder='{"stream": true, "messages": []}'
+                      spellcheck="false"
+                      aria-labelledby="bodyEditorLabel"
+                    ></textarea>
+                  </div>
+                </div>
               </div>
             </section>
           </div>
