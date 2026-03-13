@@ -92,7 +92,6 @@ let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let bodyJsonController = null;
 let bodyEditorMode = "text";
-let bodyJsonFoldMode = "default";
 let rawJsonController = null;
 let ssePayloadJsonController = null;
 let sseLineEntries = [];
@@ -670,14 +669,6 @@ function removeHeader(id) {
 function syncBodyEditor() {
     const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
     bodyJsonController = controller;
-    if (controller.hasJSON) {
-        if (bodyJsonFoldMode === "collapsed") {
-            controller.collapseAll();
-        }
-        else if (bodyJsonFoldMode === "expanded") {
-            controller.expandAll();
-        }
-    }
     const hasJSON = controller.hasJSON;
     const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
     bodyEditorShell.classList.toggle("is-json-mode", shouldShowJSON);
@@ -689,7 +680,6 @@ function syncBodyEditor() {
     bodyExpandBtn.disabled = !hasJSON || requestIsLoading;
     if (!hasJSON) {
         bodyEditorMode = "text";
-        bodyJsonFoldMode = "default";
         return;
     }
     if (document.activeElement !== bodyInput && bodyEditorMode !== "text") {
@@ -717,12 +707,10 @@ function focusBodyEditor() {
 function collapseBodyJSON() {
     showBodyJSONViewer();
     bodyJsonController?.collapseAll();
-    bodyJsonFoldMode = "collapsed";
 }
 function expandBodyJSON() {
     showBodyJSONViewer();
     bodyJsonController?.expandAll();
-    bodyJsonFoldMode = "expanded";
 }
 function prettifyBodyJSON() {
     const pretty = prettifyJSONText(bodyInput.value);
