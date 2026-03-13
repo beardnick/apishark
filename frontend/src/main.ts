@@ -2,6 +2,7 @@ import {
   prettifyJSONText,
   renderJSONText,
   renderJSONValue,
+  type JsonFoldState,
   type JsonViewController,
 } from "./json-view.js";
 import {
@@ -229,6 +230,7 @@ let draftAutosaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let bodyJsonController: JsonViewController | null = null;
+let bodyJsonFoldState: JsonFoldState | null = null;
 let bodyEditorMode: BodyEditorMode = "text";
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
@@ -943,8 +945,18 @@ function removeHeader(id: string): void {
 }
 
 function syncBodyEditor(): void {
-  const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
+  if (bodyJsonController?.hasJSON) {
+    bodyJsonFoldState = bodyJsonController.captureFoldState();
+  }
+
+  const controller = renderJSONText(bodyJsonViewer, bodyInput.value, {
+    expandDepth: 2,
+    foldState: bodyJsonFoldState,
+  });
   bodyJsonController = controller;
+  if (controller.hasJSON) {
+    bodyJsonFoldState = controller.captureFoldState();
+  }
 
   const hasJSON = controller.hasJSON;
   const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
@@ -991,11 +1003,17 @@ function focusBodyEditor(): void {
 function collapseBodyJSON(): void {
   showBodyJSONViewer();
   bodyJsonController?.collapseAll();
+  if (bodyJsonController?.hasJSON) {
+    bodyJsonFoldState = bodyJsonController.captureFoldState();
+  }
 }
 
 function expandBodyJSON(): void {
   showBodyJSONViewer();
   bodyJsonController?.expandAll();
+  if (bodyJsonController?.hasJSON) {
+    bodyJsonFoldState = bodyJsonController.captureFoldState();
+  }
 }
 
 function prettifyBodyJSON(): void {

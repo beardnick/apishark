@@ -2,6 +2,7 @@ const NOOP_CONTROLLER = {
     hasJSON: false,
     expandAll: () => undefined,
     collapseAll: () => undefined,
+    captureFoldState: () => ({}),
 };
 export function prettifyJSONText(text) {
     if (!text.trim()) {
@@ -32,7 +33,8 @@ export function renderJSONValue(container, value, options = {}) {
     container.textContent = "";
     container.classList.add("json-viewer");
     const expandDepth = options.expandDepth ?? 1;
-    container.appendChild(renderNode(value, null, 0, expandDepth));
+    const foldState = options.foldState ?? null;
+    container.appendChild(renderNode(value, null, 0, expandDepth, "$", foldState));
     return {
         hasJSON: true,
         expandAll: () => {
@@ -46,15 +48,16 @@ export function renderJSONValue(container, value, options = {}) {
                 details.open = index === 0;
             });
         },
+        captureFoldState: () => captureFoldState(container),
     };
 }
-function renderNode(value, key, depth, expandDepth) {
+function renderNode(value, key, depth, expandDepth, path, foldState) {
     if (Array.isArray(value)) {
-        return renderCompositeNode(value, key, depth, expandDepth, "[", "]", `${value.length} items`);
+        return renderCompositeNode(value, key, depth, expandDepth, path, foldState, "[", "]", `${value.length} items`);
     }
     if (isPlainObject(value)) {
         const keys = Object.keys(value);
-        return renderCompositeNode(value, key, depth, expandDepth, "{", "}", `${keys.length} keys`);
+        return renderCompositeNode(value, key, depth, expandDepth, path, foldState, "{", "}", `${keys.length} keys`);
     }
     const row = document.createElement("div");
     row.className = "json-leaf";
@@ -64,10 +67,11 @@ function renderNode(value, key, depth, expandDepth) {
     row.appendChild(createValueNode(value));
     return row;
 }
-function renderCompositeNode(value, key, depth, expandDepth, openBracket, closeBracket, metaText) {
+function renderCompositeNode(value, key, depth, expandDepth, path, foldState, openBracket, closeBracket, metaText) {
     const details = document.createElement("details");
     details.className = "json-node";
-    details.open = depth < expandDepth;
+    details.dataset.jsonPath = path;
+    details.open = foldState?.[path] ?? depth < expandDepth;
     const summary = document.createElement("summary");
     if (key !== null) {
         summary.appendChild(createKeyLabel(key));
@@ -85,12 +89,12 @@ function renderCompositeNode(value, key, depth, expandDepth, openBracket, closeB
     children.className = "json-children";
     if (Array.isArray(value)) {
         value.forEach((item, index) => {
-            children.appendChild(renderNode(item, String(index), depth + 1, expandDepth));
+            children.appendChild(renderNode(item, String(index), depth + 1, expandDepth, appendPath(path, String(index)), foldState));
         });
     }
     else {
         Object.entries(value).forEach(([childKey, childValue]) => {
-            children.appendChild(renderNode(childValue, childKey, depth + 1, expandDepth));
+            children.appendChild(renderNode(childValue, childKey, depth + 1, expandDepth, appendPath(path, childKey), foldState));
         });
     }
     if (children.childElementCount === 0) {
@@ -143,4 +147,18 @@ function valueClassName(value) {
 }
 function isPlainObject(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function captureFoldState(container) {
+    const foldState = {};
+    for (const details of container.querySelectorAll("details")) {
+        const path = details.dataset.jsonPath;
+        if (!path) {
+            continue;
+        }
+        foldState[path] = details.open;
+    }
+    return foldState;
+}
+function appendPath(path, segment) {
+    return `${path}/${segment.split("~").join("~0").split("/").join("~1")}`;
 }

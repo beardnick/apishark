@@ -91,6 +91,7 @@ let draftAutosaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let bodyJsonController = null;
+let bodyJsonFoldState = null;
 let bodyEditorMode = "text";
 let rawJsonController = null;
 let ssePayloadJsonController = null;
@@ -667,8 +668,17 @@ function removeHeader(id) {
     markRequestEditorChanged();
 }
 function syncBodyEditor() {
-    const controller = renderJSONText(bodyJsonViewer, bodyInput.value, { expandDepth: 2 });
+    if (bodyJsonController?.hasJSON) {
+        bodyJsonFoldState = bodyJsonController.captureFoldState();
+    }
+    const controller = renderJSONText(bodyJsonViewer, bodyInput.value, {
+        expandDepth: 2,
+        foldState: bodyJsonFoldState,
+    });
     bodyJsonController = controller;
+    if (controller.hasJSON) {
+        bodyJsonFoldState = controller.captureFoldState();
+    }
     const hasJSON = controller.hasJSON;
     const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
     bodyEditorShell.classList.toggle("is-json-mode", shouldShowJSON);
@@ -707,10 +717,16 @@ function focusBodyEditor() {
 function collapseBodyJSON() {
     showBodyJSONViewer();
     bodyJsonController?.collapseAll();
+    if (bodyJsonController?.hasJSON) {
+        bodyJsonFoldState = bodyJsonController.captureFoldState();
+    }
 }
 function expandBodyJSON() {
     showBodyJSONViewer();
     bodyJsonController?.expandAll();
+    if (bodyJsonController?.hasJSON) {
+        bodyJsonFoldState = bodyJsonController.captureFoldState();
+    }
 }
 function prettifyBodyJSON() {
     const pretty = prettifyJSONText(bodyInput.value);
