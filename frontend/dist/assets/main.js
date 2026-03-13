@@ -1,3 +1,4 @@
+import { captureBodyEditorSelection, focusBodyEditor as focusVisibleBodyEditor, insertTextAtBodyEditorSelection, readBodyEditorText, renderBodyEditor, restoreBodyEditorSelection, } from "./body-editor.js";
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragment, isAggregateTextFragment, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
@@ -30,7 +31,7 @@ const addHeaderBtn = byId("addHeaderBtn");
 const headersEditor = byId("headersEditor");
 const bodyEditorShell = byId("bodyEditorShell");
 const bodyInput = byId("bodyInput");
-const bodyJsonViewer = byId("bodyJsonViewer");
+const bodyEditor = byId("bodyEditor");
 const copyBodyBtn = byId("copyBodyBtn");
 const bodyPrettifyBtn = byId("bodyPrettifyBtn");
 const bodyCollapseBtn = byId("bodyCollapseBtn");
@@ -90,9 +91,9 @@ let activeSavedRequestId = null;
 let draftAutosaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
-let bodyJsonController = null;
-let bodyJsonFoldState = null;
-let bodyEditorMode = "text";
+let bodyEditorCollapsed = false;
+let bodyEditorHasJSON = false;
+let bodyEditorIsComposing = false;
 let rawJsonController = null;
 let ssePayloadJsonController = null;
 let sseLineEntries = [];
@@ -149,32 +150,60 @@ function wireEvents() {
         renderHeaderRows();
         markRequestEditorChanged();
     });
-    bodyInput.addEventListener("focus", () => {
-        showBodyTextEditor();
+    bodyEditor.addEventListener("focus", () => {
+        syncBodyEditor();
     });
-    bodyInput.addEventListener("blur", () => {
+    bodyEditor.addEventListener("blur", () => {
         window.setTimeout(() => {
-            if (document.activeElement === bodyInput) {
-                return;
-            }
-            bodyEditorMode = prettifyJSONText(bodyInput.value) ? "json" : "text";
             syncBodyEditor();
         }, 0);
     });
-    bodyInput.addEventListener("input", () => {
-        bodyEditorMode = "text";
-        syncBodyEditor();
-        markRequestEditorChanged();
+    bodyEditor.addEventListener("input", () => {
+        if (bodyEditorIsComposing) {
+            bodyInput.value = readBodyEditorText(bodyEditor);
+            return;
+        }
+        handleBodyEditorInput();
     });
-    bodyJsonViewer.addEventListener("click", () => {
-        focusBodyEditor();
+    bodyEditor.addEventListener("compositionstart", () => {
+        bodyEditorIsComposing = true;
     });
-    bodyJsonViewer.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") {
+    bodyEditor.addEventListener("compositionend", () => {
+        bodyEditorIsComposing = false;
+        handleBodyEditorInput();
+    });
+    bodyEditor.addEventListener("keydown", (event) => {
+        if (requestIsLoading) {
+            event.preventDefault();
+            return;
+        }
+        if (bodyEditorIsComposing) {
+            return;
+        }
+        if (event.key === "Tab") {
+            event.preventDefault();
+            insertTextAtBodyEditorSelection(bodyEditor, "  ");
+            handleBodyEditorInput();
+            return;
+        }
+        if (event.key === "Enter") {
+            event.preventDefault();
+            insertTextAtBodyEditorSelection(bodyEditor, "\n");
+            handleBodyEditorInput();
+        }
+    });
+    bodyEditor.addEventListener("paste", (event) => {
+        if (requestIsLoading) {
+            event.preventDefault();
+            return;
+        }
+        const text = event.clipboardData?.getData("text/plain");
+        if (typeof text !== "string") {
             return;
         }
         event.preventDefault();
-        focusBodyEditor();
+        insertTextAtBodyEditorSelection(bodyEditor, text);
+        handleBodyEditorInput();
     });
     copyBodyBtn.addEventListener("click", () => {
         void copyRequestBody();
@@ -288,7 +317,7 @@ function applyInitialState() {
     requestDrafts = state.requestDrafts;
     activeCollectionId = state.activeCollectionId;
     activeSavedRequestId = state.activeSavedRequestId;
-    bodyEditorMode = "json";
+    bodyEditorCollapsed = false;
     renderEnvironmentControls();
     renderHeaderRows();
     syncBodyEditor();
@@ -428,7 +457,7 @@ function applyEditorDraft(draft) {
     aggregationPluginInput.value = resolveAggregationPluginId(draft.aggregation_plugin, draft.aggregate_openai_sse);
     timeoutInput.value = String(draft.timeout_seconds || 120);
     headerRows = normalizeHeaderRows(draft.headers);
-    bodyEditorMode = "json";
+    bodyEditorCollapsed = false;
     renderHeaderRows();
     syncBodyEditor();
 }
@@ -668,65 +697,50 @@ function removeHeader(id) {
     markRequestEditorChanged();
 }
 function syncBodyEditor() {
-    if (bodyJsonController?.hasJSON) {
-        bodyJsonFoldState = bodyJsonController.captureFoldState();
-    }
-    const controller = renderJSONText(bodyJsonViewer, bodyInput.value, {
-        expandDepth: 2,
-        foldState: bodyJsonFoldState,
+    const isActive = document.activeElement === bodyEditor;
+    const selection = isActive ? captureBodyEditorSelection(bodyEditor) : null;
+    const result = renderBodyEditor(bodyEditor, bodyInput.value, {
+        collapsed: bodyEditorCollapsed && !isActive,
+        editable: !requestIsLoading,
     });
-    bodyJsonController = controller;
-    if (controller.hasJSON) {
-        bodyJsonFoldState = controller.captureFoldState();
+    bodyEditorHasJSON = result.hasJSON;
+    if (!result.hasJSON) {
+        bodyEditorCollapsed = false;
     }
-    const hasJSON = controller.hasJSON;
-    const shouldShowJSON = hasJSON && bodyEditorMode === "json" && document.activeElement !== bodyInput;
-    bodyEditorShell.classList.toggle("is-json-mode", shouldShowJSON);
-    bodyEditorShell.classList.toggle("has-json", hasJSON);
-    bodyInput.classList.toggle("is-hidden", shouldShowJSON);
-    bodyJsonViewer.classList.toggle("is-hidden", !shouldShowJSON);
-    bodyJsonViewer.tabIndex = hasJSON && !requestIsLoading ? 0 : -1;
-    bodyCollapseBtn.disabled = !hasJSON || requestIsLoading;
-    bodyExpandBtn.disabled = !hasJSON || requestIsLoading;
-    if (!hasJSON) {
-        bodyEditorMode = "text";
-        return;
-    }
-    if (document.activeElement !== bodyInput && bodyEditorMode !== "text") {
-        bodyEditorMode = "json";
+    bodyEditorShell.classList.toggle("has-json", result.hasJSON);
+    bodyEditorShell.classList.toggle("is-collapsed", result.isCollapsedView);
+    bodyEditor.tabIndex = requestIsLoading ? -1 : 0;
+    bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading;
+    bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading;
+    if (isActive && bodyEditor.contentEditable === "true") {
+        restoreBodyEditorSelection(bodyEditor, selection);
     }
 }
-function showBodyTextEditor() {
-    bodyEditorMode = "text";
+function handleBodyEditorInput() {
+    const selection = captureBodyEditorSelection(bodyEditor);
+    bodyInput.value = readBodyEditorText(bodyEditor);
     syncBodyEditor();
+    restoreBodyEditorSelection(bodyEditor, selection);
+    markRequestEditorChanged();
 }
-function showBodyJSONViewer() {
-    if (!bodyJsonController?.hasJSON) {
-        return;
-    }
-    bodyEditorMode = "json";
-    syncBodyEditor();
-}
-function focusBodyEditor() {
+function focusBodyEditor(selectAll = false) {
     if (requestIsLoading) {
         return;
     }
-    showBodyTextEditor();
-    bodyInput.focus();
+    bodyEditor.focus();
+    syncBodyEditor();
+    focusVisibleBodyEditor(bodyEditor, selectAll);
 }
 function collapseBodyJSON() {
-    showBodyJSONViewer();
-    bodyJsonController?.collapseAll();
-    if (bodyJsonController?.hasJSON) {
-        bodyJsonFoldState = bodyJsonController.captureFoldState();
+    if (!bodyEditorHasJSON || requestIsLoading) {
+        return;
     }
+    bodyEditorCollapsed = true;
+    syncBodyEditor();
 }
 function expandBodyJSON() {
-    showBodyJSONViewer();
-    bodyJsonController?.expandAll();
-    if (bodyJsonController?.hasJSON) {
-        bodyJsonFoldState = bodyJsonController.captureFoldState();
-    }
+    bodyEditorCollapsed = false;
+    syncBodyEditor();
 }
 function prettifyBodyJSON() {
     const pretty = prettifyJSONText(bodyInput.value);
@@ -736,7 +750,7 @@ function prettifyBodyJSON() {
     }
     setError("");
     bodyInput.value = pretty;
-    bodyEditorMode = document.activeElement === bodyInput ? "text" : "json";
+    bodyEditorCollapsed = false;
     syncBodyEditor();
     markRequestEditorChanged();
 }
@@ -764,7 +778,7 @@ async function importCurl() {
         urlInput.value = parsed.url || "";
         headerRows = normalizeHeaderRows((parsed.headers || []).map((header) => ({ ...header, enabled: true })));
         bodyInput.value = parsed.body || "";
-        bodyEditorMode = "json";
+        bodyEditorCollapsed = false;
         activeSavedRequestId = null;
         renderHeaderRows();
         syncBodyEditor();
@@ -1022,9 +1036,7 @@ async function copyRequestBody() {
         setSuccess("Request body copied to clipboard.");
         return;
     }
-    showBodyTextEditor();
-    bodyInput.focus();
-    bodyInput.select();
+    focusBodyEditor(true);
     setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 async function copyRawResponse() {
@@ -2015,6 +2027,7 @@ function setLoading(isLoading) {
     methodInput.disabled = isLoading;
     urlInput.disabled = isLoading;
     bodyInput.disabled = isLoading;
+    bodyEditor.setAttribute("aria-disabled", isLoading ? "true" : "false");
     timeoutInput.disabled = isLoading;
     aggregationPluginInput.disabled = isLoading;
     addHeaderBtn.disabled = isLoading;
@@ -2022,8 +2035,8 @@ function setLoading(isLoading) {
     copyRawResponseBtn.disabled = isLoading;
     copyAggregateResponseBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
-    bodyCollapseBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
-    bodyExpandBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
+    bodyCollapseBtn.disabled = isLoading || !bodyEditorHasJSON;
+    bodyExpandBtn.disabled = isLoading || !bodyEditorHasJSON;
     abortBtn.disabled = !isLoading;
     sendBtn.textContent = isLoading ? "Sending..." : "Send";
     syncEnvironmentEditor();

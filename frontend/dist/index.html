@@ -283,7 +283,7 @@
 
             <section id="bodyPanel" class="pm-panel" data-tab-panel="request">
               <div class="panel-head">
-                <label for="bodyInput" class="panel-label">Body</label>
+                <span id="bodyEditorLabel" class="panel-label">Body</span>
                 <div class="inline-actions panel-tools">
                   <button
                     id="bodyCollapseBtn"
@@ -327,17 +327,23 @@
               <div id="bodyEditorShell" class="body-editor-shell">
                 <textarea
                   id="bodyInput"
+                  class="body-input-source"
                   rows="11"
                   placeholder='{"stream": true, "messages": []}'
                   spellcheck="false"
+                  aria-hidden="true"
+                  tabindex="-1"
                 ></textarea>
                 <div
-                  id="bodyJsonViewer"
-                  class="json-viewer-shell body-json-viewer is-hidden"
+                  id="bodyEditor"
+                  class="body-code-editor"
+                  contenteditable="true"
+                  spellcheck="false"
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-labelledby="bodyEditorLabel"
+                  data-placeholder='{"stream": true, "messages": []}'
                   tabindex="0"
-                  role="button"
-                  aria-label="Formatted JSON body. Press Enter or click to edit."
-                  title="Click to edit JSON"
                 ></div>
               </div>
             </section>

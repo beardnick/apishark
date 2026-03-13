@@ -10,8 +10,8 @@ test("built body panel keeps a single editor shell with inline JSON tools", asyn
   const bodyPanel = bodyPanelMatch[0];
 
   assert.match(bodyPanel, /<div id="bodyEditorShell" class="body-editor-shell">/);
-  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<textarea\s+id="bodyInput"/);
-  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?id="bodyJsonViewer"/);
+  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<textarea[\s\S]*?id="bodyInput"/);
+  assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?id="bodyEditor"/);
   assert.match(bodyPanel, /id="copyBodyBtn"/);
   assert.match(bodyPanel, /id="bodyPrettifyBtn"/);
   assert.match(bodyPanel, /id="bodyCollapseBtn"/);
@@ -23,4 +23,5 @@ test("built body panel keeps a single editor shell with inline JSON tools", asyn
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPanel"/);
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPreview"/);
   assert.doesNotMatch(bodyPanel, /id="bodyJsonMeta"/);
+  assert.doesNotMatch(bodyPanel, /id="bodyJsonViewer"/);
 });

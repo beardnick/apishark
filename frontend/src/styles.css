@@ -447,6 +447,7 @@ textarea {
 }
 
 .body-editor-shell {
+  position: relative;
   min-height: 220px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -467,38 +468,51 @@ textarea {
   box-shadow: var(--focus-ring);
 }
 
-.body-editor-shell textarea,
-.body-editor-shell .json-viewer-shell {
-  min-height: 220px;
-  height: 100%;
+.body-input-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   margin: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.body-editor-shell textarea {
-  resize: vertical;
+.body-code-editor {
+  min-height: 220px;
   padding: 10px 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family:
+    "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.79rem;
+  line-height: 1.42;
+  outline: none;
+  caret-color: var(--text);
 }
 
-.body-editor-shell textarea:hover,
-.body-editor-shell textarea:focus-visible {
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.body-editor-shell .json-viewer-shell {
-  padding: 10px 12px;
-}
-
-.body-json-viewer {
+.body-code-editor[contenteditable="true"] {
   cursor: text;
 }
 
-.body-json-viewer:focus-visible {
-  outline: none;
+.body-code-editor[contenteditable="false"] {
+  cursor: default;
+}
+
+.body-code-editor.is-empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+}
+
+.body-code-editor .json-fold-placeholder {
+  color: var(--text-muted);
+}
+
+.body-code-editor[aria-disabled="true"] {
+  cursor: not-allowed;
 }
 
 input[type="checkbox"] {
