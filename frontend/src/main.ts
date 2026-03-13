@@ -43,6 +43,7 @@ import {
   type RequestDraftScope,
   type RequestLibraryDraft,
 } from "./request-library.js";
+import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
 
 type HeaderKV = {
   key: string;
@@ -210,6 +211,7 @@ const ssePayloadOutput = byId<HTMLElement>("ssePayloadOutput");
 
 let activeAbortController: AbortController | null = null;
 let rawAppender: BatchedBoundedAppender;
+let plainRawResponseBuffer: PlainRawResponseBuffer;
 let aggregateAppender: BatchedAggregateAppender;
 let aggregationRuntime: ResponseAggregationRuntime | null = null;
 let rawResponseMode: RawResponseMode = "plain";
@@ -1433,18 +1435,25 @@ async function consumeServerEvents(response: Response): Promise<void> {
     }
 
     buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    let frameIndex = buffer.indexOf("\n\n");
-    while (frameIndex >= 0) {
-      const frame = buffer.slice(0, frameIndex);
-      buffer = buffer.slice(frameIndex + 2);
-      consumeFrame(frame);
-      frameIndex = buffer.indexOf("\n\n");
-    }
+    buffer = consumeBufferedFrames(buffer);
   }
 
+  buffer += decoder.decode().replace(/\r\n/g, "\n");
+  buffer = consumeBufferedFrames(buffer);
   if (buffer.trim()) {
     consumeFrame(buffer);
   }
+}
+
+function consumeBufferedFrames(buffer: string): string {
+  let frameIndex = buffer.indexOf("\n\n");
+  while (frameIndex >= 0) {
+    const frame = buffer.slice(0, frameIndex);
+    buffer = buffer.slice(frameIndex + 2);
+    consumeFrame(frame);
+    frameIndex = buffer.indexOf("\n\n");
+  }
+  return buffer;
 }
 
 function consumeFrame(frame: string): void {
@@ -1466,7 +1475,7 @@ function consumeFrame(frame: string): void {
     if (rawResponseMode === "sse") {
       appendSseLine(payload);
     } else {
-      rawAppender.enqueue(`${payload}\n`);
+      appendPlainRawText(`${payload}\n`);
     }
   }
 }
@@ -1509,7 +1518,7 @@ function consumeRawEvent(event: RawEvent): void {
       appendSseLine(event.rawChunk);
     }
   } else if (event.rawChunk) {
-    rawAppender.enqueue(event.rawChunk);
+    appendPlainRawText(event.rawChunk);
   }
 
   if (!aggregationRuntime) {
@@ -1563,7 +1572,8 @@ function finalizeResponseViews(): void {
   renderSentHeaders(latestSentHeaders);
   renderResponseHeaders(latestResponseHeaders);
   if (rawResponseMode === "plain") {
-    const rawText = rawAppender.snapshotText();
+    const rawText = plainRawResponseBuffer.snapshotText();
+    rawOutput.textContent = rawText;
     renderRawJSONIfPossible(rawText);
   }
 }
@@ -1576,6 +1586,7 @@ function clearOutputs(): void {
   statusText.textContent = "-";
   sentHeadersOutput.textContent = "";
   headersOutput.textContent = "";
+  plainRawResponseBuffer.clear();
   rawAppender.clear();
   aggregateAppender.clear();
   clearSseInspector();
@@ -1596,6 +1607,14 @@ function setRawResponseMode(mode: RawResponseMode): void {
   rawJsonViewer.classList.toggle("is-hidden", true);
   rawCollapseBtn.disabled = true;
   rawExpandBtn.disabled = true;
+}
+
+function appendPlainRawText(text: string): void {
+  if (!text) {
+    return;
+  }
+  plainRawResponseBuffer.append(text);
+  rawAppender.enqueue(text);
 }
 
 function renderRawJSONIfPossible(text: string): void {
@@ -2937,6 +2956,7 @@ function isNearBottom(element: HTMLElement): boolean {
   return remaining < 24;
 }
 
+plainRawResponseBuffer = new PlainRawResponseBuffer(RAW_OUTPUT_MAX_CHARS);
 rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");

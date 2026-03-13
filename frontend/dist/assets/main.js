@@ -4,6 +4,7 @@ import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregation
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
 import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, setPersistedRequestDraft, } from "./request-library.js";
+import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220000;
@@ -72,6 +73,7 @@ const ssePayloadJsonViewer = byId("ssePayloadJsonViewer");
 const ssePayloadOutput = byId("ssePayloadOutput");
 let activeAbortController = null;
 let rawAppender;
+let plainRawResponseBuffer;
 let aggregateAppender;
 let aggregationRuntime = null;
 let rawResponseMode = "plain";
@@ -1070,17 +1072,23 @@ async function consumeServerEvents(response) {
             break;
         }
         buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-        let frameIndex = buffer.indexOf("\n\n");
-        while (frameIndex >= 0) {
-            const frame = buffer.slice(0, frameIndex);
-            buffer = buffer.slice(frameIndex + 2);
-            consumeFrame(frame);
-            frameIndex = buffer.indexOf("\n\n");
-        }
+        buffer = consumeBufferedFrames(buffer);
     }
+    buffer += decoder.decode().replace(/\r\n/g, "\n");
+    buffer = consumeBufferedFrames(buffer);
     if (buffer.trim()) {
         consumeFrame(buffer);
     }
+}
+function consumeBufferedFrames(buffer) {
+    let frameIndex = buffer.indexOf("\n\n");
+    while (frameIndex >= 0) {
+        const frame = buffer.slice(0, frameIndex);
+        buffer = buffer.slice(frameIndex + 2);
+        consumeFrame(frame);
+        frameIndex = buffer.indexOf("\n\n");
+    }
+    return buffer;
 }
 function consumeFrame(frame) {
     const dataParts = [];
@@ -1102,7 +1110,7 @@ function consumeFrame(frame) {
             appendSseLine(payload);
         }
         else {
-            rawAppender.enqueue(`${payload}\n`);
+            appendPlainRawText(`${payload}\n`);
         }
     }
 }
@@ -1140,7 +1148,7 @@ function consumeRawEvent(event) {
         }
     }
     else if (event.rawChunk) {
-        rawAppender.enqueue(event.rawChunk);
+        appendPlainRawText(event.rawChunk);
     }
     if (!aggregationRuntime) {
         return;
@@ -1181,7 +1189,8 @@ function finalizeResponseViews() {
     renderSentHeaders(latestSentHeaders);
     renderResponseHeaders(latestResponseHeaders);
     if (rawResponseMode === "plain") {
-        const rawText = rawAppender.snapshotText();
+        const rawText = plainRawResponseBuffer.snapshotText();
+        rawOutput.textContent = rawText;
         renderRawJSONIfPossible(rawText);
     }
 }
@@ -1193,6 +1202,7 @@ function clearOutputs() {
     statusText.textContent = "-";
     sentHeadersOutput.textContent = "";
     headersOutput.textContent = "";
+    plainRawResponseBuffer.clear();
     rawAppender.clear();
     aggregateAppender.clear();
     clearSseInspector();
@@ -1212,6 +1222,13 @@ function setRawResponseMode(mode) {
     rawJsonViewer.classList.toggle("is-hidden", true);
     rawCollapseBtn.disabled = true;
     rawExpandBtn.disabled = true;
+}
+function appendPlainRawText(text) {
+    if (!text) {
+        return;
+    }
+    plainRawResponseBuffer.append(text);
+    rawAppender.enqueue(text);
 }
 function renderRawJSONIfPossible(text) {
     const controller = renderJSONText(rawJsonViewer, text, { expandDepth: 1 });
@@ -2338,6 +2355,7 @@ function isNearBottom(element) {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     return remaining < 24;
 }
+plainRawResponseBuffer = new PlainRawResponseBuffer(RAW_OUTPUT_MAX_CHARS);
 rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
