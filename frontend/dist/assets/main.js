@@ -59,11 +59,13 @@ const errorText = byId("errorText");
 const sentHeadersOutput = byId("sentHeadersOutput");
 const headersOutput = byId("headersOutput");
 const rawJsonMeta = byId("rawJsonMeta");
+const copyRawResponseBtn = byId("copyRawResponseBtn");
 const rawCollapseBtn = byId("rawCollapseBtn");
 const rawExpandBtn = byId("rawExpandBtn");
 const rawJsonViewer = byId("rawJsonViewer");
 const rawOutput = byId("rawOutput");
 const aggregateOutput = byId("aggregateOutput");
+const copyAggregateResponseBtn = byId("copyAggregateResponseBtn");
 const sseInspector = byId("sseInspector");
 const sseLineList = byId("sseLineList");
 const ssePayloadMeta = byId("ssePayloadMeta");
@@ -176,9 +178,15 @@ function wireEvents() {
     copyBodyBtn.addEventListener("click", () => {
         void copyRequestBody();
     });
+    copyAggregateResponseBtn.addEventListener("click", () => {
+        void copyAggregateResponse();
+    });
     bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
     bodyCollapseBtn.addEventListener("click", () => collapseBodyJSON());
     bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
+    copyRawResponseBtn.addEventListener("click", () => {
+        void copyRawResponse();
+    });
     rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
     rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
     ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -1002,6 +1010,30 @@ async function copyRequestBody() {
     bodyInput.focus();
     bodyInput.select();
     setError("Clipboard copy failed. Select the body text and copy it manually.");
+}
+async function copyRawResponse() {
+    const text = plainRawResponseBuffer.snapshotText();
+    if (!text) {
+        setError("Raw response is empty.");
+        return;
+    }
+    if (await writeClipboardText(text)) {
+        setSuccess("Raw response copied to clipboard.");
+        return;
+    }
+    setError("Clipboard copy failed. Select the raw response text and copy it manually.");
+}
+async function copyAggregateResponse() {
+    const text = aggregateAppender.snapshotText();
+    if (!text) {
+        setError("Aggregated response is empty.");
+        return;
+    }
+    if (await writeClipboardText(text)) {
+        setSuccess("Aggregated response copied to clipboard.");
+        return;
+    }
+    setError("Clipboard copy failed. Select the aggregated response text and copy it manually.");
 }
 async function sendRequest() {
     setError("");
@@ -1971,6 +2003,8 @@ function setLoading(isLoading) {
     aggregationPluginInput.disabled = isLoading;
     addHeaderBtn.disabled = isLoading;
     copyBodyBtn.disabled = isLoading;
+    copyRawResponseBtn.disabled = isLoading;
+    copyAggregateResponseBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
     bodyCollapseBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
     bodyExpandBtn.disabled = isLoading || !bodyJsonController?.hasJSON;

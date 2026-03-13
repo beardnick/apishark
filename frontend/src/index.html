@@ -432,6 +432,15 @@
                 </span>
                 <div class="inline-actions panel-tools">
                   <button
+                    id="copyRawResponseBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Copy raw response"
+                    title="Copy raw response"
+                  >
+                    <span class="action-symbol" aria-hidden="true">⧉</span>
+                  </button>
+                  <button
                     id="rawCollapseBtn"
                     type="button"
                     class="ghost icon-btn toolbar-icon-btn"
@@ -456,9 +465,22 @@
             </section>
 
             <section id="responseAggregatePanel" class="pm-panel" data-tab-panel="response">
-              <p class="hint compact">
-                Long aggregated output is capped to keep the page responsive.
-              </p>
+              <div class="json-toolbar">
+                <p class="hint compact">
+                  Long aggregated output is capped to keep the page responsive.
+                </p>
+                <div class="inline-actions panel-tools">
+                  <button
+                    id="copyAggregateResponseBtn"
+                    type="button"
+                    class="ghost icon-btn toolbar-icon-btn"
+                    aria-label="Copy aggregated response"
+                    title="Copy aggregated response"
+                  >
+                    <span class="action-symbol" aria-hidden="true">⧉</span>
+                  </button>
+                </div>
+              </div>
               <div id="aggregateOutput" class="output output-tall aggregate-output"></div>
             </section>
 

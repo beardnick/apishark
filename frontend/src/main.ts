@@ -196,11 +196,13 @@ const errorText = byId<HTMLParagraphElement>("errorText");
 const sentHeadersOutput = byId<HTMLElement>("sentHeadersOutput");
 const headersOutput = byId<HTMLElement>("headersOutput");
 const rawJsonMeta = byId<HTMLElement>("rawJsonMeta");
+const copyRawResponseBtn = byId<HTMLButtonElement>("copyRawResponseBtn");
 const rawCollapseBtn = byId<HTMLButtonElement>("rawCollapseBtn");
 const rawExpandBtn = byId<HTMLButtonElement>("rawExpandBtn");
 const rawJsonViewer = byId<HTMLElement>("rawJsonViewer");
 const rawOutput = byId<HTMLElement>("rawOutput");
 const aggregateOutput = byId<HTMLElement>("aggregateOutput");
+const copyAggregateResponseBtn = byId<HTMLButtonElement>("copyAggregateResponseBtn");
 const sseInspector = byId<HTMLElement>("sseInspector");
 const sseLineList = byId<HTMLElement>("sseLineList");
 const ssePayloadMeta = byId<HTMLElement>("ssePayloadMeta");
@@ -330,9 +332,15 @@ function wireEvents(): void {
   copyBodyBtn.addEventListener("click", () => {
     void copyRequestBody();
   });
+  copyAggregateResponseBtn.addEventListener("click", () => {
+    void copyAggregateResponse();
+  });
   bodyPrettifyBtn.addEventListener("click", () => prettifyBodyJSON());
   bodyCollapseBtn.addEventListener("click", () => collapseBodyJSON());
   bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
+  copyRawResponseBtn.addEventListener("click", () => {
+    void copyRawResponse();
+  });
   rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
   rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
   ssePayloadCollapseBtn.addEventListener("click", () => ssePayloadJsonController?.collapseAll());
@@ -1355,6 +1363,36 @@ async function copyRequestBody(): Promise<void> {
   bodyInput.focus();
   bodyInput.select();
   setError("Clipboard copy failed. Select the body text and copy it manually.");
+}
+
+async function copyRawResponse(): Promise<void> {
+  const text = plainRawResponseBuffer.snapshotText();
+  if (!text) {
+    setError("Raw response is empty.");
+    return;
+  }
+
+  if (await writeClipboardText(text)) {
+    setSuccess("Raw response copied to clipboard.");
+    return;
+  }
+
+  setError("Clipboard copy failed. Select the raw response text and copy it manually.");
+}
+
+async function copyAggregateResponse(): Promise<void> {
+  const text = aggregateAppender.snapshotText();
+  if (!text) {
+    setError("Aggregated response is empty.");
+    return;
+  }
+
+  if (await writeClipboardText(text)) {
+    setSuccess("Aggregated response copied to clipboard.");
+    return;
+  }
+
+  setError("Clipboard copy failed. Select the aggregated response text and copy it manually.");
 }
 
 async function sendRequest(): Promise<void> {
@@ -2496,6 +2534,8 @@ function setLoading(isLoading: boolean): void {
   aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
   copyBodyBtn.disabled = isLoading;
+  copyRawResponseBtn.disabled = isLoading;
+  copyAggregateResponseBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
   bodyCollapseBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
   bodyExpandBtn.disabled = isLoading || !bodyJsonController?.hasJSON;
