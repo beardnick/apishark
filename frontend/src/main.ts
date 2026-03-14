@@ -1,7 +1,6 @@
 import {
-  type BodyEditorRenderResult,
-  renderBodyEditor,
-  resolveBodyEditorRenderOptions,
+  createBodyEditor,
+  type BodyEditorSnapshot,
 } from "./body-editor.js";
 import {
   prettifyJSONText,
@@ -170,7 +169,6 @@ const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
 const bodyEditorModeBadge = byId<HTMLElement>("bodyEditorModeBadge");
 const bodyEditorHint = byId<HTMLElement>("bodyEditorHint");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
-const bodyEditorLineNumbers = byId<HTMLElement>("bodyEditorLineNumbers");
 const bodyEditor = byId<HTMLElement>("bodyEditor");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
@@ -234,13 +232,25 @@ let activeSavedRequestId: string | null = null;
 let draftAutosaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
-let bodyEditorCollapsed = false;
 let bodyEditorHasJSON = false;
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
 let sseLineCounter = 0;
+
+const bodyEditorController = createBodyEditor({
+  parent: bodyEditor,
+  input: bodyInput,
+  ariaLabelledBy: "bodyEditorLabel",
+  editable: !requestIsLoading,
+  onStateChange: (event) => {
+    syncBodyEditor();
+    if (event.reason === "doc" && event.source === "user") {
+      markRequestEditorChanged();
+    }
+  },
+});
 
 function wireEvents(): void {
   environmentSelect.addEventListener("change", () => {
@@ -304,80 +314,6 @@ function wireEvents(): void {
     headerRows.push(createEmptyHeaderRow());
     renderHeaderRows();
     markRequestEditorChanged();
-  });
-
-  bodyInput.addEventListener("focus", () => {
-    syncBodyEditor();
-  });
-  bodyInput.addEventListener("blur", () => {
-    window.setTimeout(() => {
-      syncBodyEditor();
-    }, 0);
-  });
-  bodyInput.addEventListener("input", () => {
-    handleBodyEditorInput();
-  });
-  bodyInput.addEventListener("scroll", () => {
-    syncBodyEditorScroll();
-  });
-  bodyEditor.addEventListener("scroll", () => {
-    if (!bodyEditorCollapsed) {
-      return;
-    }
-
-    bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
-  });
-  bodyEditorLineNumbers.addEventListener("click", () => {
-    if (!requestIsLoading) {
-      focusBodyEditor();
-    }
-  });
-  bodyEditor.addEventListener("click", () => {
-    if (bodyEditorCollapsed && !requestIsLoading) {
-      expandBodyJSON();
-      focusBodyEditor();
-    }
-  });
-  bodyEditor.addEventListener("keydown", (event) => {
-    if (!bodyEditorCollapsed || requestIsLoading) {
-      return;
-    }
-
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    event.preventDefault();
-    expandBodyJSON();
-    focusBodyEditor();
-  });
-  bodyInput.addEventListener("keydown", (event) => {
-    if (requestIsLoading) {
-      event.preventDefault();
-      return;
-    }
-
-    if (event.key === "Tab") {
-      event.preventDefault();
-      insertTextAtTextAreaSelection(bodyInput, "  ");
-      handleBodyEditorInput();
-      return;
-    }
-  });
-  bodyInput.addEventListener("paste", (event) => {
-    if (requestIsLoading) {
-      event.preventDefault();
-      return;
-    }
-
-    const text = event.clipboardData?.getData("text/plain");
-    if (typeof text !== "string") {
-      return;
-    }
-
-    event.preventDefault();
-    insertTextAtTextAreaSelection(bodyInput, text);
-    handleBodyEditorInput();
   });
 
   copyBodyBtn.addEventListener("click", () => {
@@ -503,7 +439,7 @@ function applyInitialState(): void {
   methodInput.value = state.method;
   urlInput.value = state.url;
   headerRows = normalizeHeaderRows(state.headers);
-  bodyInput.value = state.bodyText;
+  setBodyEditorText(state.bodyText);
   renderPluginOptionsIntoSelect(
     aggregationPluginInput,
     state.useCollectionAggregationPlugin
@@ -515,8 +451,6 @@ function applyInitialState(): void {
   requestDrafts = state.requestDrafts;
   activeCollectionId = state.activeCollectionId;
   activeSavedRequestId = state.activeSavedRequestId;
-  bodyEditorCollapsed = false;
-
   renderEnvironmentControls();
   renderHeaderRows();
   syncBodyEditor();
@@ -674,15 +608,13 @@ function applyEditorDraft(draft: RequestLibraryDraft): void {
   requestNameInput.value = draft.name;
   methodInput.value = draft.method || "GET";
   urlInput.value = draft.url;
-  bodyInput.value = draft.body;
+  setBodyEditorText(draft.body);
   aggregationPluginInput.value = resolveAggregationPluginId(
     draft.aggregation_plugin,
     draft.aggregate_openai_sse,
   );
   timeoutInput.value = String(draft.timeout_seconds || 120);
   headerRows = normalizeHeaderRows(draft.headers);
-  bodyEditorCollapsed = false;
-
   renderHeaderRows();
   syncBodyEditor();
 }
@@ -993,69 +925,20 @@ function removeHeader(id: string): void {
   markRequestEditorChanged();
 }
 
-function insertTextAtTextAreaSelection(element: HTMLTextAreaElement, text: string): void {
-  const start = element.selectionStart ?? 0;
-  const end = element.selectionEnd ?? start;
-  element.setRangeText(text, start, end, "end");
-}
-
-function renderBodyEditorLineNumbers(lineCount: number): void {
-  const lines = Math.max(1, lineCount);
-  bodyEditorLineNumbers.textContent = Array.from({ length: lines }, (_, index) => String(index + 1)).join(
-    "\n",
-  );
-}
-
-function syncBodyEditorScroll(): void {
-  if (bodyEditorCollapsed) {
-    bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
-    return;
-  }
-
-  bodyEditor.scrollTop = bodyInput.scrollTop;
-  bodyEditor.scrollLeft = bodyInput.scrollLeft;
-  bodyEditorLineNumbers.scrollTop = bodyInput.scrollTop;
-}
-
 function syncBodyEditor(): void {
-  const result = renderBodyEditor(
-    bodyEditor,
-    bodyInput.value,
-    resolveBodyEditorRenderOptions({
-      requestedCollapsed: bodyEditorCollapsed,
-      isActive: document.activeElement === bodyInput,
-      requestIsLoading,
-    }),
-  );
+  const result = bodyEditorController.getSnapshot();
 
   bodyEditorHasJSON = result.hasJSON;
-  if (!result.hasJSON) {
-    bodyEditorCollapsed = false;
-  }
 
   bodyEditorShell.classList.toggle("has-json", result.hasJSON);
-  bodyEditorShell.classList.toggle("is-collapsed", result.isCollapsedView);
+  bodyEditorShell.classList.toggle("is-collapsed", result.hasFoldedBlocks);
   syncBodyEditorBanner(result);
-  bodyInput.classList.toggle("is-hidden", result.isCollapsedView);
-  bodyInput.readOnly = result.isCollapsedView || requestIsLoading;
-  bodyInput.tabIndex = result.isCollapsedView || requestIsLoading ? -1 : 0;
-  bodyEditor.setAttribute("aria-hidden", result.isCollapsedView ? "false" : "true");
-  bodyEditor.tabIndex = result.isCollapsedView && !requestIsLoading ? 0 : -1;
-  bodyEditor.setAttribute("role", result.isCollapsedView && !requestIsLoading ? "button" : "presentation");
-  bodyEditor.setAttribute(
-    "aria-label",
-    result.isCollapsedView
-      ? "Folded JSON preview. Press Enter to return to editing."
-      : "Request body syntax preview.",
-  );
   bodyEditor.setAttribute("aria-disabled", requestIsLoading ? "true" : "false");
-  bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.isCollapsedView;
-  bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.isCollapsedView;
-  renderBodyEditorLineNumbers(result.lineCount);
-  syncBodyEditorScroll();
+  bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.foldableBlockCount === 0 || result.isFullyCollapsed;
+  bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.hasFoldedBlocks;
 }
 
-function syncBodyEditorBanner(result: BodyEditorRenderResult): void {
+function syncBodyEditorBanner(result: BodyEditorSnapshot): void {
   if (!result.hasJSON) {
     bodyEditorShell.dataset.mode = "plain";
     bodyEditorModeBadge.textContent = "Plain text";
@@ -1065,12 +948,12 @@ function syncBodyEditorBanner(result: BodyEditorRenderResult): void {
     return;
   }
 
-  if (result.isCollapsedView) {
+  if (result.hasFoldedBlocks) {
     bodyEditorShell.dataset.mode = "json-collapsed";
-    bodyEditorModeBadge.textContent = "JSON preview";
+    bodyEditorModeBadge.textContent = "JSON folded";
     bodyEditorHint.textContent = requestIsLoading
-      ? "Request is running. Expand after loading finishes to edit the body."
-      : "Folded preview is read-only. Click the body or choose Edit to change JSON.";
+      ? "Request is running. Folding is preserved while editing is temporarily disabled."
+      : "Use gutter toggles for per-block folding, or Expand to open every JSON block.";
     return;
   }
 
@@ -1078,12 +961,7 @@ function syncBodyEditorBanner(result: BodyEditorRenderResult): void {
   bodyEditorModeBadge.textContent = "Editing JSON";
   bodyEditorHint.textContent = requestIsLoading
     ? "Request is running. Editing is temporarily disabled."
-    : "Fold trims nested JSON into a compact preview without changing the payload.";
-}
-
-function handleBodyEditorInput(): void {
-  syncBodyEditor();
-  markRequestEditorChanged();
+    : "Use gutter toggles for nested JSON, Collapse to fold all, or Prettify to normalize formatting.";
 }
 
 function focusBodyEditor(selectAll = false): void {
@@ -1091,14 +969,11 @@ function focusBodyEditor(selectAll = false): void {
     return;
   }
 
-  if (bodyEditorCollapsed) {
-    expandBodyJSON();
-  }
+  bodyEditorController.focus(selectAll);
+}
 
-  bodyInput.focus();
-  if (selectAll) {
-    bodyInput.select();
-  }
+function setBodyEditorText(text: string): void {
+  bodyEditorController.setText(text);
   syncBodyEditor();
 }
 
@@ -1106,26 +981,21 @@ function collapseBodyJSON(): void {
   if (!bodyEditorHasJSON || requestIsLoading) {
     return;
   }
-  bodyEditorCollapsed = true;
-  syncBodyEditor();
+  bodyEditorController.collapseAll();
 }
 
 function expandBodyJSON(): void {
-  bodyEditorCollapsed = false;
-  syncBodyEditor();
+  bodyEditorController.expandAll();
 }
 
 function prettifyBodyJSON(): void {
-  const pretty = prettifyJSONText(bodyInput.value);
+  const pretty = bodyEditorController.prettify();
   if (!pretty) {
     setError("Request body is not valid JSON.");
     return;
   }
 
   setError("");
-  bodyInput.value = pretty;
-  bodyEditorCollapsed = false;
-  syncBodyEditor();
   markRequestEditorChanged();
 }
 
@@ -1163,8 +1033,7 @@ async function importCurl(): Promise<void> {
     headerRows = normalizeHeaderRows(
       (parsed.headers || []).map((header) => ({ ...header, enabled: true })),
     );
-    bodyInput.value = parsed.body || "";
-    bodyEditorCollapsed = false;
+    setBodyEditorText(parsed.body || "");
     activeSavedRequestId = null;
     renderHeaderRows();
     syncBodyEditor();
@@ -2645,6 +2514,7 @@ function setLoading(isLoading: boolean): void {
   methodInput.disabled = isLoading;
   urlInput.disabled = isLoading;
   bodyInput.disabled = isLoading;
+  bodyEditorController.setEditable(!isLoading);
   bodyEditor.setAttribute("aria-disabled", isLoading ? "true" : "false");
   timeoutInput.disabled = isLoading;
   aggregationPluginInput.disabled = isLoading;
@@ -2653,8 +2523,6 @@ function setLoading(isLoading: boolean): void {
   copyRawResponseBtn.disabled = isLoading;
   copyAggregateResponseBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
-  bodyCollapseBtn.disabled = isLoading || !bodyEditorHasJSON;
-  bodyExpandBtn.disabled = isLoading || !bodyEditorHasJSON;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
   syncEnvironmentEditor();

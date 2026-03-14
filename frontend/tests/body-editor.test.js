@@ -2,143 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  analyzeBodyEditorText,
   collapseJSONText,
-  renderBodyEditor,
-  resolveBodyEditorRenderOptions,
   tokenizeBodyEditorText,
 } from "../dist/assets/body-editor.js";
-
-class FakeNode {
-  parentNode = null;
-}
-
-class FakeTextNode extends FakeNode {
-  constructor(text) {
-    super();
-    this.nodeType = 3;
-    this._text = text;
-  }
-
-  get textContent() {
-    return this._text;
-  }
-
-  set textContent(value) {
-    this._text = String(value);
-  }
-}
-
-class FakeClassList {
-  constructor() {
-    this.tokens = new Set();
-  }
-
-  add(...tokens) {
-    for (const token of tokens) {
-      if (token) {
-        this.tokens.add(token);
-      }
-    }
-  }
-
-  toggle(token, force) {
-    if (force === true) {
-      this.tokens.add(token);
-      return true;
-    }
-
-    if (force === false) {
-      this.tokens.delete(token);
-      return false;
-    }
-
-    if (this.tokens.has(token)) {
-      this.tokens.delete(token);
-      return false;
-    }
-
-    this.tokens.add(token);
-    return true;
-  }
-
-  contains(token) {
-    return this.tokens.has(token);
-  }
-
-  setFromString(value) {
-    this.tokens = new Set(String(value).split(/\s+/).filter(Boolean));
-  }
-
-  toString() {
-    return [...this.tokens].join(" ");
-  }
-}
-
-class FakeElement extends FakeNode {
-  constructor(tagName) {
-    super();
-    this.tagName = tagName.toUpperCase();
-    this.attributes = {};
-    this.childNodes = [];
-    this._textContent = "";
-    this._classList = new FakeClassList();
-  }
-
-  get classList() {
-    return this._classList;
-  }
-
-  get className() {
-    return this._classList.toString();
-  }
-
-  set className(value) {
-    this._classList.setFromString(value);
-  }
-
-  get textContent() {
-    if (this.childNodes.length === 0) {
-      return this._textContent;
-    }
-    return this.childNodes.map((child) => child.textContent).join("");
-  }
-
-  set textContent(value) {
-    this._textContent = String(value);
-    this.childNodes = [];
-  }
-
-  appendChild(node) {
-    node.parentNode = this;
-    this.childNodes.push(node);
-    this._textContent = "";
-    return node;
-  }
-
-  append(...nodes) {
-    nodes.forEach((node) => {
-      if (typeof node === "string") {
-        this.appendChild(new FakeTextNode(node));
-        return;
-      }
-      this.appendChild(node);
-    });
-  }
-
-  setAttribute(name, value) {
-    this.attributes[name] = String(value);
-  }
-}
-
-class FakeDocument {
-  createElement(tagName) {
-    return new FakeElement(tagName);
-  }
-
-  createTextNode(text) {
-    return new FakeTextNode(text);
-  }
-}
 
 test("collapseJSONText formats folded JSON into a readable preview", () => {
   assert.equal(
@@ -148,122 +15,67 @@ test("collapseJSONText formats folded JSON into a readable preview", () => {
   assert.equal(collapseJSONText("not json"), null);
 });
 
-test("tokenizeBodyEditorText classifies JSON keys, values, punctuation, and fold placeholders", () => {
-  const tokens = tokenizeBodyEditorText('{\n  "meta": {...},\n  "ok": false,\n  "count": 3,\n  "empty": null\n}');
+test("tokenizeBodyEditorText classifies JSON keys, values, and punctuation with offsets", () => {
+  const tokens = tokenizeBodyEditorText('{\n  "meta": {"ok": false},\n  "count": 3,\n  "empty": null\n}');
   const classified = tokens.filter((token) => token.className !== null);
 
   assert.deepEqual(
-    classified.map((token) => [token.text, token.className]),
+    classified.map((token) => [token.text, token.className, token.from, token.to]),
     [
-      ["{", "json-punctuation"],
-      ['"meta"', "json-key"],
-      [":", "json-punctuation"],
-      ["{", "json-punctuation"],
-      ["...", "json-fold-placeholder"],
-      ["}", "json-punctuation"],
-      [",", "json-punctuation"],
-      ['"ok"', "json-key"],
-      [":", "json-punctuation"],
-      ["false", "json-boolean"],
-      [",", "json-punctuation"],
-      ['"count"', "json-key"],
-      [":", "json-punctuation"],
-      ["3", "json-number"],
-      [",", "json-punctuation"],
-      ['"empty"', "json-key"],
-      [":", "json-punctuation"],
-      ["null", "json-null"],
-      ["}", "json-punctuation"],
+      ["{", "json-punctuation", 0, 1],
+      ['"meta"', "json-key", 4, 10],
+      [":", "json-punctuation", 10, 11],
+      ["{", "json-punctuation", 12, 13],
+      ['"ok"', "json-key", 13, 17],
+      [":", "json-punctuation", 17, 18],
+      ["false", "json-boolean", 19, 24],
+      ["}", "json-punctuation", 24, 25],
+      [",", "json-punctuation", 25, 26],
+      ['"count"', "json-key", 29, 36],
+      [":", "json-punctuation", 36, 37],
+      ["3", "json-number", 38, 39],
+      [",", "json-punctuation", 39, 40],
+      ['"empty"', "json-key", 43, 50],
+      [":", "json-punctuation", 50, 51],
+      ["null", "json-null", 52, 56],
+      ["}", "json-punctuation", 57, 58],
     ],
   );
 });
 
-test("renderBodyEditor keeps expanded JSON editable and syntax highlighted", () => {
-  const originalDocument = globalThis.document;
-  globalThis.document = new FakeDocument();
+test("analyzeBodyEditorText collects fold targets and tracks normalized fold state", () => {
+  const bodyText =
+    '{\n  "stream": true,\n  "messages": [\n    {\n      "role": "user"\n    }\n  ],\n  "meta": {\n    "n": 1\n  }\n}';
 
-  try {
-    const container = document.createElement("pre");
-    const bodyText = '{\n  "stream": true,\n  "messages": []\n}';
+  const analysis = analyzeBodyEditorText(bodyText);
 
-    const rendered = renderBodyEditor(
-      container,
-      bodyText,
-      resolveBodyEditorRenderOptions({
-        requestedCollapsed: false,
-        isActive: true,
-        requestIsLoading: false,
-      }),
-    );
+  assert.equal(analysis.hasJSON, true);
+  assert.equal(analysis.hasFoldedBlocks, false);
+  assert.equal(analysis.foldableBlockCount, 3);
+  assert.equal(analysis.lineCount, 11);
+  assert.deepEqual(
+    analysis.foldTargets.map((target) => [target.path, target.lineNumber, target.placeholder, target.isRoot]),
+    [
+      ["$", 1, "{...}", true],
+      ["$.messages", 3, "[...]", false],
+      ["$.messages.0", 4, "{...}", false],
+      ["$.meta", 8, "{...}", false],
+    ],
+  );
 
-    assert.equal(rendered.hasJSON, true);
-    assert.equal(rendered.isCollapsedView, false);
-    assert.equal(rendered.displayText, bodyText);
-    assert.equal(rendered.lineCount, 4);
-    assert.equal(container.classList.contains("is-collapsed"), false);
-    assert.equal(container.attributes["data-mode"], "editor");
-    assert.equal(container.textContent, bodyText);
-  } finally {
-    globalThis.document = originalDocument;
-  }
+  const folded = analyzeBodyEditorText(bodyText, ["$.messages", "$.missing", "$.meta"]);
+  assert.equal(folded.hasFoldedBlocks, true);
+  assert.equal(folded.foldedBlockCount, 2);
+  assert.equal(folded.isFullyCollapsed, false);
+  assert.deepEqual(folded.foldedPaths, ["$.messages", "$.meta"]);
 });
 
-test("renderBodyEditor shows a folded preview and line count when collapsed", () => {
-  const originalDocument = globalThis.document;
-  globalThis.document = new FakeDocument();
+test("analyzeBodyEditorText treats invalid JSON as plain text with no fold controls", () => {
+  const analysis = analyzeBodyEditorText('{"stream": true,,}');
 
-  try {
-    const container = document.createElement("pre");
-    const rendered = renderBodyEditor(
-      container,
-      '{"stream":true,"messages":[{"role":"user","content":"hi"}],"meta":{"n":1}}',
-      resolveBodyEditorRenderOptions({
-        requestedCollapsed: true,
-        isActive: false,
-        requestIsLoading: false,
-      }),
-    );
-
-    assert.equal(rendered.hasJSON, true);
-    assert.equal(rendered.isCollapsedView, true);
-    assert.equal(rendered.displayText, '{\n  "stream": true,\n  "messages": [...],\n  "meta": {...}\n}');
-    assert.equal(rendered.lineCount, 5);
-    assert.equal(container.classList.contains("is-collapsed"), true);
-    assert.equal(container.attributes["data-mode"], "folded");
-    assert.equal(container.textContent, rendered.displayText);
-
-    const placeholders = container.childNodes.filter(
-      (node) => node.className === "json-fold-placeholder",
-    );
-    assert.equal(placeholders.length, 2);
-  } finally {
-    globalThis.document = originalDocument;
-  }
-});
-
-test("renderBodyEditor leaves invalid JSON as plain text and does not force collapse", () => {
-  const originalDocument = globalThis.document;
-  globalThis.document = new FakeDocument();
-
-  try {
-    const container = document.createElement("pre");
-    const rendered = renderBodyEditor(
-      container,
-      '{"stream": true,,}',
-      resolveBodyEditorRenderOptions({
-        requestedCollapsed: true,
-        isActive: false,
-        requestIsLoading: false,
-      }),
-    );
-
-    assert.equal(rendered.hasJSON, false);
-    assert.equal(rendered.isCollapsedView, false);
-    assert.equal(rendered.displayText, '{"stream": true,,}');
-    assert.equal(rendered.lineCount, 1);
-    assert.equal(container.classList.contains("is-collapsed"), false);
-    assert.equal(container.textContent, '{"stream": true,,}');
-  } finally {
-    globalThis.document = originalDocument;
-  }
+  assert.equal(analysis.hasJSON, false);
+  assert.equal(analysis.hasFoldedBlocks, false);
+  assert.equal(analysis.foldableBlockCount, 0);
+  assert.equal(analysis.foldTargets.length, 0);
+  assert.equal(analysis.lineCount, 1);
 });

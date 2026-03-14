@@ -517,104 +517,123 @@ textarea {
 
 .body-editor-frame {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  min-height: 0;
-}
-
-.body-editor-line-numbers {
-  padding: 12px 8px 12px 12px;
-  border-right: 1px solid rgba(196, 188, 174, 0.55);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(240, 235, 228, 0.65));
-  color: var(--text-muted);
-  text-align: right;
-  font-family:
-    "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  user-select: none;
-  overflow: hidden;
-}
-
-.body-editor-stage {
   position: relative;
-  min-width: 0;
   min-height: 0;
 }
 
 .body-code-editor {
-  position: absolute;
-  inset: 0;
-  margin: 0;
+  min-width: 0;
   min-height: 0;
-  padding: 12px 14px;
-  overflow: hidden;
-  white-space: pre;
-  font-family:
-    "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  outline: none;
-  color: var(--text);
-  pointer-events: none;
+  height: 100%;
 }
 
 .body-code-input {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  min-height: 0;
-  margin: 0;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
   border: 0;
-  border-radius: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.body-code-editor .cm-editor {
+  height: 100%;
   background: transparent;
-  padding: 12px 14px;
-  resize: none;
+  color: var(--text);
+}
+
+.body-code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.body-code-editor .cm-scroller {
   overflow: auto;
-  white-space: pre;
-  color: transparent;
-  caret-color: var(--text);
-  -webkit-text-fill-color: transparent;
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 0.8rem;
   line-height: 1.5;
-  outline: none;
 }
 
-.body-code-input::selection {
-  background: rgba(37, 99, 235, 0.22);
-}
-
-.body-code-input::placeholder {
-  color: transparent;
-}
-
-.body-code-editor.is-empty::before {
-  content: attr(data-placeholder);
+.body-code-editor .cm-gutters {
+  border-right: 1px solid rgba(196, 188, 174, 0.55);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(240, 235, 228, 0.65));
   color: var(--text-muted);
 }
 
-.body-code-input.is-hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.body-editor-shell.is-collapsed .body-code-editor {
-  overflow: auto;
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.body-editor-shell.is-collapsed .body-code-input {
-  display: none;
-}
-
-.body-editor-shell.is-collapsed .body-editor-line-numbers {
+.body-editor-shell[data-mode="json-collapsed"] .body-code-editor .cm-gutters {
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.82), rgba(241, 245, 249, 0.92));
+}
+
+.body-code-editor .cm-gutter {
+  min-width: 0;
+}
+
+.body-code-editor .cm-gutterElement {
+  min-height: 1.5em;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.body-code-editor .cm-foldGutter,
+.body-code-editor .cm-body-fold-gutter {
+  width: 18px;
+}
+
+.body-code-editor .cm-body-fold-marker-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.body-code-editor .cm-body-fold-marker {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.body-code-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 26px;
+  padding: 0 8px 0 10px;
+  text-align: right;
+}
+
+.body-code-editor .cm-content,
+.body-code-editor .cm-line {
+  caret-color: var(--text);
+  white-space: pre;
+}
+
+.body-code-editor .cm-content {
+  min-height: calc(1.5em * 11);
+  padding: 12px 14px 12px 0;
+}
+
+.body-code-editor .cm-line {
+  padding: 0;
+}
+
+.body-code-editor .cm-placeholder {
+  color: var(--text-muted);
+}
+
+.body-code-editor .cm-cursor,
+.body-code-editor .cm-dropCursor {
+  border-left-color: var(--text);
+}
+
+.body-code-editor .cm-selectionBackground,
+.body-code-editor ::selection {
+  background: rgba(37, 99, 235, 0.22);
 }
 
 .body-code-editor .json-fold-placeholder {
@@ -623,10 +642,7 @@ textarea {
   border: 1px solid rgba(107, 114, 128, 0.14);
   border-radius: 999px;
   padding: 1px 7px;
-}
-
-.body-code-input:disabled {
-  cursor: not-allowed;
+  margin: 0 2px;
 }
 
 input[type="checkbox"] {
