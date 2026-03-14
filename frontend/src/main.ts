@@ -167,8 +167,6 @@ const VALID_UTILITY_PANEL_IDS = new Set([
 ]);
 
 const utilitySidebarBody = byId<HTMLElement>("appUtilitySidebarBody");
-const utilitySidebarToggle = byId<HTMLButtonElement>("utilitySidebarToggle");
-const utilitySidebarToggleText = byId<HTMLElement>("utilitySidebarToggleText");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
 const renameEnvironmentBtn = byId<HTMLButtonElement>("renameEnvironmentBtn");
@@ -280,14 +278,6 @@ const bodyEditorController = createBodyEditor({
 });
 
 function wireEvents(): void {
-  utilitySidebarToggle.addEventListener("click", () => {
-    setUtilitySidebarCollapsed(
-      !utilitySidebarCollapsed,
-      utilitySidebarLastPanelId ?? DEFAULT_UTILITY_PANEL_ID,
-    );
-    persistState();
-  });
-
   environmentSelect.addEventListener("change", () => {
     activeEnvironmentId = environmentSelect.value || null;
     syncEnvironmentEditor();
@@ -597,8 +587,6 @@ function setUtilitySidebarCollapsed(collapsed: boolean, panelId?: string | null)
   applyUtilitySidebarCollapsedState(
     document.documentElement,
     utilitySidebarBody,
-    utilitySidebarToggle,
-    utilitySidebarToggleText,
     utilitySidebarCollapsed,
   );
 }
@@ -858,7 +846,7 @@ function renderHeaderRows(): void {
     row.className = `header-row${header.enabled ? "" : " is-disabled"}`;
 
     const toggleLabel = document.createElement("label");
-    toggleLabel.className = "header-toggle";
+    toggleLabel.className = "header-toggle header-cell";
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.checked = header.enabled;
@@ -884,6 +872,9 @@ function renderHeaderRows(): void {
     keyInput.addEventListener("input", () => {
       patchHeaderRow(header.id, { key: keyInput.value });
     });
+    const keyCell = document.createElement("div");
+    keyCell.className = "header-input-cell header-cell";
+    keyCell.appendChild(keyInput);
 
     const valueInput = document.createElement("input");
     valueInput.className = "header-value-input";
@@ -894,9 +885,12 @@ function renderHeaderRows(): void {
     valueInput.addEventListener("input", () => {
       patchHeaderRow(header.id, { value: valueInput.value });
     });
+    const valueCell = document.createElement("div");
+    valueCell.className = "header-input-cell header-cell";
+    valueCell.appendChild(valueInput);
 
     const actions = document.createElement("div");
-    actions.className = "header-row-actions";
+    actions.className = "header-row-actions header-cell";
     actions.append(
       createHeaderActionButton(
         "＋",
@@ -919,7 +913,7 @@ function renderHeaderRows(): void {
       ),
     );
 
-    row.append(toggleLabel, keyInput, valueInput, actions);
+    row.append(toggleLabel, keyCell, valueCell, actions);
     fragment.appendChild(row);
   }
 

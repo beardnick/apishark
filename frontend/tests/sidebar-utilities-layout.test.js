@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("built sidebar utilities render as a collapsed slim rail by default", async () => {
+test("built sidebar utilities render as a collapsed slim rail driven by rail buttons", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 
   assert.match(
@@ -11,11 +11,9 @@ test("built sidebar utilities render as a collapsed slim rail by default", async
   );
   assert.match(html, /id="appUtilitySidebar"/);
   assert.match(html, /id="appUtilitySidebarBody" class="pm-sidebar-body" hidden/);
-  assert.match(
-    html,
-    /id="utilitySidebarToggle"[\s\S]*?aria-controls="appUtilitySidebarBody"[\s\S]*?aria-expanded="false"/,
-  );
-  assert.match(html, /id="utilitySidebarToggleText">Show utilities<\/span>/);
+  assert.doesNotMatch(html, /utilitySidebarToggle/);
+  assert.doesNotMatch(html, /Show utilities/);
+  assert.doesNotMatch(html, /Hide utilities/);
   assert.match(html, /activeUtilityPanelId/);
 
   for (const section of [
@@ -87,6 +85,28 @@ test("curl export uses a compact overlay instead of an inline request workbench 
   assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportPanel"/);
   assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportOverlay"/);
   assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportOutput"/);
+});
+
+test("request workspace topbar stays compact without descriptive chrome", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const topbarMatch = html.match(/<header class="pm-topbar">[\s\S]*?<\/header>/);
+
+  assert.ok(topbarMatch, "request workspace topbar should exist");
+  assert.match(topbarMatch[0], /class="workspace-kicker">HTTP workspace<\/span>/);
+  assert.match(topbarMatch[0], /class="topbar-label">Request<\/label>/);
+  assert.match(topbarMatch[0], /id="requestNameInput"/);
+  assert.doesNotMatch(topbarMatch[0], /Stream-aware request builder/);
+  assert.doesNotMatch(topbarMatch[0], /utilitySidebarToggle/);
+});
+
+test("headers panel keeps a compact table-style heading", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const headersPanelMatch = html.match(/<section id="headersPanel"[\s\S]*?<\/section>/);
+
+  assert.ok(headersPanelMatch, "headers panel should exist");
+  assert.match(headersPanelMatch[0], /class="panel-head headers-panel-head"/);
+  assert.match(headersPanelMatch[0], /class="headers-panel-copy"/);
+  assert.match(headersPanelMatch[0], /class="editor-grid-head"/);
 });
 
 test("built utility sidebar body contains only the four dedicated tool panels", async () => {

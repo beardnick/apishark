@@ -23,8 +23,6 @@ const VALID_UTILITY_PANEL_IDS = new Set([
     "pluginUtility",
 ]);
 const utilitySidebarBody = byId("appUtilitySidebarBody");
-const utilitySidebarToggle = byId("utilitySidebarToggle");
-const utilitySidebarToggleText = byId("utilitySidebarToggleText");
 const environmentSelect = byId("environmentSelect");
 const createEnvironmentBtn = byId("createEnvironmentBtn");
 const renameEnvironmentBtn = byId("renameEnvironmentBtn");
@@ -128,10 +126,6 @@ const bodyEditorController = createBodyEditor({
     },
 });
 function wireEvents() {
-    utilitySidebarToggle.addEventListener("click", () => {
-        setUtilitySidebarCollapsed(!utilitySidebarCollapsed, utilitySidebarLastPanelId ?? DEFAULT_UTILITY_PANEL_ID);
-        persistState();
-    });
     environmentSelect.addEventListener("change", () => {
         activeEnvironmentId = environmentSelect.value || null;
         syncEnvironmentEditor();
@@ -387,7 +381,7 @@ function setUtilitySidebarCollapsed(collapsed, panelId) {
     utilitySidebarLastPanelId = normalizedPanelId;
     utilitySectionsController.setActivePanel(collapsed ? null : normalizedPanelId);
     document.documentElement.setAttribute("data-active-utility", utilitySidebarLastPanelId);
-    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebarBody, utilitySidebarToggle, utilitySidebarToggleText, utilitySidebarCollapsed);
+    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebarBody, utilitySidebarCollapsed);
 }
 function handleUtilitySectionToggle(panelId) {
     if (panelId) {
@@ -596,7 +590,7 @@ function renderHeaderRows() {
         const row = document.createElement("div");
         row.className = `header-row${header.enabled ? "" : " is-disabled"}`;
         const toggleLabel = document.createElement("label");
-        toggleLabel.className = "header-toggle";
+        toggleLabel.className = "header-toggle header-cell";
         const toggle = document.createElement("input");
         toggle.type = "checkbox";
         toggle.checked = header.enabled;
@@ -621,6 +615,9 @@ function renderHeaderRows() {
         keyInput.addEventListener("input", () => {
             patchHeaderRow(header.id, { key: keyInput.value });
         });
+        const keyCell = document.createElement("div");
+        keyCell.className = "header-input-cell header-cell";
+        keyCell.appendChild(keyInput);
         const valueInput = document.createElement("input");
         valueInput.className = "header-value-input";
         valueInput.type = "text";
@@ -630,10 +627,13 @@ function renderHeaderRows() {
         valueInput.addEventListener("input", () => {
             patchHeaderRow(header.id, { value: valueInput.value });
         });
+        const valueCell = document.createElement("div");
+        valueCell.className = "header-input-cell header-cell";
+        valueCell.appendChild(valueInput);
         const actions = document.createElement("div");
-        actions.className = "header-row-actions";
+        actions.className = "header-row-actions header-cell";
         actions.append(createHeaderActionButton("＋", "Insert header below", () => insertHeaderAfter(header.id), requestIsLoading), createHeaderActionButton("⎘", "Duplicate header", () => duplicateHeader(header.id), requestIsLoading), createHeaderActionButton("✕", "Delete header", () => removeHeader(header.id), requestIsLoading, true));
-        row.append(toggleLabel, keyInput, valueInput, actions);
+        row.append(toggleLabel, keyCell, valueCell, actions);
         fragment.appendChild(row);
     }
     headersEditor.textContent = "";

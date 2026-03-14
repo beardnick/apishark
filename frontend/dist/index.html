@@ -245,28 +245,15 @@
         <header class="pm-topbar">
           <div class="pm-title-block">
             <span class="workspace-kicker">HTTP workspace</span>
-            <label for="requestNameInput" class="topbar-label">Request name</label>
+            <label for="requestNameInput" class="topbar-label">Request</label>
             <input
               id="requestNameInput"
               class="request-name-input"
               type="text"
               placeholder="Untitled Request"
             />
-            <p>Stream-aware request builder with JSON tools, environment variables, and SSE inspection.</p>
           </div>
           <div class="pm-topbar-actions">
-            <button
-              id="utilitySidebarToggle"
-              type="button"
-              class="secondary utility-sidebar-toggle"
-              aria-controls="appUtilitySidebarBody"
-              aria-expanded="false"
-              aria-label="Show utilities"
-              title="Show utilities"
-            >
-              <span class="action-symbol" aria-hidden="true">≡</span>
-              <span id="utilitySidebarToggleText">Show utilities</span>
-            </button>
             <button
               id="clearOutputBtn"
               type="button"
@@ -343,8 +330,8 @@
 
           <div class="pm-panel-stack">
             <section id="headersPanel" class="pm-panel is-active" data-tab-panel="request">
-              <div class="panel-head">
-                <div>
+              <div class="panel-head headers-panel-head">
+                <div class="headers-panel-copy">
                   <p class="panel-label">Headers</p>
                   <p class="hint compact">Disabled rows stay editable but won’t be sent.</p>
                 </div>
@@ -696,29 +683,18 @@
           document.documentElement.getAttribute("data-utilities-collapsed") === "true";
         const activeUtilityPanelId = document.documentElement.getAttribute("data-active-utility");
         const sidebar = document.getElementById("appUtilitySidebarBody");
-        const toggle = document.getElementById("utilitySidebarToggle");
-        const label = document.getElementById("utilitySidebarToggleText");
         const railButtons = document.querySelectorAll("[data-utility-rail]");
         const panels = document.querySelectorAll("[data-utility-panel]");
-        if (
-          !(sidebar instanceof HTMLElement) ||
-          !(toggle instanceof HTMLButtonElement) ||
-          !(label instanceof HTMLElement)
-        ) {
+        if (!(sidebar instanceof HTMLElement)) {
           return;
         }
 
-        const actionLabel = collapsed ? "Show utilities" : "Hide utilities";
         sidebar.hidden = collapsed;
         if (collapsed) {
           sidebar.setAttribute("aria-hidden", "true");
         } else {
           sidebar.removeAttribute("aria-hidden");
         }
-        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-        toggle.setAttribute("aria-label", actionLabel);
-        toggle.title = actionLabel;
-        label.textContent = actionLabel;
         for (const button of railButtons) {
           if (!(button instanceof HTMLButtonElement)) {
             continue;
