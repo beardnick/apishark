@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   analyzeBodyEditorText,
   collapseJSONText,
+  insertBodyEditorText,
+  resolveBodyEditorFoldTarget,
+  toggleBodyEditorFoldedPath,
   tokenizeBodyEditorText,
 } from "../dist/assets/body-editor.js";
 
@@ -78,4 +81,74 @@ test("analyzeBodyEditorText treats invalid JSON as plain text with no fold contr
   assert.equal(analysis.foldableBlockCount, 0);
   assert.equal(analysis.foldTargets.length, 0);
   assert.equal(analysis.lineCount, 1);
+});
+
+test("insertBodyEditorText dispatches inserted text only when the editor is editable", () => {
+  const dispatched = [];
+  const transaction = { changes: { insert: "\n" } };
+  const editableView = {
+    state: {
+      facet() {
+        return true;
+      },
+      replaceSelection(text) {
+        assert.equal(text, "\n");
+        return transaction;
+      },
+    },
+    dispatch(spec) {
+      dispatched.push(spec);
+    },
+  };
+
+  assert.equal(insertBodyEditorText(editableView, "\n"), true);
+  assert.deepEqual(dispatched, [transaction]);
+
+  const readOnlyView = {
+    state: {
+      facet() {
+        return false;
+      },
+      replaceSelection() {
+        throw new Error("replaceSelection should not be called for read-only editors");
+      },
+    },
+    dispatch() {
+      throw new Error("dispatch should not be called for read-only editors");
+    },
+  };
+
+  assert.equal(insertBodyEditorText(readOnlyView, "\n"), true);
+});
+
+test("toggleBodyEditorFoldedPath adds and removes a folded JSON path", () => {
+  assert.deepEqual(toggleBodyEditorFoldedPath([], "$.messages"), ["$.messages"]);
+  assert.deepEqual(toggleBodyEditorFoldedPath(["$.messages"], "$.messages"), []);
+  assert.deepEqual(
+    toggleBodyEditorFoldedPath(["$.messages"], "$.meta"),
+    ["$.messages", "$.meta"],
+  );
+});
+
+test("resolveBodyEditorFoldTarget prefers an explicit marker path before falling back to line selection", () => {
+  const foldTargets = [
+    { path: "$", lineFrom: 0 },
+    { path: "$.messages", lineFrom: 18 },
+    { path: "$.messages.0", lineFrom: 18 },
+  ];
+
+  assert.deepEqual(
+    resolveBodyEditorFoldTarget(foldTargets, {
+      path: "$.messages.0",
+      lineFrom: 18,
+    }),
+    { path: "$.messages.0", lineFrom: 18 },
+  );
+  assert.deepEqual(
+    resolveBodyEditorFoldTarget(foldTargets, {
+      lineFrom: 18,
+    }),
+    { path: "$.messages", lineFrom: 18 },
+  );
+  assert.equal(resolveBodyEditorFoldTarget(foldTargets, { path: "$.missing", lineFrom: 999 }), null);
 });

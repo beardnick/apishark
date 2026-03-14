@@ -128,7 +128,6 @@ type JsonRangePrimitiveNode = {
 type BodyEditorComputedState = {
   analysis: BodyEditorAnalysis;
   decorations: DecorationSet;
-  foldTargetsByLine: Map<number, BodyEditorFoldTarget>;
 };
 
 const setFoldedPathsEffect = StateEffect.define<readonly string[]>();
@@ -334,6 +333,55 @@ export function analyzeBodyEditorText(text: string, foldedPaths: Iterable<string
   };
 }
 
+export function insertBodyEditorText(
+  view: Pick<EditorView, "state" | "dispatch">,
+  text: string,
+): boolean {
+  if (!view.state.facet(EditorView.editable)) {
+    return true;
+  }
+
+  view.dispatch(view.state.replaceSelection(text));
+  return true;
+}
+
+export function toggleBodyEditorFoldedPath(foldedPaths: Iterable<string>, path: string): string[] {
+  const nextPaths = new Set(foldedPaths);
+  if (nextPaths.has(path)) {
+    nextPaths.delete(path);
+  } else {
+    nextPaths.add(path);
+  }
+
+  return [...nextPaths];
+}
+
+export function resolveBodyEditorFoldTarget<T extends Pick<BodyEditorFoldTarget, "path" | "lineFrom">>(
+  foldTargets: Iterable<T>,
+  options: {
+    path?: string | null;
+    lineFrom?: number | null;
+  },
+): T | null {
+  if (options.path) {
+    for (const target of foldTargets) {
+      if (target.path === options.path) {
+        return target;
+      }
+    }
+  }
+
+  if (typeof options.lineFrom === "number") {
+    for (const target of foldTargets) {
+      if (target.lineFrom === options.lineFrom) {
+        return target;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function collapseJSONText(text: string): string | null {
   const projection = buildBodyEditorProjection(text, true);
   return projection;
@@ -443,35 +491,41 @@ function bodyEditorFoldGutter(): Extension {
 
       for (const target of computed.analysis.foldTargets) {
         const isFolded = computed.analysis.foldedPaths.includes(target.path);
-        ranges.push(new FoldGutterMarker(isFolded).range(target.lineFrom));
+        ranges.push(new FoldGutterMarker(target.path, isFolded).range(target.lineFrom));
       }
 
       return RangeSet.of(ranges, true);
     },
     initialSpacer() {
-      return new FoldGutterMarker(false);
+      return new FoldGutterMarker("", false);
     },
     lineMarkerChange(update) {
       return update.docChanged || hasFoldChange(update.transactions);
     },
     domEventHandlers: {
       mousedown(view, line, event) {
-        const target = view.state.field(bodyEditorComputedField).foldTargetsByLine.get(line.from);
-        if (!target || !view.state.facet(EditorView.editable)) {
+        if (!view.state.facet(EditorView.editable)) {
+          return false;
+        }
+
+        const computed = view.state.field(bodyEditorComputedField);
+        const targetPath =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>("[data-fold-target-path]")?.dataset.foldTargetPath
+            : null;
+        const target = resolveBodyEditorFoldTarget(computed.analysis.foldTargets, {
+          path: targetPath,
+          lineFrom: line.from,
+        });
+        if (!target) {
           return false;
         }
 
         event.preventDefault();
-        const computed = view.state.field(bodyEditorComputedField);
-        const foldedPaths = new Set(computed.analysis.foldedPaths);
-        if (foldedPaths.has(target.path)) {
-          foldedPaths.delete(target.path);
-        } else {
-          foldedPaths.add(target.path);
-        }
-
         view.dispatch({
-          effects: setFoldedPathsEffect.of([...foldedPaths]),
+          effects: setFoldedPathsEffect.of(
+            toggleBodyEditorFoldedPath(computed.analysis.foldedPaths, target.path),
+          ),
         });
         return true;
       },
@@ -482,14 +536,21 @@ function bodyEditorFoldGutter(): Extension {
 function bodyEditorKeymap(): Extension {
   return keymap.of([
     {
+      key: "Enter",
+      run(view) {
+        return insertBodyEditorText(view, "\n");
+      },
+    },
+    {
+      key: "Shift-Enter",
+      run(view) {
+        return insertBodyEditorText(view, "\n");
+      },
+    },
+    {
       key: "Tab",
       run(view) {
-        if (!view.state.facet(EditorView.editable)) {
-          return true;
-        }
-
-        view.dispatch(view.state.replaceSelection("  "));
-        return true;
+        return insertBodyEditorText(view, "  ");
       },
     },
   ]);
@@ -497,12 +558,6 @@ function bodyEditorKeymap(): Extension {
 
 function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEditorComputedState {
   const analysis = analyzeBodyEditorText(text, foldedPaths);
-  const foldTargetsByLine = new Map<number, BodyEditorFoldTarget>();
-
-  for (const target of analysis.foldTargets) {
-    foldTargetsByLine.set(target.lineFrom, target);
-  }
-
   const foldedPathSet = new Set(analysis.foldedPaths);
   const ranges: Range<Decoration>[] = [];
 
@@ -532,7 +587,6 @@ function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEd
   return {
     analysis,
     decorations: Decoration.set(ranges, true),
-    foldTargetsByLine,
   };
 }
 
@@ -960,21 +1014,24 @@ class FoldPlaceholderWidget extends WidgetType {
 
 class FoldGutterMarker extends GutterMarker {
   readonly elementClass = "cm-body-fold-marker-wrap";
+  private readonly path: string;
   private readonly folded: boolean;
 
-  constructor(folded: boolean) {
+  constructor(path: string, folded: boolean) {
     super();
+    this.path = path;
     this.folded = folded;
   }
 
   eq(other: FoldGutterMarker): boolean {
-    return other.folded === this.folded;
+    return other.path === this.path && other.folded === this.folded;
   }
 
   toDOM(): HTMLElement {
     const element = document.createElement("span");
     element.className = "cm-body-fold-marker";
     element.textContent = this.folded ? "▸" : "▾";
+    element.dataset.foldTargetPath = this.path;
     element.setAttribute("aria-hidden", "true");
     return element;
   }
