@@ -289,8 +289,8 @@
                     id="bodyCollapseBtn"
                     type="button"
                     class="ghost body-toolbar-btn"
-                    aria-label="Collapse body"
-                    title="Collapse all"
+                    aria-label="Collapse body JSON"
+                    title="Collapse nested JSON blocks"
                   >
                     <span class="action-symbol" aria-hidden="true">−</span>
                     <span>Collapse</span>
@@ -299,8 +299,8 @@
                     id="bodyExpandBtn"
                     type="button"
                     class="ghost body-toolbar-btn"
-                    aria-label="Expand body"
-                    title="Expand all"
+                    aria-label="Expand body JSON"
+                    title="Expand all collapsed JSON blocks"
                   >
                     <span class="action-symbol" aria-hidden="true">+</span>
                     <span>Expand</span>
@@ -329,29 +329,28 @@
               </div>
 
               <div id="bodyEditorShell" class="body-editor-shell">
+                <div id="bodyEditorBanner" class="body-editor-banner" aria-live="polite">
+                  <span id="bodyEditorModeBadge" class="body-editor-mode-badge">Plain text</span>
+                  <p id="bodyEditorHint" class="body-editor-hint">
+                    Paste valid JSON to enable folding.
+                  </p>
+                </div>
                 <div class="body-editor-frame">
                   <div
-                    id="bodyEditorLineNumbers"
-                    class="body-editor-line-numbers"
-                    aria-hidden="true"
+                    id="bodyEditor"
+                    class="body-code-editor"
+                    data-placeholder='{"stream": true, "messages": []}'
                   ></div>
-                  <div class="body-editor-stage">
-                    <pre
-                      id="bodyEditor"
-                      class="body-code-editor"
-                      aria-hidden="true"
-                      data-placeholder='{"stream": true, "messages": []}'
-                    ></pre>
-                    <textarea
-                      id="bodyInput"
-                      class="body-code-input"
-                      rows="11"
-                      wrap="off"
-                      placeholder='{"stream": true, "messages": []}'
-                      spellcheck="false"
-                      aria-labelledby="bodyEditorLabel"
-                    ></textarea>
-                  </div>
+                  <textarea
+                    id="bodyInput"
+                    class="body-code-input"
+                    rows="11"
+                    wrap="off"
+                    placeholder='{"stream": true, "messages": []}'
+                    spellcheck="false"
+                    aria-hidden="true"
+                    tabindex="-1"
+                  ></textarea>
                 </div>
               </div>
             </section>
@@ -551,6 +550,16 @@
       </aside>
     </div>
 
+    <script type="importmap">
+      {
+        "imports": {
+          "@codemirror/state": "/assets/vendor/codemirror-state.js",
+          "@codemirror/view": "/assets/vendor/codemirror-view.js",
+          "style-mod": "/assets/vendor/style-mod.js",
+          "w3c-keyname": "/assets/vendor/w3c-keyname.js"
+        }
+      }
+    </script>
     <script type="module" src="/assets/main.js"></script>
   </body>
 </html>

@@ -6,9 +6,13 @@ const watchMode = process.argv.includes("--watch");
 const tscBin = "./node_modules/typescript/lib/tsc.js";
 
 async function copyAssets() {
-  await mkdir("dist/assets", { recursive: true });
+  await mkdir("dist/assets/vendor", { recursive: true });
   await cp("src/index.html", "dist/index.html");
   await cp("src/styles.css", "dist/assets/main.css");
+  await cp("node_modules/@codemirror/state/dist/index.js", "dist/assets/vendor/codemirror-state.js");
+  await cp("node_modules/@codemirror/view/dist/index.js", "dist/assets/vendor/codemirror-view.js");
+  await cp("node_modules/style-mod/src/style-mod.js", "dist/assets/vendor/style-mod.js");
+  await cp("node_modules/w3c-keyname/index.js", "dist/assets/vendor/w3c-keyname.js");
 }
 
 function runTsc(args) {

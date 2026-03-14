@@ -1,4 +1,4 @@
-import { renderBodyEditor, resolveBodyEditorRenderOptions, } from "./body-editor.js";
+import { createBodyEditor, } from "./body-editor.js";
 import { prettifyJSONText, renderJSONText, renderJSONValue, } from "./json-view.js";
 import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragment, isAggregateTextFragment, normalizeAggregateFragments, trimAggregateFragments, } from "./aggregate-fragments.js";
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
@@ -30,8 +30,9 @@ const urlInput = byId("urlInput");
 const addHeaderBtn = byId("addHeaderBtn");
 const headersEditor = byId("headersEditor");
 const bodyEditorShell = byId("bodyEditorShell");
+const bodyEditorModeBadge = byId("bodyEditorModeBadge");
+const bodyEditorHint = byId("bodyEditorHint");
 const bodyInput = byId("bodyInput");
-const bodyEditorLineNumbers = byId("bodyEditorLineNumbers");
 const bodyEditor = byId("bodyEditor");
 const copyBodyBtn = byId("copyBodyBtn");
 const bodyPrettifyBtn = byId("bodyPrettifyBtn");
@@ -92,13 +93,24 @@ let activeSavedRequestId = null;
 let draftAutosaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
-let bodyEditorCollapsed = false;
 let bodyEditorHasJSON = false;
 let rawJsonController = null;
 let ssePayloadJsonController = null;
 let sseLineEntries = [];
 let selectedSseLine = null;
 let sseLineCounter = 0;
+const bodyEditorController = createBodyEditor({
+    parent: bodyEditor,
+    input: bodyInput,
+    ariaLabelledBy: "bodyEditorLabel",
+    editable: !requestIsLoading,
+    onStateChange: (event) => {
+        syncBodyEditor();
+        if (event.reason === "doc" && event.source === "user") {
+            markRequestEditorChanged();
+        }
+    },
+});
 function wireEvents() {
     environmentSelect.addEventListener("change", () => {
         activeEnvironmentId = environmentSelect.value || null;
@@ -149,62 +161,6 @@ function wireEvents() {
         headerRows.push(createEmptyHeaderRow());
         renderHeaderRows();
         markRequestEditorChanged();
-    });
-    bodyInput.addEventListener("focus", () => {
-        syncBodyEditor();
-    });
-    bodyInput.addEventListener("blur", () => {
-        window.setTimeout(() => {
-            syncBodyEditor();
-        }, 0);
-    });
-    bodyInput.addEventListener("input", () => {
-        handleBodyEditorInput();
-    });
-    bodyInput.addEventListener("scroll", () => {
-        syncBodyEditorScroll();
-    });
-    bodyEditor.addEventListener("scroll", () => {
-        if (!bodyEditorCollapsed) {
-            return;
-        }
-        bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
-    });
-    bodyEditorLineNumbers.addEventListener("click", () => {
-        if (!requestIsLoading) {
-            focusBodyEditor();
-        }
-    });
-    bodyEditor.addEventListener("click", () => {
-        if (bodyEditorCollapsed && !requestIsLoading) {
-            expandBodyJSON();
-            focusBodyEditor();
-        }
-    });
-    bodyInput.addEventListener("keydown", (event) => {
-        if (requestIsLoading) {
-            event.preventDefault();
-            return;
-        }
-        if (event.key === "Tab") {
-            event.preventDefault();
-            insertTextAtTextAreaSelection(bodyInput, "  ");
-            handleBodyEditorInput();
-            return;
-        }
-    });
-    bodyInput.addEventListener("paste", (event) => {
-        if (requestIsLoading) {
-            event.preventDefault();
-            return;
-        }
-        const text = event.clipboardData?.getData("text/plain");
-        if (typeof text !== "string") {
-            return;
-        }
-        event.preventDefault();
-        insertTextAtTextAreaSelection(bodyInput, text);
-        handleBodyEditorInput();
     });
     copyBodyBtn.addEventListener("click", () => {
         void copyRequestBody();
@@ -310,7 +266,7 @@ function applyInitialState() {
     methodInput.value = state.method;
     urlInput.value = state.url;
     headerRows = normalizeHeaderRows(state.headers);
-    bodyInput.value = state.bodyText;
+    setBodyEditorText(state.bodyText);
     renderPluginOptionsIntoSelect(aggregationPluginInput, state.useCollectionAggregationPlugin
         ? REQUEST_AGGREGATION_USE_COLLECTION
         : resolveAggregationPluginId(state.aggregationPlugin, state.aggregateOpenAISse), true);
@@ -318,7 +274,6 @@ function applyInitialState() {
     requestDrafts = state.requestDrafts;
     activeCollectionId = state.activeCollectionId;
     activeSavedRequestId = state.activeSavedRequestId;
-    bodyEditorCollapsed = false;
     renderEnvironmentControls();
     renderHeaderRows();
     syncBodyEditor();
@@ -454,11 +409,10 @@ function applyEditorDraft(draft) {
     requestNameInput.value = draft.name;
     methodInput.value = draft.method || "GET";
     urlInput.value = draft.url;
-    bodyInput.value = draft.body;
+    setBodyEditorText(draft.body);
     aggregationPluginInput.value = resolveAggregationPluginId(draft.aggregation_plugin, draft.aggregate_openai_sse);
     timeoutInput.value = String(draft.timeout_seconds || 120);
     headerRows = normalizeHeaderRows(draft.headers);
-    bodyEditorCollapsed = false;
     renderHeaderRows();
     syncBodyEditor();
 }
@@ -697,83 +651,65 @@ function removeHeader(id) {
     renderHeaderRows();
     markRequestEditorChanged();
 }
-function insertTextAtTextAreaSelection(element, text) {
-    const start = element.selectionStart ?? 0;
-    const end = element.selectionEnd ?? start;
-    element.setRangeText(text, start, end, "end");
+function syncBodyEditor() {
+    const result = bodyEditorController.getSnapshot();
+    bodyEditorHasJSON = result.hasJSON;
+    bodyEditorShell.classList.toggle("has-json", result.hasJSON);
+    bodyEditorShell.classList.toggle("is-collapsed", result.hasFoldedBlocks);
+    syncBodyEditorBanner(result);
+    bodyEditor.setAttribute("aria-disabled", requestIsLoading ? "true" : "false");
+    bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.foldableBlockCount === 0 || result.isFullyCollapsed;
+    bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.hasFoldedBlocks;
 }
-function renderBodyEditorLineNumbers(lineCount) {
-    const lines = Math.max(1, lineCount);
-    bodyEditorLineNumbers.textContent = Array.from({ length: lines }, (_, index) => String(index + 1)).join("\n");
-}
-function syncBodyEditorScroll() {
-    if (bodyEditorCollapsed) {
-        bodyEditorLineNumbers.scrollTop = bodyEditor.scrollTop;
+function syncBodyEditorBanner(result) {
+    if (!result.hasJSON) {
+        bodyEditorShell.dataset.mode = "plain";
+        bodyEditorModeBadge.textContent = "Plain text";
+        bodyEditorHint.textContent = bodyInput.value.trim()
+            ? "Valid JSON unlocks folding and prettify helpers."
+            : "Paste valid JSON to enable folding.";
         return;
     }
-    bodyEditor.scrollTop = bodyInput.scrollTop;
-    bodyEditor.scrollLeft = bodyInput.scrollLeft;
-    bodyEditorLineNumbers.scrollTop = bodyInput.scrollTop;
-}
-function syncBodyEditor() {
-    const result = renderBodyEditor(bodyEditor, bodyInput.value, resolveBodyEditorRenderOptions({
-        requestedCollapsed: bodyEditorCollapsed,
-        isActive: document.activeElement === bodyInput,
-        requestIsLoading,
-    }));
-    bodyEditorHasJSON = result.hasJSON;
-    if (!result.hasJSON) {
-        bodyEditorCollapsed = false;
+    if (result.hasFoldedBlocks) {
+        bodyEditorShell.dataset.mode = "json-collapsed";
+        bodyEditorModeBadge.textContent = "JSON folded";
+        bodyEditorHint.textContent = requestIsLoading
+            ? "Request is running. Folding is preserved while editing is temporarily disabled."
+            : "Use gutter toggles for per-block folding, or Expand to open every JSON block.";
+        return;
     }
-    bodyEditorShell.classList.toggle("has-json", result.hasJSON);
-    bodyEditorShell.classList.toggle("is-collapsed", result.isCollapsedView);
-    bodyInput.classList.toggle("is-hidden", result.isCollapsedView);
-    bodyInput.readOnly = result.isCollapsedView || requestIsLoading;
-    bodyInput.tabIndex = result.isCollapsedView || requestIsLoading ? -1 : 0;
-    bodyEditor.setAttribute("aria-hidden", result.isCollapsedView ? "false" : "true");
-    bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading;
-    bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading;
-    renderBodyEditorLineNumbers(result.lineCount);
-    syncBodyEditorScroll();
-}
-function handleBodyEditorInput() {
-    syncBodyEditor();
-    markRequestEditorChanged();
+    bodyEditorShell.dataset.mode = "json-expanded";
+    bodyEditorModeBadge.textContent = "Editing JSON";
+    bodyEditorHint.textContent = requestIsLoading
+        ? "Request is running. Editing is temporarily disabled."
+        : "Use gutter toggles for nested JSON, Collapse to fold all, or Prettify to normalize formatting.";
 }
 function focusBodyEditor(selectAll = false) {
     if (requestIsLoading) {
         return;
     }
-    if (bodyEditorCollapsed) {
-        expandBodyJSON();
-    }
-    bodyInput.focus();
-    if (selectAll) {
-        bodyInput.select();
-    }
+    bodyEditorController.focus(selectAll);
+}
+function setBodyEditorText(text) {
+    bodyEditorController.setText(text);
     syncBodyEditor();
 }
 function collapseBodyJSON() {
     if (!bodyEditorHasJSON || requestIsLoading) {
         return;
     }
-    bodyEditorCollapsed = true;
-    syncBodyEditor();
+    bodyEditorController.collapseAll();
 }
 function expandBodyJSON() {
-    bodyEditorCollapsed = false;
-    syncBodyEditor();
+    bodyEditorController.expandAll();
 }
 function prettifyBodyJSON() {
-    const pretty = prettifyJSONText(bodyInput.value);
+    const pretty = bodyEditorController.prettify();
     if (!pretty) {
         setError("Request body is not valid JSON.");
         return;
     }
     setError("");
-    bodyInput.value = pretty;
-    bodyEditorCollapsed = false;
-    syncBodyEditor();
     markRequestEditorChanged();
 }
 async function importCurl() {
@@ -799,8 +735,7 @@ async function importCurl() {
         methodInput.value = parsed.method || "GET";
         urlInput.value = parsed.url || "";
         headerRows = normalizeHeaderRows((parsed.headers || []).map((header) => ({ ...header, enabled: true })));
-        bodyInput.value = parsed.body || "";
-        bodyEditorCollapsed = false;
+        setBodyEditorText(parsed.body || "");
         activeSavedRequestId = null;
         renderHeaderRows();
         syncBodyEditor();
@@ -2049,6 +1984,7 @@ function setLoading(isLoading) {
     methodInput.disabled = isLoading;
     urlInput.disabled = isLoading;
     bodyInput.disabled = isLoading;
+    bodyEditorController.setEditable(!isLoading);
     bodyEditor.setAttribute("aria-disabled", isLoading ? "true" : "false");
     timeoutInput.disabled = isLoading;
     aggregationPluginInput.disabled = isLoading;
@@ -2057,8 +1993,6 @@ function setLoading(isLoading) {
     copyRawResponseBtn.disabled = isLoading;
     copyAggregateResponseBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
-    bodyCollapseBtn.disabled = isLoading || !bodyEditorHasJSON;
-    bodyExpandBtn.disabled = isLoading || !bodyEditorHasJSON;
     abortBtn.disabled = !isLoading;
     sendBtn.textContent = isLoading ? "Sending..." : "Send";
     syncEnvironmentEditor();
