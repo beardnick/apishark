@@ -201,7 +201,7 @@ const timeoutInput = byId<HTMLInputElement>("timeoutInput");
 const exportCurlBtn = byId<HTMLButtonElement>("exportCurlBtn");
 const copyExportCurlBtn = byId<HTMLButtonElement>("copyExportCurlBtn");
 const closeExportCurlBtn = byId<HTMLButtonElement>("closeExportCurlBtn");
-const curlExportPanel = byId<HTMLElement>("curlExportPanel");
+const curlExportOverlay = byId<HTMLElement>("curlExportOverlay");
 const curlExportOutput = byId<HTMLTextAreaElement>("curlExportOutput");
 const sendBtn = byId<HTMLButtonElement>("sendBtn");
 const abortBtn = byId<HTMLButtonElement>("abortBtn");
@@ -329,7 +329,13 @@ function wireEvents(): void {
   });
 
   closeExportCurlBtn.addEventListener("click", () => {
-    hideCurlExport();
+    hideCurlExport(true);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !curlExportOverlay.hidden) {
+      hideCurlExport(true);
+    }
   });
 
   sendBtn.addEventListener("click", () => {
@@ -2736,11 +2742,18 @@ function getCurrentRequestDraft(): {
 
 function showCurlExport(command: string): void {
   curlExportOutput.value = command;
-  curlExportPanel.classList.remove("is-hidden");
+  curlExportOverlay.hidden = false;
+  curlExportOverlay.setAttribute("aria-hidden", "false");
+  exportCurlBtn.setAttribute("aria-expanded", "true");
 }
 
-function hideCurlExport(): void {
-  curlExportPanel.classList.add("is-hidden");
+function hideCurlExport(restoreFocus = false): void {
+  curlExportOverlay.hidden = true;
+  curlExportOverlay.setAttribute("aria-hidden", "true");
+  exportCurlBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    exportCurlBtn.focus();
+  }
 }
 
 async function writeClipboardText(text: string): Promise<boolean> {

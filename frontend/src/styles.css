@@ -436,16 +436,6 @@ html[data-utilities-collapsed="true"] .utility-sidebar-toggle {
   flex: 1 1 160px;
 }
 
-.request-export-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: linear-gradient(180deg, rgba(245, 247, 251, 0.78), rgba(255, 255, 255, 0.72));
-}
-
 .request-actions {
   justify-content: flex-end;
 }
@@ -453,6 +443,34 @@ html[data-utilities-collapsed="true"] .utility-sidebar-toggle {
 .compact-btn {
   min-height: 32px;
   padding-inline: 10px;
+}
+
+.curl-export-overlay {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 50;
+  width: min(460px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.curl-export-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid rgba(196, 188, 174, 0.86);
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.96);
+  box-shadow:
+    0 24px 56px rgba(15, 23, 42, 0.18),
+    0 8px 20px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+}
+
+.curl-export-output {
+  min-height: 132px;
+  max-height: min(40vh, 360px);
 }
 
 .workspace-row-heading {
@@ -1598,6 +1616,14 @@ button.ghost:hover:not(:disabled) {
 
   .request-actions > button {
     flex: 1 1 0;
+  }
+
+  .curl-export-overlay {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
   }
 
 .pm-topbar,

@@ -57,7 +57,7 @@ const timeoutInput = byId("timeoutInput");
 const exportCurlBtn = byId("exportCurlBtn");
 const copyExportCurlBtn = byId("copyExportCurlBtn");
 const closeExportCurlBtn = byId("closeExportCurlBtn");
-const curlExportPanel = byId("curlExportPanel");
+const curlExportOverlay = byId("curlExportOverlay");
 const curlExportOutput = byId("curlExportOutput");
 const sendBtn = byId("sendBtn");
 const abortBtn = byId("abortBtn");
@@ -165,7 +165,12 @@ function wireEvents() {
         void copyExportedCurl();
     });
     closeExportCurlBtn.addEventListener("click", () => {
-        hideCurlExport();
+        hideCurlExport(true);
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !curlExportOverlay.hidden) {
+            hideCurlExport(true);
+        }
     });
     sendBtn.addEventListener("click", () => {
         void sendRequest();
@@ -2155,10 +2160,17 @@ function getCurrentRequestDraft() {
 }
 function showCurlExport(command) {
     curlExportOutput.value = command;
-    curlExportPanel.classList.remove("is-hidden");
+    curlExportOverlay.hidden = false;
+    curlExportOverlay.setAttribute("aria-hidden", "false");
+    exportCurlBtn.setAttribute("aria-expanded", "true");
 }
-function hideCurlExport() {
-    curlExportPanel.classList.add("is-hidden");
+function hideCurlExport(restoreFocus = false) {
+    curlExportOverlay.hidden = true;
+    curlExportOverlay.setAttribute("aria-hidden", "true");
+    exportCurlBtn.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+        exportCurlBtn.focus();
+    }
 }
 async function writeClipboardText(text) {
     if (!navigator.clipboard?.writeText) {

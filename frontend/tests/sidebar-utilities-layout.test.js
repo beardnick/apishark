@@ -69,6 +69,26 @@ test("effective aggregation status lives in the plugin utility panel instead of 
   assert.doesNotMatch(requestWorkbenchMatch[0], /id="effectiveAggregationText"/);
 });
 
+test("curl export uses a compact overlay instead of an inline request workbench panel", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const requestWorkbenchMatch = html.match(
+    /<section id="requestWorkbench"[\s\S]*?<\/section>\s*<section id="responseWorkbench"/,
+  );
+
+  assert.ok(requestWorkbenchMatch, "request workbench should exist");
+  assert.match(
+    html,
+    /id="exportCurlBtn"[\s\S]*?aria-controls="curlExportOverlay"[\s\S]*?aria-expanded="false"[\s\S]*?aria-haspopup="dialog"/,
+  );
+  assert.match(
+    html,
+    /<div[\s\S]*?id="curlExportOverlay"[\s\S]*?hidden[\s\S]*?<section[\s\S]*?class="curl-export-card"[\s\S]*?id="copyExportCurlBtn"[\s\S]*?id="curlExportOutput"/,
+  );
+  assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportPanel"/);
+  assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportOverlay"/);
+  assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportOutput"/);
+});
+
 test("built utility sidebar body contains only the four dedicated tool panels", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const sidebarBodyMatch = html.match(

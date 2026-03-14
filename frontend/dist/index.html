@@ -291,7 +291,16 @@
             </select>
             <input id="urlInput" type="text" placeholder="https://example.com/path" />
             <div class="request-actions">
-              <button id="exportCurlBtn" type="button" class="secondary">Export cURL</button>
+              <button
+                id="exportCurlBtn"
+                type="button"
+                class="secondary"
+                aria-controls="curlExportOverlay"
+                aria-expanded="false"
+                aria-haspopup="dialog"
+              >
+                Export cURL
+              </button>
               <button id="sendBtn" type="button" class="send-btn">Send</button>
               <button id="abortBtn" type="button" class="secondary">Abort</button>
             </div>
@@ -312,34 +321,6 @@
             </label>
           </div>
           <p id="draftStatusText" class="hint compact draft-status"></p>
-
-          <section id="curlExportPanel" class="request-export-panel is-hidden">
-            <div class="panel-head">
-              <div>
-                <p class="panel-label">cURL export</p>
-                <p class="hint compact">Generated from the current editor state without env interpolation.</p>
-              </div>
-              <div class="panel-tools">
-                <button id="copyExportCurlBtn" type="button" class="secondary compact-btn">Copy</button>
-                <button
-                  id="closeExportCurlBtn"
-                  type="button"
-                  class="ghost icon-btn toolbar-icon-btn"
-                  aria-label="Hide cURL export"
-                  title="Hide cURL export"
-                >
-                  <span class="action-symbol" aria-hidden="true">×</span>
-                </button>
-              </div>
-            </div>
-            <textarea
-              id="curlExportOutput"
-              rows="6"
-              readonly
-              spellcheck="false"
-              aria-label="Generated cURL command"
-            ></textarea>
-          </section>
 
           <div class="pm-tabs" role="tablist" aria-label="Request editor tabs">
             <button
@@ -656,6 +637,47 @@
         </p>
         <div id="collectionsList" class="collections-list"></div>
       </aside>
+    </div>
+
+    <div
+      id="curlExportOverlay"
+      class="curl-export-overlay"
+      hidden
+      aria-hidden="true"
+    >
+      <section
+        class="curl-export-card"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="curlExportTitle"
+      >
+        <div class="panel-head">
+          <div>
+            <p id="curlExportTitle" class="panel-label">cURL export</p>
+            <p class="hint compact">Generated from the current editor state without env interpolation.</p>
+          </div>
+          <div class="panel-tools">
+            <button id="copyExportCurlBtn" type="button" class="secondary compact-btn">Copy</button>
+            <button
+              id="closeExportCurlBtn"
+              type="button"
+              class="ghost icon-btn toolbar-icon-btn"
+              aria-label="Hide cURL export"
+              title="Hide cURL export"
+            >
+              <span class="action-symbol" aria-hidden="true">×</span>
+            </button>
+          </div>
+        </div>
+        <textarea
+          id="curlExportOutput"
+          class="curl-export-output"
+          rows="6"
+          readonly
+          spellcheck="false"
+          aria-label="Generated cURL command"
+        ></textarea>
+      </section>
     </div>
 
     <script type="importmap">
