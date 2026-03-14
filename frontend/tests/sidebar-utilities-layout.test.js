@@ -22,6 +22,25 @@ test("built sidebar utilities render as collapsed disclosures by default", async
   }
 });
 
+test("utility section headers stay single-line and omit collapsed helper copy", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+
+  for (const [toggleId, title] of [
+    ["environmentSectionToggle", "Environments"],
+    ["helperSectionToggle", "Variable helpers"],
+    ["importSectionToggle", "Import with cURL"],
+    ["pluginSectionToggle", "Aggregation plugins"],
+  ]) {
+    const buttonMatch = html.match(new RegExp(`<button[^>]*id="${toggleId}"[\\s\\S]*?<\\/button>`));
+    assert.ok(buttonMatch, `${toggleId} should exist`);
+    assert.match(buttonMatch[0], new RegExp(`class="utility-section-title">${title}</span>`));
+    assert.match(buttonMatch[0], /class="utility-section-chevron"/);
+    assert.doesNotMatch(buttonMatch[0], /utility-section-caption/);
+  }
+
+  assert.doesNotMatch(html, /Open only the helpers you need and keep the request editor centered/);
+});
+
 test("effective aggregation status lives in the plugin utility panel instead of the request workbench", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const pluginSectionMatch = html.match(/<div id="pluginSection"[\s\S]*?<\/div>\s*<\/section>/);
