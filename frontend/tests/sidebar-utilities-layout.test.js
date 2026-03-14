@@ -5,6 +5,15 @@ import test from "node:test";
 test("built sidebar utilities render as collapsed disclosures by default", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 
+  assert.match(html, /<html lang="en" data-utilities-collapsed="true">/);
+  assert.match(html, /id="appUtilitySidebar"/);
+  assert.match(
+    html,
+    /id="utilitySidebarToggle"[\s\S]*?aria-controls="appUtilitySidebar"[\s\S]*?aria-expanded="false"/,
+  );
+  assert.match(html, /id="utilitySidebarToggleText">Show utilities<\/span>/);
+  assert.match(html, /sidebarCollapsed/);
+
   for (const section of [
     ["environmentSectionToggle", "environmentSection"],
     ["helperSectionToggle", "helperSection"],

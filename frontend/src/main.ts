@@ -48,6 +48,10 @@ import {
   type RequestLibraryDraft,
 } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
+import {
+  applyUtilitySidebarCollapsedState,
+  normalizeUtilitySidebarCollapsed,
+} from "./utility-sidebar.js";
 import { setupUtilitySections } from "./utility-sections.js";
 
 type HeaderKV = {
@@ -67,6 +71,7 @@ type EnvironmentEntry = {
 };
 
 type PersistedState = {
+  sidebarCollapsed: boolean;
   requestName: string;
   environments: EnvironmentEntry[];
   activeEnvironmentId: string | null;
@@ -150,6 +155,9 @@ const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
 
+const utilitySidebar = byId<HTMLElement>("appUtilitySidebar");
+const utilitySidebarToggle = byId<HTMLButtonElement>("utilitySidebarToggle");
+const utilitySidebarToggleText = byId<HTMLElement>("utilitySidebarToggleText");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
 const renameEnvironmentBtn = byId<HTMLButtonElement>("renameEnvironmentBtn");
@@ -239,6 +247,9 @@ let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
 let sseLineCounter = 0;
+let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(
+  document.documentElement.getAttribute("data-utilities-collapsed") === "true",
+);
 
 const bodyEditorController = createBodyEditor({
   parent: bodyEditor,
@@ -254,6 +265,11 @@ const bodyEditorController = createBodyEditor({
 });
 
 function wireEvents(): void {
+  utilitySidebarToggle.addEventListener("click", () => {
+    setUtilitySidebarCollapsed(!utilitySidebarCollapsed);
+    persistState();
+  });
+
   environmentSelect.addEventListener("change", () => {
     activeEnvironmentId = environmentSelect.value || null;
     syncEnvironmentEditor();
@@ -402,6 +418,7 @@ function defaultState(): PersistedState {
     "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com",
   );
   return {
+    sidebarCollapsed: true,
     requestName: "Streaming Chat Request",
     environments: [defaultEnvironment],
     activeEnvironmentId: defaultEnvironment.id,
@@ -433,6 +450,7 @@ function defaultState(): PersistedState {
 
 function applyInitialState(): void {
   const state = loadState();
+  setUtilitySidebarCollapsed(state.sidebarCollapsed);
   requestNameInput.value = state.requestName;
   environments = normalizeEnvironments(state.environments);
   activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -482,6 +500,7 @@ function loadState(): PersistedState {
         : fallback.environments;
 
     return {
+      sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
       requestName:
         typeof parsed.requestName === "string" && parsed.requestName.trim()
           ? parsed.requestName
@@ -522,6 +541,7 @@ function loadState(): PersistedState {
 
 function persistState(): void {
   const state: PersistedState = {
+    sidebarCollapsed: utilitySidebarCollapsed,
     requestName: requestNameInput.value.trim() || "Untitled Request",
     environments: environments.map((environment) => ({ ...environment })),
     activeEnvironmentId,
@@ -539,6 +559,17 @@ function persistState(): void {
     activeSavedRequestId,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function setUtilitySidebarCollapsed(collapsed: boolean): void {
+  utilitySidebarCollapsed = collapsed;
+  applyUtilitySidebarCollapsedState(
+    document.documentElement,
+    utilitySidebar,
+    utilitySidebarToggle,
+    utilitySidebarToggleText,
+    utilitySidebarCollapsed,
+  );
 }
 
 function markRequestEditorChanged(): void {
@@ -2986,6 +3017,7 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
+setUtilitySidebarCollapsed(loadState().sidebarCollapsed);
 setupUtilitySections();
 setupTabs();
 wireEvents();

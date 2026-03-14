@@ -1,14 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-utilities-collapsed="true">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>APIShark</title>
+    <script>
+      (() => {
+        const storageKey = "apishark.state.v2";
+        let collapsed = true;
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (typeof parsed?.sidebarCollapsed === "boolean") {
+              collapsed = parsed.sidebarCollapsed;
+            }
+          }
+        } catch {}
+        document.documentElement.setAttribute(
+          "data-utilities-collapsed",
+          collapsed ? "true" : "false",
+        );
+      })();
+    </script>
     <link rel="stylesheet" href="/assets/main.css" />
   </head>
   <body>
     <div class="pm-shell">
-      <aside class="pm-sidebar">
+      <aside id="appUtilitySidebar" class="pm-sidebar" aria-label="Workspace utilities">
         <div class="pm-sidebar-rail">
           <div class="pm-brand">
             <span class="pm-brand-mark"></span>
@@ -195,6 +214,18 @@
             <p>Stream-aware request builder with JSON tools, environment variables, and SSE inspection.</p>
           </div>
           <div class="pm-topbar-actions">
+            <button
+              id="utilitySidebarToggle"
+              type="button"
+              class="secondary utility-sidebar-toggle"
+              aria-controls="appUtilitySidebar"
+              aria-expanded="false"
+              aria-label="Show utilities"
+              title="Show utilities"
+            >
+              <span class="action-symbol" aria-hidden="true">≡</span>
+              <span id="utilitySidebarToggleText">Show utilities</span>
+            </button>
             <button
               id="clearOutputBtn"
               type="button"
@@ -595,6 +626,34 @@
           "w3c-keyname": "/assets/vendor/w3c-keyname.js"
         }
       }
+    </script>
+    <script>
+      (() => {
+        const collapsed =
+          document.documentElement.getAttribute("data-utilities-collapsed") === "true";
+        const sidebar = document.getElementById("appUtilitySidebar");
+        const toggle = document.getElementById("utilitySidebarToggle");
+        const label = document.getElementById("utilitySidebarToggleText");
+        if (
+          !(sidebar instanceof HTMLElement) ||
+          !(toggle instanceof HTMLButtonElement) ||
+          !(label instanceof HTMLElement)
+        ) {
+          return;
+        }
+
+        const actionLabel = collapsed ? "Show utilities" : "Hide utilities";
+        sidebar.hidden = collapsed;
+        if (collapsed) {
+          sidebar.setAttribute("aria-hidden", "true");
+        } else {
+          sidebar.removeAttribute("aria-hidden");
+        }
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        toggle.setAttribute("aria-label", actionLabel);
+        toggle.title = actionLabel;
+        label.textContent = actionLabel;
+      })();
     </script>
     <script type="module" src="/assets/main.js"></script>
   </body>

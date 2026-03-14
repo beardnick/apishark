@@ -93,6 +93,10 @@ a {
   backdrop-filter: blur(18px);
 }
 
+html[data-utilities-collapsed="true"] .pm-shell {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
 .pm-sidebar,
 .pm-main,
 .pm-library {
@@ -104,6 +108,10 @@ a {
   grid-template-columns: 78px minmax(0, 1fr);
   border-right: 1px solid var(--border);
   background: rgba(249, 245, 239, 0.82);
+}
+
+html[data-utilities-collapsed="true"] .pm-sidebar {
+  display: none;
 }
 
 .pm-sidebar-rail {
@@ -409,6 +417,24 @@ a {
 .side-card-tools {
   padding-left: var(--space-3);
   border-left: 1px solid var(--border);
+}
+
+.utility-sidebar-toggle {
+  min-width: 0;
+  border-radius: 999px;
+  padding-inline: 12px 14px;
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(196, 188, 174, 0.82);
+}
+
+.utility-sidebar-toggle .action-symbol {
+  color: var(--accent-strong);
+}
+
+html[data-utilities-collapsed="true"] .utility-sidebar-toggle {
+  color: var(--accent-strong);
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .workspace-block {
@@ -1494,11 +1520,19 @@ button.ghost:hover:not(:disabled) {
   .pm-shell {
     grid-template-columns: 288px minmax(0, 1fr) 292px;
   }
+
+  html[data-utilities-collapsed="true"] .pm-shell {
+    grid-template-columns: minmax(0, 1fr) 292px;
+  }
 }
 
 @media (max-width: 1120px) {
   .pm-shell {
     grid-template-columns: 296px minmax(0, 1fr);
+  }
+
+  html[data-utilities-collapsed="true"] .pm-shell {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .pm-library {
@@ -1521,6 +1555,10 @@ button.ghost:hover:not(:disabled) {
   .pm-shell {
     min-height: 100vh;
     border-radius: 0;
+    grid-template-columns: 1fr;
+  }
+
+  html[data-utilities-collapsed="true"] .pm-shell {
     grid-template-columns: 1fr;
   }
 

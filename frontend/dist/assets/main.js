@@ -6,6 +6,7 @@ import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
 import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, setPersistedRequestDraft, } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
+import { applyUtilitySidebarCollapsedState, normalizeUtilitySidebarCollapsed, } from "./utility-sidebar.js";
 import { setupUtilitySections } from "./utility-sections.js";
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
@@ -14,6 +15,9 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
+const utilitySidebar = byId("appUtilitySidebar");
+const utilitySidebarToggle = byId("utilitySidebarToggle");
+const utilitySidebarToggleText = byId("utilitySidebarToggleText");
 const environmentSelect = byId("environmentSelect");
 const createEnvironmentBtn = byId("createEnvironmentBtn");
 const renameEnvironmentBtn = byId("renameEnvironmentBtn");
@@ -100,6 +104,7 @@ let ssePayloadJsonController = null;
 let sseLineEntries = [];
 let selectedSseLine = null;
 let sseLineCounter = 0;
+let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(document.documentElement.getAttribute("data-utilities-collapsed") === "true");
 const bodyEditorController = createBodyEditor({
     parent: bodyEditor,
     input: bodyInput,
@@ -113,6 +118,10 @@ const bodyEditorController = createBodyEditor({
     },
 });
 function wireEvents() {
+    utilitySidebarToggle.addEventListener("click", () => {
+        setUtilitySidebarCollapsed(!utilitySidebarCollapsed);
+        persistState();
+    });
     environmentSelect.addEventListener("change", () => {
         activeEnvironmentId = environmentSelect.value || null;
         syncEnvironmentEditor();
@@ -234,6 +243,7 @@ function activateTab(group, targetId) {
 function defaultState() {
     const defaultEnvironment = createEnvironmentEntry("Default", "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com");
     return {
+        sidebarCollapsed: true,
         requestName: "Streaming Chat Request",
         environments: [defaultEnvironment],
         activeEnvironmentId: defaultEnvironment.id,
@@ -260,6 +270,7 @@ function defaultState() {
 }
 function applyInitialState() {
     const state = loadState();
+    setUtilitySidebarCollapsed(state.sidebarCollapsed);
     requestNameInput.value = state.requestName;
     environments = normalizeEnvironments(state.environments);
     activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -300,6 +311,7 @@ function loadState() {
                 ? [createEnvironmentEntry("Default", parsed.envText)]
                 : fallback.environments;
         return {
+            sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
             requestName: typeof parsed.requestName === "string" && parsed.requestName.trim()
                 ? parsed.requestName
                 : fallback.requestName,
@@ -333,6 +345,7 @@ function loadState() {
 }
 function persistState() {
     const state = {
+        sidebarCollapsed: utilitySidebarCollapsed,
         requestName: requestNameInput.value.trim() || "Untitled Request",
         environments: environments.map((environment) => ({ ...environment })),
         activeEnvironmentId,
@@ -350,6 +363,10 @@ function persistState() {
         activeSavedRequestId,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+function setUtilitySidebarCollapsed(collapsed) {
+    utilitySidebarCollapsed = collapsed;
+    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebar, utilitySidebarToggle, utilitySidebarToggleText, utilitySidebarCollapsed);
 }
 function markRequestEditorChanged() {
     persistState();
@@ -2380,6 +2397,7 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
+setUtilitySidebarCollapsed(loadState().sidebarCollapsed);
 setupUtilitySections();
 setupTabs();
 wireEvents();
