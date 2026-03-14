@@ -108,7 +108,14 @@
         </div>
 
         <div id="appUtilitySidebarBody" class="pm-sidebar-body" hidden>
-          <section id="environmentUtility" class="pm-side-section utility-section" data-utility-panel hidden>
+          <section
+            id="environmentUtility"
+            class="pm-side-section utility-section"
+            data-utility-panel
+            aria-labelledby="environmentRailBtn"
+            aria-hidden="true"
+            hidden
+          >
             <div class="utility-section-head">
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Environments</span>
@@ -155,7 +162,14 @@
             </div>
           </section>
 
-          <section id="helperUtility" class="pm-side-section utility-section" data-utility-panel hidden>
+          <section
+            id="helperUtility"
+            class="pm-side-section utility-section"
+            data-utility-panel
+            aria-labelledby="helperRailBtn"
+            aria-hidden="true"
+            hidden
+          >
             <div class="utility-section-head">
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Variable helpers</span>
@@ -175,7 +189,14 @@
             </div>
           </section>
 
-          <section id="importUtility" class="pm-side-section utility-section" data-utility-panel hidden>
+          <section
+            id="importUtility"
+            class="pm-side-section utility-section"
+            data-utility-panel
+            aria-labelledby="importRailBtn"
+            aria-hidden="true"
+            hidden
+          >
             <div class="utility-section-head">
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Import with cURL</span>
@@ -190,7 +211,14 @@
             </div>
           </section>
 
-          <section id="pluginUtility" class="pm-side-section utility-section" data-utility-panel hidden>
+          <section
+            id="pluginUtility"
+            class="pm-side-section utility-section"
+            data-utility-panel
+            aria-labelledby="pluginRailBtn"
+            aria-hidden="true"
+            hidden
+          >
             <div class="utility-section-head">
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Aggregation plugins</span>
@@ -685,6 +713,11 @@
           const active = !collapsed && panel.id === activeUtilityPanelId;
           panel.hidden = !active;
           panel.classList.toggle("is-active", active);
+          if (active) {
+            panel.removeAttribute("aria-hidden");
+          } else {
+            panel.setAttribute("aria-hidden", "true");
+          }
         }
       })();
     </script>

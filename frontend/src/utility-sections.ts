@@ -8,6 +8,8 @@ type UtilityToggleTarget = {
 
 type UtilityPanelTarget = {
   hidden: boolean;
+  setAttribute?(name: string, value: string): void;
+  removeAttribute?(name: string): void;
   classList: {
     toggle(token: string, force?: boolean): void;
   };
@@ -33,6 +35,11 @@ export function setUtilitySectionActive(
   button.classList.toggle("is-active", active);
   panel.hidden = !active;
   panel.classList.toggle("is-active", active);
+  if (active) {
+    panel.removeAttribute?.("aria-hidden");
+  } else {
+    panel.setAttribute?.("aria-hidden", "true");
+  }
 }
 
 export function createUtilitySectionController(

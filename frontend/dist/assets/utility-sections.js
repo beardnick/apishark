@@ -3,6 +3,12 @@ export function setUtilitySectionActive(button, panel, active) {
     button.classList.toggle("is-active", active);
     panel.hidden = !active;
     panel.classList.toggle("is-active", active);
+    if (active) {
+        panel.removeAttribute?.("aria-hidden");
+    }
+    else {
+        panel.setAttribute?.("aria-hidden", "true");
+    }
 }
 export function createUtilitySectionController(entries, onToggle) {
     let activePanelId = null;

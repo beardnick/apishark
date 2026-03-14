@@ -135,6 +135,14 @@ html[data-utilities-collapsed="true"] .pm-sidebar {
   overflow-y: auto;
 }
 
+.pm-sidebar-body > [data-utility-panel] {
+  display: none;
+}
+
+.pm-sidebar-body > [data-utility-panel].is-active {
+  display: flex;
+}
+
 .utility-section-head {
   display: grid;
   gap: 4px;
