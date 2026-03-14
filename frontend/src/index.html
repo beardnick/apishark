@@ -289,21 +289,21 @@
                     id="bodyCollapseBtn"
                     type="button"
                     class="ghost body-toolbar-btn"
-                    aria-label="Collapse body"
-                    title="Collapse all"
+                    aria-label="Fold body JSON"
+                    title="Fold nested JSON blocks"
                   >
                     <span class="action-symbol" aria-hidden="true">−</span>
-                    <span>Collapse</span>
+                    <span>Fold</span>
                   </button>
                   <button
                     id="bodyExpandBtn"
                     type="button"
                     class="ghost body-toolbar-btn"
-                    aria-label="Expand body"
-                    title="Expand all"
+                    aria-label="Edit body JSON"
+                    title="Return to full JSON editing"
                   >
                     <span class="action-symbol" aria-hidden="true">+</span>
-                    <span>Expand</span>
+                    <span>Edit</span>
                   </button>
                   <button
                     id="copyBodyBtn"
@@ -329,6 +329,12 @@
               </div>
 
               <div id="bodyEditorShell" class="body-editor-shell">
+                <div id="bodyEditorBanner" class="body-editor-banner" aria-live="polite">
+                  <span id="bodyEditorModeBadge" class="body-editor-mode-badge">Plain text</span>
+                  <p id="bodyEditorHint" class="body-editor-hint">
+                    Paste valid JSON to enable folding.
+                  </p>
+                </div>
                 <div class="body-editor-frame">
                   <div
                     id="bodyEditorLineNumbers"

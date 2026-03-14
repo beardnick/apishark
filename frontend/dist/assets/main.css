@@ -448,6 +448,8 @@ textarea {
 
 .body-editor-shell {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-height: 220px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -468,10 +470,56 @@ textarea {
   box-shadow: var(--focus-ring);
 }
 
+.body-editor-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(196, 188, 174, 0.5);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 240, 234, 0.82));
+}
+
+.body-editor-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(196, 188, 174, 0.7);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.body-editor-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.body-editor-shell[data-mode="json-expanded"] .body-editor-mode-badge {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--accent-strong);
+}
+
+.body-editor-shell[data-mode="json-collapsed"] .body-editor-mode-badge {
+  border-color: rgba(180, 83, 9, 0.2);
+  background: rgba(245, 158, 11, 0.12);
+  color: #9a3412;
+}
+
 .body-editor-frame {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  min-height: 220px;
+  min-height: 0;
 }
 
 .body-editor-line-numbers {
@@ -492,14 +540,14 @@ textarea {
 .body-editor-stage {
   position: relative;
   min-width: 0;
-  min-height: 220px;
+  min-height: 0;
 }
 
 .body-code-editor {
   position: absolute;
   inset: 0;
   margin: 0;
-  min-height: 220px;
+  min-height: 0;
   padding: 12px 14px;
   overflow: hidden;
   white-space: pre;
@@ -517,7 +565,7 @@ textarea {
   position: relative;
   z-index: 1;
   width: 100%;
-  min-height: 220px;
+  min-height: 0;
   margin: 0;
   border: 0;
   border-radius: 0;
@@ -558,6 +606,7 @@ textarea {
 .body-editor-shell.is-collapsed .body-code-editor {
   overflow: auto;
   pointer-events: auto;
+  cursor: pointer;
 }
 
 .body-editor-shell.is-collapsed .body-code-input {
@@ -566,23 +615,6 @@ textarea {
 
 .body-editor-shell.is-collapsed .body-editor-line-numbers {
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.82), rgba(241, 245, 249, 0.92));
-}
-
-.body-editor-shell.is-collapsed .body-code-editor::before {
-  content: "Folded view - expand to edit";
-  position: sticky;
-  top: 0;
-  display: block;
-  margin: -12px -14px 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid rgba(196, 188, 174, 0.5);
-  background: rgba(248, 250, 252, 0.95);
-  color: var(--text-muted);
-  font-family:
-    "Aptos", "Segoe UI Variable Text", "IBM Plex Sans", "SF Pro Text", "Helvetica Neue",
-    sans-serif;
-  font-size: 0.74rem;
-  letter-spacing: 0.02em;
 }
 
 .body-code-editor .json-fold-placeholder {
@@ -715,6 +747,10 @@ button.ghost:hover:not(:disabled) {
 .body-toolbar-btn:hover:not(:disabled) {
   background: rgba(37, 99, 235, 0.08);
   color: var(--text);
+}
+
+.body-toolbar-btn:disabled {
+  opacity: 0.42;
 }
 
 .body-toolbar-btn .action-symbol {
@@ -1473,5 +1509,10 @@ button.ghost:hover:not(:disabled) {
 
   .request-item {
     grid-template-columns: 1fr;
+  }
+
+  .body-editor-banner {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

@@ -1,4 +1,5 @@
 import {
+  type BodyEditorRenderResult,
   renderBodyEditor,
   resolveBodyEditorRenderOptions,
 } from "./body-editor.js";
@@ -166,6 +167,8 @@ const urlInput = byId<HTMLInputElement>("urlInput");
 const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
+const bodyEditorModeBadge = byId<HTMLElement>("bodyEditorModeBadge");
+const bodyEditorHint = byId<HTMLElement>("bodyEditorHint");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
 const bodyEditorLineNumbers = byId<HTMLElement>("bodyEditorLineNumbers");
 const bodyEditor = byId<HTMLElement>("bodyEditor");
@@ -334,6 +337,19 @@ function wireEvents(): void {
       expandBodyJSON();
       focusBodyEditor();
     }
+  });
+  bodyEditor.addEventListener("keydown", (event) => {
+    if (!bodyEditorCollapsed || requestIsLoading) {
+      return;
+    }
+
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    expandBodyJSON();
+    focusBodyEditor();
   });
   bodyInput.addEventListener("keydown", (event) => {
     if (requestIsLoading) {
@@ -1019,14 +1035,50 @@ function syncBodyEditor(): void {
 
   bodyEditorShell.classList.toggle("has-json", result.hasJSON);
   bodyEditorShell.classList.toggle("is-collapsed", result.isCollapsedView);
+  syncBodyEditorBanner(result);
   bodyInput.classList.toggle("is-hidden", result.isCollapsedView);
   bodyInput.readOnly = result.isCollapsedView || requestIsLoading;
   bodyInput.tabIndex = result.isCollapsedView || requestIsLoading ? -1 : 0;
   bodyEditor.setAttribute("aria-hidden", result.isCollapsedView ? "false" : "true");
-  bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading;
-  bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading;
+  bodyEditor.tabIndex = result.isCollapsedView && !requestIsLoading ? 0 : -1;
+  bodyEditor.setAttribute("role", result.isCollapsedView && !requestIsLoading ? "button" : "presentation");
+  bodyEditor.setAttribute(
+    "aria-label",
+    result.isCollapsedView
+      ? "Folded JSON preview. Press Enter to return to editing."
+      : "Request body syntax preview.",
+  );
+  bodyEditor.setAttribute("aria-disabled", requestIsLoading ? "true" : "false");
+  bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.isCollapsedView;
+  bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.isCollapsedView;
   renderBodyEditorLineNumbers(result.lineCount);
   syncBodyEditorScroll();
+}
+
+function syncBodyEditorBanner(result: BodyEditorRenderResult): void {
+  if (!result.hasJSON) {
+    bodyEditorShell.dataset.mode = "plain";
+    bodyEditorModeBadge.textContent = "Plain text";
+    bodyEditorHint.textContent = bodyInput.value.trim()
+      ? "Valid JSON unlocks folding and prettify helpers."
+      : "Paste valid JSON to enable folding.";
+    return;
+  }
+
+  if (result.isCollapsedView) {
+    bodyEditorShell.dataset.mode = "json-collapsed";
+    bodyEditorModeBadge.textContent = "JSON preview";
+    bodyEditorHint.textContent = requestIsLoading
+      ? "Request is running. Expand after loading finishes to edit the body."
+      : "Folded preview is read-only. Click the body or choose Edit to change JSON.";
+    return;
+  }
+
+  bodyEditorShell.dataset.mode = "json-expanded";
+  bodyEditorModeBadge.textContent = "Editing JSON";
+  bodyEditorHint.textContent = requestIsLoading
+    ? "Request is running. Editing is temporarily disabled."
+    : "Fold trims nested JSON into a compact preview without changing the payload.";
 }
 
 function handleBodyEditorInput(): void {
