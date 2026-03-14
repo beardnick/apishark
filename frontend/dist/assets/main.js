@@ -7,7 +7,7 @@ import { resolveRequestDraft } from "./request-resolution.js";
 import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, setPersistedRequestDraft, } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
 import { applyUtilitySidebarCollapsedState, normalizeUtilitySidebarCollapsed, } from "./utility-sidebar.js";
-import { setupUtilitySections } from "./utility-sections.js";
+import { setupUtilitySections, } from "./utility-sections.js";
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220000;
@@ -15,7 +15,14 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
-const utilitySidebar = byId("appUtilitySidebar");
+const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
+const VALID_UTILITY_PANEL_IDS = new Set([
+    "environmentUtility",
+    "helperUtility",
+    "importUtility",
+    "pluginUtility",
+]);
+const utilitySidebarBody = byId("appUtilitySidebarBody");
 const utilitySidebarToggle = byId("utilitySidebarToggle");
 const utilitySidebarToggleText = byId("utilitySidebarToggleText");
 const environmentSelect = byId("environmentSelect");
@@ -105,6 +112,9 @@ let sseLineEntries = [];
 let selectedSseLine = null;
 let sseLineCounter = 0;
 let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(document.documentElement.getAttribute("data-utilities-collapsed") === "true");
+let utilitySidebarLastPanelId = normalizeActiveUtilityPanelId(document.documentElement.getAttribute("data-active-utility")) ??
+    DEFAULT_UTILITY_PANEL_ID;
+let utilitySectionsController;
 const bodyEditorController = createBodyEditor({
     parent: bodyEditor,
     input: bodyInput,
@@ -119,7 +129,7 @@ const bodyEditorController = createBodyEditor({
 });
 function wireEvents() {
     utilitySidebarToggle.addEventListener("click", () => {
-        setUtilitySidebarCollapsed(!utilitySidebarCollapsed);
+        setUtilitySidebarCollapsed(!utilitySidebarCollapsed, utilitySidebarLastPanelId ?? DEFAULT_UTILITY_PANEL_ID);
         persistState();
     });
     environmentSelect.addEventListener("change", () => {
@@ -244,6 +254,7 @@ function defaultState() {
     const defaultEnvironment = createEnvironmentEntry("Default", "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com");
     return {
         sidebarCollapsed: true,
+        activeUtilityPanelId: DEFAULT_UTILITY_PANEL_ID,
         requestName: "Streaming Chat Request",
         environments: [defaultEnvironment],
         activeEnvironmentId: defaultEnvironment.id,
@@ -268,9 +279,8 @@ function defaultState() {
         activeSavedRequestId: null,
     };
 }
-function applyInitialState() {
-    const state = loadState();
-    setUtilitySidebarCollapsed(state.sidebarCollapsed);
+function applyInitialState(state) {
+    setUtilitySidebarCollapsed(state.sidebarCollapsed, state.activeUtilityPanelId);
     requestNameInput.value = state.requestName;
     environments = normalizeEnvironments(state.environments);
     activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -312,6 +322,7 @@ function loadState() {
                 : fallback.environments;
         return {
             sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
+            activeUtilityPanelId: normalizeActiveUtilityPanelId(parsed.activeUtilityPanelId) ?? fallback.activeUtilityPanelId,
             requestName: typeof parsed.requestName === "string" && parsed.requestName.trim()
                 ? parsed.requestName
                 : fallback.requestName,
@@ -346,6 +357,7 @@ function loadState() {
 function persistState() {
     const state = {
         sidebarCollapsed: utilitySidebarCollapsed,
+        activeUtilityPanelId: utilitySidebarLastPanelId,
         requestName: requestNameInput.value.trim() || "Untitled Request",
         environments: environments.map((environment) => ({ ...environment })),
         activeEnvironmentId,
@@ -364,9 +376,25 @@ function persistState() {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
-function setUtilitySidebarCollapsed(collapsed) {
+function setUtilitySidebarCollapsed(collapsed, panelId) {
+    const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
     utilitySidebarCollapsed = collapsed;
-    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebar, utilitySidebarToggle, utilitySidebarToggleText, utilitySidebarCollapsed);
+    utilitySidebarLastPanelId = normalizedPanelId;
+    utilitySectionsController.setActivePanel(collapsed ? null : normalizedPanelId);
+    document.documentElement.setAttribute("data-active-utility", utilitySidebarLastPanelId);
+    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebarBody, utilitySidebarToggle, utilitySidebarToggleText, utilitySidebarCollapsed);
+}
+function handleUtilitySectionToggle(panelId) {
+    if (panelId) {
+        setUtilitySidebarCollapsed(false, panelId);
+    }
+    else {
+        setUtilitySidebarCollapsed(true, utilitySidebarLastPanelId);
+    }
+    persistState();
+}
+function normalizeActiveUtilityPanelId(value) {
+    return typeof value === "string" && VALID_UTILITY_PANEL_IDS.has(value) ? value : null;
 }
 function markRequestEditorChanged() {
     persistState();
@@ -2397,14 +2425,15 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
-setUtilitySidebarCollapsed(loadState().sidebarCollapsed);
-setupUtilitySections();
+const initialState = loadState();
+utilitySectionsController = setupUtilitySections(document, handleUtilitySectionToggle);
+setUtilitySidebarCollapsed(initialState.sidebarCollapsed, initialState.activeUtilityPanelId);
 setupTabs();
 wireEvents();
-void initializeApp();
-async function initializeApp() {
+void initializeApp(initialState);
+async function initializeApp(initialState) {
     renderAggregationPluginControls();
     await loadPlugins();
-    applyInitialState();
+    applyInitialState(initialState);
     await loadCollections();
 }

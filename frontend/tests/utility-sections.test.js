@@ -2,15 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  bindUtilitySectionToggle,
-  isUtilitySectionExpanded,
-  setUtilitySectionExpanded,
+  createUtilitySectionController,
+  setUtilitySectionActive,
 } from "../dist/assets/utility-sections.js";
 
 class MockButton {
-  constructor(expanded = "false") {
-    this.attributes = new Map([["aria-expanded", expanded]]);
+  constructor() {
+    this.attributes = new Map([["aria-expanded", "false"]]);
     this.clickListener = null;
+    this.tokens = new Set();
+    this.classList = {
+      toggle: (token, force) => {
+        if (force) {
+          this.tokens.add(token);
+          return;
+        }
+        this.tokens.delete(token);
+      },
+    };
   }
 
   addEventListener(type, listener) {
@@ -48,35 +57,61 @@ class MockPanel {
   }
 }
 
-test("setUtilitySectionExpanded keeps aria-expanded and visibility in sync", () => {
+test("setUtilitySectionActive keeps aria-expanded and visibility in sync", () => {
   const button = new MockButton();
   const panel = new MockPanel();
 
-  setUtilitySectionExpanded(button, panel, true);
+  setUtilitySectionActive(button, panel, true);
   assert.equal(button.getAttribute("aria-expanded"), "true");
   assert.equal(panel.hidden, false);
-  assert.ok(panel.tokens.has("is-expanded"));
+  assert.ok(button.tokens.has("is-active"));
+  assert.ok(panel.tokens.has("is-active"));
 
-  setUtilitySectionExpanded(button, panel, false);
+  setUtilitySectionActive(button, panel, false);
   assert.equal(button.getAttribute("aria-expanded"), "false");
   assert.equal(panel.hidden, true);
-  assert.ok(!panel.tokens.has("is-expanded"));
+  assert.ok(!button.tokens.has("is-active"));
+  assert.ok(!panel.tokens.has("is-active"));
 });
 
-test("bindUtilitySectionToggle normalizes collapsed defaults and toggles on click", () => {
-  const button = new MockButton("false");
-  const panel = new MockPanel();
+test("createUtilitySectionController keeps one panel active and toggles back to rail-only", () => {
+  const environmentButton = new MockButton();
+  const environmentPanel = new MockPanel();
+  const importButton = new MockButton();
+  const importPanel = new MockPanel();
 
-  bindUtilitySectionToggle(button, panel);
-  assert.equal(isUtilitySectionExpanded(button), false);
-  assert.equal(panel.hidden, true);
+  const controller = createUtilitySectionController([
+    {
+      button: environmentButton,
+      panel: environmentPanel,
+      panelId: "environmentUtility",
+    },
+    {
+      button: importButton,
+      panel: importPanel,
+      panelId: "importUtility",
+    },
+  ]);
 
-  button.click();
-  assert.equal(isUtilitySectionExpanded(button), true);
-  assert.equal(panel.hidden, false);
-  assert.ok(panel.tokens.has("is-expanded"));
+  assert.equal(controller.getActivePanelId(), null);
+  assert.equal(environmentPanel.hidden, true);
+  assert.equal(importPanel.hidden, true);
 
-  button.click();
-  assert.equal(isUtilitySectionExpanded(button), false);
-  assert.equal(panel.hidden, true);
+  environmentButton.click();
+  assert.equal(controller.getActivePanelId(), "environmentUtility");
+  assert.equal(environmentPanel.hidden, false);
+  assert.equal(importPanel.hidden, true);
+
+  importButton.click();
+  assert.equal(controller.getActivePanelId(), "importUtility");
+  assert.equal(environmentPanel.hidden, true);
+  assert.equal(importPanel.hidden, false);
+
+  importButton.click();
+  assert.equal(controller.getActivePanelId(), null);
+  assert.equal(importPanel.hidden, true);
+
+  controller.setActivePanel("environmentUtility");
+  assert.equal(controller.getActivePanelId(), "environmentUtility");
+  assert.equal(environmentPanel.hidden, false);
 });

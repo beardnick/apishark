@@ -52,7 +52,10 @@ import {
   applyUtilitySidebarCollapsedState,
   normalizeUtilitySidebarCollapsed,
 } from "./utility-sidebar.js";
-import { setupUtilitySections } from "./utility-sections.js";
+import {
+  setupUtilitySections,
+  type UtilitySectionController,
+} from "./utility-sections.js";
 
 type HeaderKV = {
   key: string;
@@ -72,6 +75,7 @@ type EnvironmentEntry = {
 
 type PersistedState = {
   sidebarCollapsed: boolean;
+  activeUtilityPanelId: string | null;
   requestName: string;
   environments: EnvironmentEntry[];
   activeEnvironmentId: string | null;
@@ -154,8 +158,15 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120_000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
+const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
+const VALID_UTILITY_PANEL_IDS = new Set([
+  "environmentUtility",
+  "helperUtility",
+  "importUtility",
+  "pluginUtility",
+]);
 
-const utilitySidebar = byId<HTMLElement>("appUtilitySidebar");
+const utilitySidebarBody = byId<HTMLElement>("appUtilitySidebarBody");
 const utilitySidebarToggle = byId<HTMLButtonElement>("utilitySidebarToggle");
 const utilitySidebarToggleText = byId<HTMLElement>("utilitySidebarToggleText");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
@@ -250,6 +261,10 @@ let sseLineCounter = 0;
 let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(
   document.documentElement.getAttribute("data-utilities-collapsed") === "true",
 );
+let utilitySidebarLastPanelId =
+  normalizeActiveUtilityPanelId(document.documentElement.getAttribute("data-active-utility")) ??
+  DEFAULT_UTILITY_PANEL_ID;
+let utilitySectionsController: UtilitySectionController;
 
 const bodyEditorController = createBodyEditor({
   parent: bodyEditor,
@@ -266,7 +281,10 @@ const bodyEditorController = createBodyEditor({
 
 function wireEvents(): void {
   utilitySidebarToggle.addEventListener("click", () => {
-    setUtilitySidebarCollapsed(!utilitySidebarCollapsed);
+    setUtilitySidebarCollapsed(
+      !utilitySidebarCollapsed,
+      utilitySidebarLastPanelId ?? DEFAULT_UTILITY_PANEL_ID,
+    );
     persistState();
   });
 
@@ -419,6 +437,7 @@ function defaultState(): PersistedState {
   );
   return {
     sidebarCollapsed: true,
+    activeUtilityPanelId: DEFAULT_UTILITY_PANEL_ID,
     requestName: "Streaming Chat Request",
     environments: [defaultEnvironment],
     activeEnvironmentId: defaultEnvironment.id,
@@ -448,9 +467,8 @@ function defaultState(): PersistedState {
   };
 }
 
-function applyInitialState(): void {
-  const state = loadState();
-  setUtilitySidebarCollapsed(state.sidebarCollapsed);
+function applyInitialState(state: PersistedState): void {
+  setUtilitySidebarCollapsed(state.sidebarCollapsed, state.activeUtilityPanelId);
   requestNameInput.value = state.requestName;
   environments = normalizeEnvironments(state.environments);
   activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -501,6 +519,8 @@ function loadState(): PersistedState {
 
     return {
       sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
+      activeUtilityPanelId:
+        normalizeActiveUtilityPanelId(parsed.activeUtilityPanelId) ?? fallback.activeUtilityPanelId,
       requestName:
         typeof parsed.requestName === "string" && parsed.requestName.trim()
           ? parsed.requestName
@@ -542,6 +562,7 @@ function loadState(): PersistedState {
 function persistState(): void {
   const state: PersistedState = {
     sidebarCollapsed: utilitySidebarCollapsed,
+    activeUtilityPanelId: utilitySidebarLastPanelId,
     requestName: requestNameInput.value.trim() || "Untitled Request",
     environments: environments.map((environment) => ({ ...environment })),
     activeEnvironmentId,
@@ -561,15 +582,32 @@ function persistState(): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function setUtilitySidebarCollapsed(collapsed: boolean): void {
+function setUtilitySidebarCollapsed(collapsed: boolean, panelId?: string | null): void {
+  const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
   utilitySidebarCollapsed = collapsed;
+  utilitySidebarLastPanelId = normalizedPanelId;
+  utilitySectionsController.setActivePanel(collapsed ? null : normalizedPanelId);
+  document.documentElement.setAttribute("data-active-utility", utilitySidebarLastPanelId);
   applyUtilitySidebarCollapsedState(
     document.documentElement,
-    utilitySidebar,
+    utilitySidebarBody,
     utilitySidebarToggle,
     utilitySidebarToggleText,
     utilitySidebarCollapsed,
   );
+}
+
+function handleUtilitySectionToggle(panelId: string | null): void {
+  if (panelId) {
+    setUtilitySidebarCollapsed(false, panelId);
+  } else {
+    setUtilitySidebarCollapsed(true, utilitySidebarLastPanelId);
+  }
+  persistState();
+}
+
+function normalizeActiveUtilityPanelId(value: unknown): string | null {
+  return typeof value === "string" && VALID_UTILITY_PANEL_IDS.has(value) ? value : null;
 }
 
 function markRequestEditorChanged(): void {
@@ -3017,15 +3055,16 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
-setUtilitySidebarCollapsed(loadState().sidebarCollapsed);
-setupUtilitySections();
+const initialState = loadState();
+utilitySectionsController = setupUtilitySections(document, handleUtilitySectionToggle);
+setUtilitySidebarCollapsed(initialState.sidebarCollapsed, initialState.activeUtilityPanelId);
 setupTabs();
 wireEvents();
-void initializeApp();
+void initializeApp(initialState);
 
-async function initializeApp(): Promise<void> {
+async function initializeApp(initialState: PersistedState): Promise<void> {
   renderAggregationPluginControls();
   await loadPlugins();
-  applyInitialState();
+  applyInitialState(initialState);
   await loadCollections();
 }

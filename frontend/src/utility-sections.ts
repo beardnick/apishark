@@ -1,7 +1,9 @@
 type UtilityToggleTarget = {
   addEventListener(type: "click", listener: () => void): void;
-  getAttribute(name: string): string | null;
   setAttribute(name: string, value: string): void;
+  classList: {
+    toggle(token: string, force?: boolean): void;
+  };
 };
 
 type UtilityPanelTarget = {
@@ -11,34 +13,69 @@ type UtilityPanelTarget = {
   };
 };
 
-export function isUtilitySectionExpanded(button: Pick<UtilityToggleTarget, "getAttribute">): boolean {
-  return button.getAttribute("aria-expanded") === "true";
-}
+type UtilitySectionEntry = {
+  button: UtilityToggleTarget;
+  panel: UtilityPanelTarget;
+  panelId: string;
+};
 
-export function setUtilitySectionExpanded(
-  button: Pick<UtilityToggleTarget, "setAttribute">,
+export type UtilitySectionController = {
+  getActivePanelId(): string | null;
+  setActivePanel(panelId: string | null): void;
+};
+
+export function setUtilitySectionActive(
+  button: Pick<UtilityToggleTarget, "setAttribute" | "classList">,
   panel: UtilityPanelTarget,
-  expanded: boolean,
+  active: boolean,
 ): void {
-  button.setAttribute("aria-expanded", expanded ? "true" : "false");
-  panel.hidden = !expanded;
-  panel.classList.toggle("is-expanded", expanded);
+  button.setAttribute("aria-expanded", active ? "true" : "false");
+  button.classList.toggle("is-active", active);
+  panel.hidden = !active;
+  panel.classList.toggle("is-active", active);
 }
 
-export function bindUtilitySectionToggle(
-  button: UtilityToggleTarget,
-  panel: UtilityPanelTarget,
-): void {
-  setUtilitySectionExpanded(button, panel, isUtilitySectionExpanded(button));
-  button.addEventListener("click", () => {
-    setUtilitySectionExpanded(button, panel, !isUtilitySectionExpanded(button));
-  });
+export function createUtilitySectionController(
+  entries: UtilitySectionEntry[],
+  onToggle?: (panelId: string | null) => void,
+): UtilitySectionController {
+  let activePanelId: string | null = null;
+
+  const sync = (): void => {
+    for (const entry of entries) {
+      setUtilitySectionActive(entry.button, entry.panel, entry.panelId === activePanelId);
+    }
+  };
+
+  const setActivePanel = (panelId: string | null): void => {
+    activePanelId = entries.some((entry) => entry.panelId === panelId) ? panelId : null;
+    sync();
+  };
+
+  for (const entry of entries) {
+    entry.button.addEventListener("click", () => {
+      activePanelId = activePanelId === entry.panelId ? null : entry.panelId;
+      sync();
+      onToggle?.(activePanelId);
+    });
+  }
+
+  sync();
+
+  return {
+    getActivePanelId: () => activePanelId,
+    setActivePanel,
+  };
 }
 
-export function setupUtilitySections(root: ParentNode = document): void {
-  const buttons = root.querySelectorAll<HTMLButtonElement>("[data-utility-toggle]");
+export function setupUtilitySections(
+  root: ParentNode = document,
+  onToggle?: (panelId: string | null) => void,
+): UtilitySectionController {
+  const entries: UtilitySectionEntry[] = [];
+  const buttons = root.querySelectorAll<HTMLButtonElement>("[data-utility-rail]");
   for (const button of buttons) {
-    const panelId = button.getAttribute("aria-controls");
+    const panelId = button.getAttribute("data-utility-target");
     if (!panelId) {
       continue;
     }
@@ -48,6 +85,8 @@ export function setupUtilitySections(root: ParentNode = document): void {
       continue;
     }
 
-    bindUtilitySectionToggle(button, panel);
+    entries.push({ button, panel, panelId });
   }
+
+  return createUtilitySectionController(entries, onToggle);
 }
