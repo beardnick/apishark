@@ -48,6 +48,7 @@ import {
   type RequestLibraryDraft,
 } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
+import { setupUtilitySections } from "./utility-sections.js";
 
 type HeaderKV = {
   key: string;
@@ -2985,6 +2986,7 @@ rawAppender = new BatchedBoundedAppender(rawOutput, RAW_OUTPUT_MAX_CHARS);
 aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTPUT_MAX_CHARS);
 setRawResponseMode("plain");
 clearSseInspector();
+setupUtilitySections();
 setupTabs();
 wireEvents();
 void initializeApp();
