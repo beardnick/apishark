@@ -680,7 +680,6 @@ textarea {
 }
 
 .body-code-editor .cm-gutterElement {
-  min-height: 1.5em;
   padding-top: 0;
   padding-bottom: 0;
 }
