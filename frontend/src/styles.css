@@ -548,7 +548,7 @@ textarea {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 220px;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--code-bg);
@@ -617,6 +617,7 @@ textarea {
   flex: 1 1 auto;
   position: relative;
   min-height: 0;
+  height: clamp(240px, 36vh, 420px);
 }
 
 .body-code-editor {
@@ -657,6 +658,7 @@ textarea {
     "Liberation Mono", "Courier New", monospace;
   font-size: 0.8rem;
   line-height: 1.5;
+  overscroll-behavior: contain;
 }
 
 .body-code-editor .cm-gutters {
@@ -708,11 +710,13 @@ textarea {
 .body-code-editor .cm-content,
 .body-code-editor .cm-line {
   caret-color: var(--text);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .body-code-editor .cm-content {
-  min-height: calc(1.5em * 11);
+  min-height: 100%;
   padding: 12px 14px 12px 0;
 }
 

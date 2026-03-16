@@ -16,6 +16,7 @@ export function createBodyEditor(options) {
             bodyEditorFoldGutter(),
             lineNumbers(),
             placeholder(options.placeholderText ?? options.input.placeholder ?? ""),
+            EditorView.lineWrapping,
             editableCompartment.of(EditorView.editable.of(options.editable ?? true)),
             bodyEditorComputedField,
             bodyEditorKeymap((view) => runUndoCommand(view)),
