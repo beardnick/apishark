@@ -395,6 +395,16 @@
                     <span>Expand</span>
                   </button>
                   <button
+                    id="bodyUndoBtn"
+                    type="button"
+                    class="ghost body-toolbar-btn"
+                    aria-label="Undo last body edit"
+                    title="Undo last body edit"
+                  >
+                    <span class="action-symbol" aria-hidden="true">↶</span>
+                    <span>Undo</span>
+                  </button>
+                  <button
                     id="copyBodyBtn"
                     type="button"
                     class="ghost body-toolbar-btn"
@@ -503,6 +513,15 @@
                       Click a line to inspect payload.
                     </p>
                     <div class="inline-actions panel-tools">
+                      <button
+                        id="copySsePayloadBtn"
+                        type="button"
+                        class="ghost icon-btn toolbar-icon-btn"
+                        aria-label="Copy selected payload"
+                        title="Copy selected payload"
+                      >
+                        <span class="action-symbol" aria-hidden="true">⧉</span>
+                      </button>
                       <button
                         id="ssePayloadCollapseBtn"
                         type="button"

@@ -11,6 +11,7 @@ import {
   prunePersistedRequestDraftStore,
   requestLibraryDraftsEqual,
   resolveEffectiveAggregationPlugin,
+  serializePersistedRequestDraftStore,
   setPersistedRequestDraft,
 } from "../dist/assets/request-library.js";
 
@@ -234,6 +235,76 @@ test("normalizePersistedRequestDraftStore ignores invalid draft entries", () => 
 
   assert.deepEqual(Object.keys(normalized), ["collection:col_alpha:request:req_one"]);
   assert.equal(normalized["collection:col_alpha:request:req_one"].draft.name, "Req 1 draft");
+});
+
+test("normalizePersistedRequestDraftStore accepts serialized draft arrays", () => {
+  const normalized = normalizePersistedRequestDraftStore([
+    {
+      key: "collection:col_alpha:unsaved",
+      collection_id: "col_alpha",
+      request_id: null,
+      updated_at: "2026-03-13T10:00:00.000Z",
+      draft: {
+        name: "Unsaved draft",
+        method: "POST",
+        url: "https://api.example.test/v1/chat/completions",
+        headers: [],
+        body: "{\"stream\":true}",
+        aggregation_plugin: "openai",
+        use_collection_aggregation_plugin: false,
+        aggregate_openai_sse: true,
+        timeout_seconds: 45,
+      },
+    },
+  ]);
+
+  assert.equal(
+    normalized["collection:col_alpha:unsaved"]?.draft.name,
+    "Unsaved draft",
+  );
+});
+
+test("serializePersistedRequestDraftStore emits sorted cloned entries", () => {
+  let store = {};
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_beta", requestId: null },
+    draft: {
+      name: "Later draft",
+      method: "GET",
+      url: "",
+      headers: [],
+      body: "",
+      aggregation_plugin: "none",
+      use_collection_aggregation_plugin: false,
+      aggregate_openai_sse: false,
+      timeout_seconds: 120,
+    },
+    updatedAt: "2026-03-13T10:01:00.000Z",
+  });
+  store = setPersistedRequestDraft(store, {
+    scope: { collectionId: "col_alpha", requestId: null },
+    draft: {
+      name: "Earlier draft",
+      method: "GET",
+      url: "",
+      headers: [],
+      body: "",
+      aggregation_plugin: "none",
+      use_collection_aggregation_plugin: false,
+      aggregate_openai_sse: false,
+      timeout_seconds: 120,
+    },
+    updatedAt: "2026-03-13T10:00:00.000Z",
+  });
+
+  const serialized = serializePersistedRequestDraftStore(store);
+  serialized[0].draft.name = "Changed";
+
+  assert.deepEqual(
+    serialized.map((entry) => entry.key),
+    ["collection:col_alpha:unsaved", "collection:col_beta:unsaved"],
+  );
+  assert.equal(store["collection:col_alpha:unsaved"].draft.name, "Earlier draft");
 });
 
 test("resolveEffectiveAggregationPlugin prefers collection binding when request inherits", () => {

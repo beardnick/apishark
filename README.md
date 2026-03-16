@@ -9,7 +9,7 @@ into the Go executable via `embed`.
 - Named environments with `{{VAR_NAME}}` interpolation and active switching
 - Import request definition from a `curl` command
 - Editable header rows with per-header enable/disable toggles
-- Named collections saved to `./collections.json`
+- Named collections saved to `./collections.json`, including environments and scratch drafts
 - Proxy arbitrary HTTP requests from the UI
 - JSON prettify and collapsible JSON viewers for request/response payloads
 - Incremental streaming display for SSE responses

@@ -15,17 +15,20 @@ test("built body panel keeps a single editor shell with visible body editor cont
   assert.match(bodyPanel, /id="bodyEditorHint"/);
   assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<div[\s\S]*?id="bodyEditor"/);
   assert.match(bodyPanel, /<div id="bodyEditorShell"[\s\S]*?<textarea[\s\S]*?id="bodyInput"/);
+  assert.match(bodyPanel, /id="bodyUndoBtn"/);
   assert.match(bodyPanel, /id="copyBodyBtn"/);
   assert.match(bodyPanel, /id="bodyPrettifyBtn"/);
   assert.match(bodyPanel, /id="bodyCollapseBtn"/);
   assert.match(bodyPanel, /id="bodyExpandBtn"/);
   assert.match(bodyPanel, />\s*Collapse\s*</);
   assert.match(bodyPanel, />\s*Expand\s*</);
+  assert.match(bodyPanel, />\s*Undo\s*</);
   assert.match(bodyPanel, />\s*Copy\s*</);
   assert.match(bodyPanel, />\s*Prettify\s*</);
 
   assert.ok(bodyPanel.indexOf('id="bodyCollapseBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
   assert.ok(bodyPanel.indexOf('id="bodyExpandBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
+  assert.ok(bodyPanel.indexOf('id="bodyUndoBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
 
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPanel"/);
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPreview"/);
