@@ -4,7 +4,7 @@ import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragme
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
-import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, serializePersistedRequestDraftStore, setPersistedRequestDraft, } from "./request-library.js";
+import { createDuplicateRequestDraft, deletePersistedRequestDraft, getCollectionScratchDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, serializePersistedRequestDraftStore, setPersistedRequestDraft, } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
 import { applyUtilitySidebarCollapsedState, normalizeUtilitySidebarCollapsed, } from "./utility-sidebar.js";
 import { setupUtilitySections, } from "./utility-sections.js";
@@ -875,6 +875,11 @@ async function importCurl() {
         syncBodyEditor();
         persistState();
         persistCurrentRequestDraft();
+        renderCollections();
+        renderEffectiveAggregationPlugin();
+        setCollectionsStatus(activeCollectionId
+            ? `Imported cURL into an unsaved request in "${findCollection(activeCollectionId)?.name ?? "the selected collection"}".`
+            : "Imported cURL into the workspace scratch request.");
     }
     catch (error) {
         setError(errorMessage(error, "Failed to import curl command."));
@@ -1802,6 +1807,24 @@ function loadSavedRequest(collectionId, requestId) {
     persistState();
     setCollectionsStatus(`Loaded "${savedRequest.name}" from "${collection.name}".`);
 }
+function loadCollectionScratch(collectionId) {
+    const collection = findCollection(collectionId);
+    if (!collection) {
+        setCollectionsStatus("Collection no longer exists.", true);
+        return;
+    }
+    flushDraftAutosave();
+    activeCollectionId = collectionId;
+    activeSavedRequestId = null;
+    if (!restoreDraftForCurrentSelection()) {
+        setCollectionsStatus(`No unsaved request draft exists in "${collection.name}".`, true);
+        return;
+    }
+    renderCollections();
+    renderEffectiveAggregationPlugin();
+    persistState();
+    setCollectionsStatus(`Loaded the unsaved request draft from "${collection.name}".`);
+}
 async function deleteCollection(collectionId) {
     const collection = findCollection(collectionId);
     if (!collection) {
@@ -1938,6 +1961,7 @@ function renderCollections() {
     }
     const fragment = document.createDocumentFragment();
     for (const collection of collectionStore.collections) {
+        const collectionScratchDraft = getCollectionScratchDraft(requestDrafts, collection.id);
         const card = document.createElement("article");
         card.className = `collection-card${collection.id === activeCollectionId ? " is-selected" : ""}`;
         const head = document.createElement("div");
@@ -2004,7 +2028,34 @@ function renderCollections() {
         card.appendChild(bindingRow);
         const requestList = document.createElement("div");
         requestList.className = "request-list";
-        if (collection.requests.length === 0) {
+        if (collectionScratchDraft) {
+            const item = document.createElement("div");
+            item.className = `request-item${collection.id === activeCollectionId && activeSavedRequestId === null ? " is-selected" : ""}`;
+            const loadBtn = document.createElement("button");
+            loadBtn.type = "button";
+            loadBtn.className = "request-load-btn";
+            loadBtn.addEventListener("click", () => loadCollectionScratch(collection.id));
+            const requestPrimary = document.createElement("div");
+            requestPrimary.className = "request-primary";
+            const requestMethod = document.createElement("span");
+            requestMethod.className = "request-method";
+            requestMethod.dataset.method = collectionScratchDraft.draft.method || "GET";
+            requestMethod.textContent = collectionScratchDraft.draft.method || "GET";
+            const requestText = document.createElement("div");
+            requestText.className = "request-text";
+            const requestName = document.createElement("strong");
+            requestName.className = "request-title";
+            requestName.textContent = collectionScratchDraft.draft.name || "Unsaved Request";
+            const requestMeta = document.createElement("p");
+            requestMeta.className = "request-meta hint compact";
+            requestMeta.textContent = formatCollectionScratchMeta(collectionScratchDraft.draft);
+            requestText.append(requestName, requestMeta);
+            requestPrimary.append(requestMethod, requestText);
+            loadBtn.append(requestPrimary);
+            item.appendChild(loadBtn);
+            requestList.appendChild(item);
+        }
+        if (collection.requests.length === 0 && !collectionScratchDraft) {
             const empty = document.createElement("p");
             empty.className = "empty-state";
             empty.textContent = "No saved requests in this collection yet.";
@@ -2170,6 +2221,10 @@ function formatSavedRequestMeta(request, collection) {
         hour: "2-digit",
         minute: "2-digit",
     })}`;
+}
+function formatCollectionScratchMeta(draft) {
+    const url = draft.url.trim() || "(no URL)";
+    return `${url} • unsaved draft`;
 }
 function setLoading(isLoading) {
     requestIsLoading = isLoading;

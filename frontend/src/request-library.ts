@@ -111,6 +111,16 @@ export function getPersistedRequestDraft(
   return store[createRequestDraftKey(scope)] ?? null;
 }
 
+export function getCollectionScratchDraft(
+  store: PersistedRequestDraftStore,
+  collectionId: string | null,
+): PersistedRequestDraft | null {
+  if (!collectionId) {
+    return null;
+  }
+  return getPersistedRequestDraft(store, { collectionId, requestId: null });
+}
+
 export function setPersistedRequestDraft(
   store: PersistedRequestDraftStore,
   input: {

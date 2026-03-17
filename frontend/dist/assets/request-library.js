@@ -51,6 +51,12 @@ export function createRequestDraftKey(scope) {
 export function getPersistedRequestDraft(store, scope) {
     return store[createRequestDraftKey(scope)] ?? null;
 }
+export function getCollectionScratchDraft(store, collectionId) {
+    if (!collectionId) {
+        return null;
+    }
+    return getPersistedRequestDraft(store, { collectionId, requestId: null });
+}
 export function setPersistedRequestDraft(store, input) {
     const key = createRequestDraftKey(input.scope);
     return {

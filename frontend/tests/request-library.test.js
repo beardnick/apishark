@@ -5,6 +5,7 @@ import {
   createRequestDraftKey,
   createDuplicateRequestDraft,
   deletePersistedRequestDraft,
+  getCollectionScratchDraft,
   getPersistedRequestDraft,
   normalizePersistedRequestDraftStore,
   nextDuplicateRequestName,
@@ -156,6 +157,8 @@ test("persisted request drafts support collection-scoped unsaved work and cleanu
       requestId: null,
     }),
   );
+  assert.equal(getCollectionScratchDraft(store, "col_alpha")?.collection_id, "col_alpha");
+  assert.equal(getCollectionScratchDraft(store, "col_missing"), null);
   assert.ok(
     getPersistedRequestDraft(store, {
       collectionId: "col_alpha",
