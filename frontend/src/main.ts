@@ -42,7 +42,9 @@ import {
   prunePersistedRequestDraftStore,
   requestLibraryDraftsEqual,
   resolveEffectiveAggregationPlugin,
+  serializePersistedRequestDraftStore,
   setPersistedRequestDraft,
+  type PersistedRequestDraft,
   type PersistedRequestDraftStore,
   type RequestDraftScope,
   type RequestLibraryDraft,
@@ -121,6 +123,16 @@ type RequestCollection = {
 
 type CollectionStore = {
   collections: RequestCollection[];
+  environments: EnvironmentEntry[];
+  active_environment_id: string | null;
+  request_drafts: PersistedRequestDraftStore;
+};
+
+type SerializedCollectionStore = {
+  collections: RequestCollection[];
+  environments?: EnvironmentEntry[];
+  active_environment_id?: string | null;
+  request_drafts?: PersistedRequestDraft[] | PersistedRequestDraftStore;
 };
 
 type PluginStoreResponse = {
@@ -158,6 +170,7 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120_000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
+const COLLECTION_STATE_SAVE_DELAY_MS = 500;
 const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
 const VALID_UTILITY_PANEL_IDS = new Set([
   "environmentUtility",
@@ -189,6 +202,7 @@ const bodyEditorHint = byId<HTMLElement>("bodyEditorHint");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
 const bodyEditor = byId<HTMLElement>("bodyEditor");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
+const bodyUndoBtn = byId<HTMLButtonElement>("bodyUndoBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
 const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
 const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
@@ -228,6 +242,7 @@ const copyAggregateResponseBtn = byId<HTMLButtonElement>("copyAggregateResponseB
 const sseInspector = byId<HTMLElement>("sseInspector");
 const sseLineList = byId<HTMLElement>("sseLineList");
 const ssePayloadMeta = byId<HTMLElement>("ssePayloadMeta");
+const copySsePayloadBtn = byId<HTMLButtonElement>("copySsePayloadBtn");
 const ssePayloadCollapseBtn = byId<HTMLButtonElement>("ssePayloadCollapseBtn");
 const ssePayloadExpandBtn = byId<HTMLButtonElement>("ssePayloadExpandBtn");
 const ssePayloadJsonViewer = byId<HTMLElement>("ssePayloadJsonViewer");
@@ -243,11 +258,17 @@ let requestIsLoading = false;
 let environments: EnvironmentEntry[] = [];
 let activeEnvironmentId: string | null = null;
 let headerRows: EditableHeader[] = [];
-let collectionStore: CollectionStore = { collections: [] };
+let collectionStore: CollectionStore = {
+  collections: [],
+  environments: [],
+  active_environment_id: null,
+  request_drafts: {},
+};
 let requestDrafts: PersistedRequestDraftStore = {};
 let activeCollectionId: string | null = null;
 let activeSavedRequestId: string | null = null;
 let draftAutosaveTimer: number | null = null;
+let collectionStateSaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let bodyEditorHasJSON = false;
@@ -269,6 +290,7 @@ const bodyEditorController = createBodyEditor({
   input: bodyInput,
   ariaLabelledBy: "bodyEditorLabel",
   editable: !requestIsLoading,
+  undoStorageKey: "apishark.body-editor.undo.v1",
   onStateChange: (event) => {
     syncBodyEditor();
     if (event.reason === "doc" && event.source === "user") {
@@ -282,6 +304,7 @@ function wireEvents(): void {
     activeEnvironmentId = environmentSelect.value || null;
     syncEnvironmentEditor();
     persistState();
+    scheduleCollectionStateSave();
   });
 
   createEnvironmentBtn.addEventListener("click", () => {
@@ -350,6 +373,9 @@ function wireEvents(): void {
   copyBodyBtn.addEventListener("click", () => {
     void copyRequestBody();
   });
+  bodyUndoBtn.addEventListener("click", () => {
+    undoBodyEdit();
+  });
   copyAggregateResponseBtn.addEventListener("click", () => {
     void copyAggregateResponse();
   });
@@ -358,6 +384,9 @@ function wireEvents(): void {
   bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
   copyRawResponseBtn.addEventListener("click", () => {
     void copyRawResponse();
+  });
+  copySsePayloadBtn.addEventListener("click", () => {
+    void copySelectedSsePayload();
   });
   rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
   rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
@@ -578,6 +607,43 @@ function persistState(): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function buildCollectionStorePayload(): SerializedCollectionStore {
+  return {
+    collections: cloneCollectionStore(collectionStore).collections,
+    environments: environments.map((environment) => ({ ...environment })),
+    active_environment_id: activeEnvironmentId,
+    request_drafts: serializePersistedRequestDraftStore(requestDrafts),
+  };
+}
+
+function scheduleCollectionStateSave(): void {
+  if (collectionStateSaveTimer !== null) {
+    window.clearTimeout(collectionStateSaveTimer);
+  }
+  collectionStateSaveTimer = window.setTimeout(() => {
+    collectionStateSaveTimer = null;
+    void saveCollectionStateToServer();
+  }, COLLECTION_STATE_SAVE_DELAY_MS);
+}
+
+async function saveCollectionStateToServer(): Promise<void> {
+  try {
+    const response = await fetch("/api/collections", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildCollectionStorePayload()),
+    });
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(responseText || `Save failed (${response.status})`);
+    }
+
+    collectionStore = normalizeCollectionStore(JSON.parse(responseText) as SerializedCollectionStore);
+  } catch (error) {
+    setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
+  }
+}
+
 function setUtilitySidebarCollapsed(collapsed: boolean, panelId?: string | null): void {
   const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
   utilitySidebarCollapsed = collapsed;
@@ -647,11 +713,18 @@ function persistCurrentRequestDraft(): void {
 
   persistState();
   renderDraftStatus();
+  scheduleCollectionStateSave();
 }
 
 function clearPersistedRequestDraft(scope: RequestDraftScope): void {
-  requestDrafts = deletePersistedRequestDraft(requestDrafts, scope);
+  const next = deletePersistedRequestDraft(requestDrafts, scope);
+  if (next === requestDrafts) {
+    return;
+  }
+  requestDrafts = next;
   renderDraftStatus();
+  persistState();
+  scheduleCollectionStateSave();
 }
 
 function restoreDraftForCurrentSelection(fallbackDraft?: RequestLibraryDraft): boolean {
@@ -688,13 +761,18 @@ function renderDraftStatus(): void {
   draftStatusText.textContent = hasDraft ? "Draft saved" : "";
 }
 
-function prunePersistedDrafts(): void {
-  requestDrafts = prunePersistedRequestDraftStore(requestDrafts, {
+function prunePersistedDrafts(): boolean {
+  const next = prunePersistedRequestDraftStore(requestDrafts, {
     collectionIds: collectionStore.collections.map((collection) => collection.id),
     requestIds: collectionStore.collections.flatMap((collection) =>
       collection.requests.map((request) => request.id),
     ),
   });
+  if (next === requestDrafts) {
+    return false;
+  }
+  requestDrafts = next;
+  return true;
 }
 
 function renderEnvironmentControls(): void {
@@ -742,6 +820,7 @@ function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
     environment.id === activeEnvironment.id ? { ...environment, ...patch } : environment,
   );
   persistState();
+  scheduleCollectionStateSave();
 }
 
 function createEnvironment(): void {
@@ -756,6 +835,7 @@ function createEnvironment(): void {
   activeEnvironmentId = environment.id;
   renderEnvironmentControls();
   persistState();
+  scheduleCollectionStateSave();
 }
 
 function renameActiveEnvironment(): void {
@@ -788,6 +868,7 @@ function deleteActiveEnvironment(): void {
     environments[index]?.id ?? environments[index - 1]?.id ?? environments[0]?.id ?? null;
   renderEnvironmentControls();
   persistState();
+  scheduleCollectionStateSave();
 }
 
 function nextEnvironmentName(): string {
@@ -1004,6 +1085,7 @@ function syncBodyEditor(): void {
   bodyEditorShell.classList.toggle("is-collapsed", result.hasFoldedBlocks);
   syncBodyEditorBanner(result);
   bodyEditor.setAttribute("aria-disabled", requestIsLoading ? "true" : "false");
+  bodyUndoBtn.disabled = requestIsLoading || !bodyEditorController.canUndo();
   bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.foldableBlockCount === 0 || result.isFullyCollapsed;
   bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.hasFoldedBlocks;
 }
@@ -1045,6 +1127,17 @@ function focusBodyEditor(selectAll = false): void {
 function setBodyEditorText(text: string): void {
   bodyEditorController.setText(text);
   syncBodyEditor();
+}
+
+function undoBodyEdit(): void {
+  if (requestIsLoading) {
+    return;
+  }
+  if (!bodyEditorController.undo()) {
+    return;
+  }
+  syncBodyEditor();
+  markRequestEditorChanged();
 }
 
 function collapseBodyJSON(): void {
@@ -1420,7 +1513,7 @@ async function copyRequestBody(): Promise<void> {
 }
 
 async function copyRawResponse(): Promise<void> {
-  const text = plainRawResponseBuffer.snapshotText();
+  const text = snapshotRawResponseText();
   if (!text) {
     setError("Raw response is empty.");
     return;
@@ -1447,6 +1540,39 @@ async function copyAggregateResponse(): Promise<void> {
   }
 
   setError("Clipboard copy failed. Select the aggregated response text and copy it manually.");
+}
+
+async function copySelectedSsePayload(): Promise<void> {
+  const text = selectedSseLine?.payloadText ?? "";
+  if (!text) {
+    setError("Select an SSE line first.");
+    return;
+  }
+
+  if (await writeClipboardText(text)) {
+    setSuccess(`Copied payload from line ${selectedSseLine?.index}.`);
+    return;
+  }
+
+  if (selectedSseLine?.isJSON) {
+    setError("Clipboard copy failed. Use the JSON payload view to copy it manually.");
+    return;
+  }
+
+  ssePayloadOutput.focus();
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  const range = document.createRange();
+  range.selectNodeContents(ssePayloadOutput);
+  selection?.addRange(range);
+  setError("Clipboard copy failed. Select the payload text and copy it manually.");
+}
+
+function snapshotRawResponseText(): string {
+  if (rawResponseMode !== "sse") {
+    return plainRawResponseBuffer.snapshotText();
+  }
+  return sseLineEntries.map((entry) => entry.rawLine).join("\n");
 }
 
 async function sendRequest(): Promise<void> {
@@ -1752,6 +1878,7 @@ function clearSseInspector(): void {
   sseLineCounter = 0;
   sseLineList.textContent = "";
   ssePayloadMeta.textContent = "Click a line to inspect payload.";
+  copySsePayloadBtn.disabled = true;
   ssePayloadOutput.textContent = "";
   ssePayloadJsonViewer.textContent = "";
   ssePayloadJsonViewer.classList.add("is-hidden");
@@ -1823,6 +1950,7 @@ function selectSseLine(entry: SseLineEntry): void {
 
   selectedSseLine = entry;
   entry.button.classList.add("is-selected");
+  copySsePayloadBtn.disabled = false;
 
   if (entry.isJSON) {
     ssePayloadJsonController = renderJSONText(ssePayloadJsonViewer, entry.payloadText, {
@@ -1955,9 +2083,20 @@ async function loadCollections(): Promise<void> {
       throw new Error(responseText || `Load failed (${response.status})`);
     }
 
-    const parsed = normalizeCollectionStore(JSON.parse(responseText) as Partial<CollectionStore>);
+    const parsed = normalizeCollectionStore(JSON.parse(responseText) as SerializedCollectionStore);
     collectionStore = parsed;
-    prunePersistedDrafts();
+    const hadServerEnvironments = parsed.environments.length > 0;
+    const hadServerRequestDrafts = Object.keys(parsed.request_drafts).length > 0;
+
+    environments = normalizeEnvironments(
+      hadServerEnvironments ? parsed.environments : environments,
+    );
+    activeEnvironmentId = resolveActiveEnvironmentId(
+      environments,
+      hadServerEnvironments ? parsed.active_environment_id : activeEnvironmentId,
+    );
+    requestDrafts = hadServerRequestDrafts ? parsed.request_drafts : requestDrafts;
+    const prunedDrafts = prunePersistedDrafts();
 
     if (!findCollection(activeCollectionId)) {
       activeCollectionId = parsed.collections[0]?.id ?? null;
@@ -1973,9 +2112,13 @@ async function loadCollections(): Promise<void> {
     restoreDraftForCurrentSelection(
       activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined,
     );
+    renderEnvironmentControls();
     renderCollections();
     renderEffectiveAggregationPlugin();
     persistState();
+    if (!hadServerEnvironments || !hadServerRequestDrafts || prunedDrafts) {
+      scheduleCollectionStateSave();
+    }
     setCollectionsStatus(
       parsed.collections.length === 0
         ? "Collections are stored in ./collections.json."
@@ -2004,6 +2147,7 @@ async function createCollection(): Promise<void> {
   };
 
   collectionStore = {
+    ...collectionStore,
     collections: [...collectionStore.collections, nextCollection],
   };
   activeCollectionId = nextCollection.id;
@@ -2042,6 +2186,7 @@ async function saveCurrentRequestToCollection(): Promise<void> {
 
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
+    ...collectionStore,
     collections: collectionStore.collections.map((item) => {
       if (item.id !== activeCollectionId) {
         return item;
@@ -2113,6 +2258,7 @@ async function duplicateCurrentRequest(): Promise<void> {
   });
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
+    ...collectionStore,
     collections: collectionStore.collections.map((collection) => {
       if (collection.id !== activeCollectionId) {
         return collection;
@@ -2171,6 +2317,7 @@ async function deleteCollection(collectionId: string): Promise<void> {
   }
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
+    ...collectionStore,
     collections: collectionStore.collections.filter((item) => item.id !== collectionId),
   };
 
@@ -2183,7 +2330,9 @@ async function deleteCollection(collectionId: string): Promise<void> {
     return;
   }
 
-  prunePersistedDrafts();
+  if (prunePersistedDrafts()) {
+    scheduleCollectionStateSave();
+  }
   restoreDraftForCurrentSelection();
   renderCollections();
   renderEffectiveAggregationPlugin();
@@ -2206,6 +2355,7 @@ async function deleteSavedRequest(collectionId: string, requestId: string): Prom
   }
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
+    ...collectionStore,
     collections: collectionStore.collections.map((item) => {
       if (item.id !== collectionId) {
         return item;
@@ -2238,15 +2388,15 @@ async function saveCollectionsToServer(previous: CollectionStore): Promise<boole
     const response = await fetch("/api/collections", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collectionStore),
+      body: JSON.stringify(buildCollectionStorePayload()),
     });
     const responseText = await response.text();
     if (!response.ok) {
       throw new Error(responseText || `Save failed (${response.status})`);
     }
 
-    collectionStore = normalizeCollectionStore(JSON.parse(responseText) as Partial<CollectionStore>);
-    prunePersistedDrafts();
+    collectionStore = normalizeCollectionStore(JSON.parse(responseText) as SerializedCollectionStore);
+    const prunedDrafts = prunePersistedDrafts();
     if (activeCollectionId && !findCollection(activeCollectionId)) {
       activeCollectionId = collectionStore.collections[0]?.id ?? null;
       activeSavedRequestId = null;
@@ -2255,6 +2405,9 @@ async function saveCollectionsToServer(previous: CollectionStore): Promise<boole
       activeSavedRequestId = null;
     }
     renderDraftStatus();
+    if (prunedDrafts) {
+      scheduleCollectionStateSave();
+    }
     return true;
   } catch (error) {
     collectionStore = previous;
@@ -2280,6 +2433,7 @@ async function updateCollectionAggregationPlugin(
 
   const previous = cloneCollectionStore(collectionStore);
   collectionStore = {
+    ...collectionStore,
     collections: collectionStore.collections.map((item) =>
       item.id === collectionId ? { ...item, aggregation_plugin: pluginId } : item,
     ),
@@ -2446,8 +2600,17 @@ function renderCollections(): void {
   collectionsList.appendChild(fragment);
 }
 
-function normalizeCollectionStore(input: Partial<CollectionStore>): CollectionStore {
+function normalizeCollectionStore(input: Partial<SerializedCollectionStore>): CollectionStore {
   const rawCollections = Array.isArray(input.collections) ? input.collections : [];
+  const environments = Array.isArray(input.environments)
+    ? input.environments
+        .map((environment) => ({
+          id: typeof environment.id === "string" ? environment.id : makeId("env"),
+          name: typeof environment.name === "string" ? environment.name.trim() : "",
+          text: typeof environment.text === "string" ? environment.text : "",
+        }))
+        .filter((environment) => environment.name !== "")
+    : [];
   return {
     collections: rawCollections
       .map((collection) => ({
@@ -2492,6 +2655,13 @@ function normalizeCollectionStore(input: Partial<CollectionStore>): CollectionSt
           : [],
       }))
       .filter((collection) => collection.name.trim() !== ""),
+    environments,
+    active_environment_id:
+      typeof input.active_environment_id === "string" &&
+      environments.some((environment) => environment.id === input.active_environment_id)
+        ? input.active_environment_id
+        : null,
+    request_drafts: normalizePersistedRequestDraftStore(input.request_drafts),
   };
 }
 
@@ -2590,8 +2760,6 @@ function setLoading(isLoading: boolean): void {
   aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
   copyBodyBtn.disabled = isLoading;
-  copyRawResponseBtn.disabled = isLoading;
-  copyAggregateResponseBtn.disabled = isLoading;
   bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";

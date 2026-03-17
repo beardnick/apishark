@@ -217,12 +217,28 @@ export function normalizePersistedRequestDraftStore(input: unknown): PersistedRe
     return {};
   }
 
-  const entries = Object.values(input as Record<string, unknown>);
+  const entries = Array.isArray(input) ? input : Object.values(input as Record<string, unknown>);
   const normalizedEntries = entries
     .map(normalizePersistedRequestDraft)
     .filter((entry): entry is PersistedRequestDraft => entry !== null);
 
   return Object.fromEntries(normalizedEntries.map((entry) => [entry.key, entry]));
+}
+
+export function serializePersistedRequestDraftStore(
+  store: PersistedRequestDraftStore,
+): PersistedRequestDraft[] {
+  return Object.values(store)
+    .map((entry) => ({
+      ...entry,
+      draft: cloneRequestLibraryDraft(entry.draft),
+    }))
+    .sort((left, right) => {
+      if (left.updated_at === right.updated_at) {
+        return left.key.localeCompare(right.key);
+      }
+      return left.updated_at.localeCompare(right.updated_at);
+    });
 }
 
 export function resolveEffectiveAggregationPlugin(input: {

@@ -4,7 +4,7 @@ import { aggregateFragmentSize, aggregateFragmentsToText, isAggregateMediaFragme
 import { AGGREGATION_PLUGIN_NONE, AGGREGATION_PLUGIN_OPENAI, ResponseAggregationRuntime, aggregationPluginLabel, ensureAggregationPluginLoaded, getImportedAggregationPluginManifests, hasAggregationPlugin, listAggregationPlugins, parseImportedAggregationPluginFile, resolveAggregationPluginId, setImportedAggregationPluginManifests, } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
-import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, setPersistedRequestDraft, } from "./request-library.js";
+import { createDuplicateRequestDraft, deletePersistedRequestDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, serializePersistedRequestDraftStore, setPersistedRequestDraft, } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
 import { applyUtilitySidebarCollapsedState, normalizeUtilitySidebarCollapsed, } from "./utility-sidebar.js";
 import { setupUtilitySections, } from "./utility-sections.js";
@@ -15,6 +15,7 @@ const AGGREGATE_OUTPUT_MAX_CHARS = 120000;
 const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
+const COLLECTION_STATE_SAVE_DELAY_MS = 500;
 const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
 const VALID_UTILITY_PANEL_IDS = new Set([
     "environmentUtility",
@@ -45,6 +46,7 @@ const bodyEditorHint = byId("bodyEditorHint");
 const bodyInput = byId("bodyInput");
 const bodyEditor = byId("bodyEditor");
 const copyBodyBtn = byId("copyBodyBtn");
+const bodyUndoBtn = byId("bodyUndoBtn");
 const bodyPrettifyBtn = byId("bodyPrettifyBtn");
 const bodyCollapseBtn = byId("bodyCollapseBtn");
 const bodyExpandBtn = byId("bodyExpandBtn");
@@ -82,6 +84,7 @@ const copyAggregateResponseBtn = byId("copyAggregateResponseBtn");
 const sseInspector = byId("sseInspector");
 const sseLineList = byId("sseLineList");
 const ssePayloadMeta = byId("ssePayloadMeta");
+const copySsePayloadBtn = byId("copySsePayloadBtn");
 const ssePayloadCollapseBtn = byId("ssePayloadCollapseBtn");
 const ssePayloadExpandBtn = byId("ssePayloadExpandBtn");
 const ssePayloadJsonViewer = byId("ssePayloadJsonViewer");
@@ -96,11 +99,17 @@ let requestIsLoading = false;
 let environments = [];
 let activeEnvironmentId = null;
 let headerRows = [];
-let collectionStore = { collections: [] };
+let collectionStore = {
+    collections: [],
+    environments: [],
+    active_environment_id: null,
+    request_drafts: {},
+};
 let requestDrafts = {};
 let activeCollectionId = null;
 let activeSavedRequestId = null;
 let draftAutosaveTimer = null;
+let collectionStateSaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let bodyEditorHasJSON = false;
@@ -118,6 +127,7 @@ const bodyEditorController = createBodyEditor({
     input: bodyInput,
     ariaLabelledBy: "bodyEditorLabel",
     editable: !requestIsLoading,
+    undoStorageKey: "apishark.body-editor.undo.v1",
     onStateChange: (event) => {
         syncBodyEditor();
         if (event.reason === "doc" && event.source === "user") {
@@ -130,6 +140,7 @@ function wireEvents() {
         activeEnvironmentId = environmentSelect.value || null;
         syncEnvironmentEditor();
         persistState();
+        scheduleCollectionStateSave();
     });
     createEnvironmentBtn.addEventListener("click", () => {
         createEnvironment();
@@ -184,6 +195,9 @@ function wireEvents() {
     copyBodyBtn.addEventListener("click", () => {
         void copyRequestBody();
     });
+    bodyUndoBtn.addEventListener("click", () => {
+        undoBodyEdit();
+    });
     copyAggregateResponseBtn.addEventListener("click", () => {
         void copyAggregateResponse();
     });
@@ -192,6 +206,9 @@ function wireEvents() {
     bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
     copyRawResponseBtn.addEventListener("click", () => {
         void copyRawResponse();
+    });
+    copySsePayloadBtn.addEventListener("click", () => {
+        void copySelectedSsePayload();
     });
     rawCollapseBtn.addEventListener("click", () => rawJsonController?.collapseAll());
     rawExpandBtn.addEventListener("click", () => rawJsonController?.expandAll());
@@ -375,6 +392,40 @@ function persistState() {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
+function buildCollectionStorePayload() {
+    return {
+        collections: cloneCollectionStore(collectionStore).collections,
+        environments: environments.map((environment) => ({ ...environment })),
+        active_environment_id: activeEnvironmentId,
+        request_drafts: serializePersistedRequestDraftStore(requestDrafts),
+    };
+}
+function scheduleCollectionStateSave() {
+    if (collectionStateSaveTimer !== null) {
+        window.clearTimeout(collectionStateSaveTimer);
+    }
+    collectionStateSaveTimer = window.setTimeout(() => {
+        collectionStateSaveTimer = null;
+        void saveCollectionStateToServer();
+    }, COLLECTION_STATE_SAVE_DELAY_MS);
+}
+async function saveCollectionStateToServer() {
+    try {
+        const response = await fetch("/api/collections", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(buildCollectionStorePayload()),
+        });
+        const responseText = await response.text();
+        if (!response.ok) {
+            throw new Error(responseText || `Save failed (${response.status})`);
+        }
+        collectionStore = normalizeCollectionStore(JSON.parse(responseText));
+    }
+    catch (error) {
+        setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
+    }
+}
 function setUtilitySidebarCollapsed(collapsed, panelId) {
     const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
     utilitySidebarCollapsed = collapsed;
@@ -432,10 +483,17 @@ function persistCurrentRequestDraft() {
         : setPersistedRequestDraft(requestDrafts, { scope, draft: currentDraft });
     persistState();
     renderDraftStatus();
+    scheduleCollectionStateSave();
 }
 function clearPersistedRequestDraft(scope) {
-    requestDrafts = deletePersistedRequestDraft(requestDrafts, scope);
+    const next = deletePersistedRequestDraft(requestDrafts, scope);
+    if (next === requestDrafts) {
+        return;
+    }
+    requestDrafts = next;
     renderDraftStatus();
+    persistState();
+    scheduleCollectionStateSave();
 }
 function restoreDraftForCurrentSelection(fallbackDraft) {
     const persistedDraft = getPersistedRequestDraft(requestDrafts, currentRequestDraftScope());
@@ -466,10 +524,15 @@ function renderDraftStatus() {
     draftStatusText.textContent = hasDraft ? "Draft saved" : "";
 }
 function prunePersistedDrafts() {
-    requestDrafts = prunePersistedRequestDraftStore(requestDrafts, {
+    const next = prunePersistedRequestDraftStore(requestDrafts, {
         collectionIds: collectionStore.collections.map((collection) => collection.id),
         requestIds: collectionStore.collections.flatMap((collection) => collection.requests.map((request) => request.id)),
     });
+    if (next === requestDrafts) {
+        return false;
+    }
+    requestDrafts = next;
+    return true;
 }
 function renderEnvironmentControls() {
     environments = normalizeEnvironments(environments);
@@ -507,6 +570,7 @@ function patchActiveEnvironment(patch) {
     }
     environments = environments.map((environment) => environment.id === activeEnvironment.id ? { ...environment, ...patch } : environment);
     persistState();
+    scheduleCollectionStateSave();
 }
 function createEnvironment() {
     const suggestedName = nextEnvironmentName();
@@ -519,6 +583,7 @@ function createEnvironment() {
     activeEnvironmentId = environment.id;
     renderEnvironmentControls();
     persistState();
+    scheduleCollectionStateSave();
 }
 function renameActiveEnvironment() {
     const activeEnvironment = getActiveEnvironment();
@@ -546,6 +611,7 @@ function deleteActiveEnvironment() {
         environments[index]?.id ?? environments[index - 1]?.id ?? environments[0]?.id ?? null;
     renderEnvironmentControls();
     persistState();
+    scheduleCollectionStateSave();
 }
 function nextEnvironmentName() {
     const usedNames = new Set(environments.map((environment) => environment.name));
@@ -709,6 +775,7 @@ function syncBodyEditor() {
     bodyEditorShell.classList.toggle("is-collapsed", result.hasFoldedBlocks);
     syncBodyEditorBanner(result);
     bodyEditor.setAttribute("aria-disabled", requestIsLoading ? "true" : "false");
+    bodyUndoBtn.disabled = requestIsLoading || !bodyEditorController.canUndo();
     bodyCollapseBtn.disabled = !result.hasJSON || requestIsLoading || result.foldableBlockCount === 0 || result.isFullyCollapsed;
     bodyExpandBtn.disabled = !result.hasJSON || requestIsLoading || !result.hasFoldedBlocks;
 }
@@ -744,6 +811,16 @@ function focusBodyEditor(selectAll = false) {
 function setBodyEditorText(text) {
     bodyEditorController.setText(text);
     syncBodyEditor();
+}
+function undoBodyEdit() {
+    if (requestIsLoading) {
+        return;
+    }
+    if (!bodyEditorController.undo()) {
+        return;
+    }
+    syncBodyEditor();
+    markRequestEditorChanged();
 }
 function collapseBodyJSON() {
     if (!bodyEditorHasJSON || requestIsLoading) {
@@ -1048,7 +1125,7 @@ async function copyRequestBody() {
     setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 async function copyRawResponse() {
-    const text = plainRawResponseBuffer.snapshotText();
+    const text = snapshotRawResponseText();
     if (!text) {
         setError("Raw response is empty.");
         return;
@@ -1070,6 +1147,34 @@ async function copyAggregateResponse() {
         return;
     }
     setError("Clipboard copy failed. Select the aggregated response text and copy it manually.");
+}
+async function copySelectedSsePayload() {
+    const text = selectedSseLine?.payloadText ?? "";
+    if (!text) {
+        setError("Select an SSE line first.");
+        return;
+    }
+    if (await writeClipboardText(text)) {
+        setSuccess(`Copied payload from line ${selectedSseLine?.index}.`);
+        return;
+    }
+    if (selectedSseLine?.isJSON) {
+        setError("Clipboard copy failed. Use the JSON payload view to copy it manually.");
+        return;
+    }
+    ssePayloadOutput.focus();
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(ssePayloadOutput);
+    selection?.addRange(range);
+    setError("Clipboard copy failed. Select the payload text and copy it manually.");
+}
+function snapshotRawResponseText() {
+    if (rawResponseMode !== "sse") {
+        return plainRawResponseBuffer.snapshotText();
+    }
+    return sseLineEntries.map((entry) => entry.rawLine).join("\n");
 }
 async function sendRequest() {
     setError("");
@@ -1335,6 +1440,7 @@ function clearSseInspector() {
     sseLineCounter = 0;
     sseLineList.textContent = "";
     ssePayloadMeta.textContent = "Click a line to inspect payload.";
+    copySsePayloadBtn.disabled = true;
     ssePayloadOutput.textContent = "";
     ssePayloadJsonViewer.textContent = "";
     ssePayloadJsonViewer.classList.add("is-hidden");
@@ -1394,6 +1500,7 @@ function selectSseLine(entry) {
     }
     selectedSseLine = entry;
     entry.button.classList.add("is-selected");
+    copySsePayloadBtn.disabled = false;
     if (entry.isJSON) {
         ssePayloadJsonController = renderJSONText(ssePayloadJsonViewer, entry.payloadText, {
             expandDepth: 2,
@@ -1512,7 +1619,12 @@ async function loadCollections() {
         }
         const parsed = normalizeCollectionStore(JSON.parse(responseText));
         collectionStore = parsed;
-        prunePersistedDrafts();
+        const hadServerEnvironments = parsed.environments.length > 0;
+        const hadServerRequestDrafts = Object.keys(parsed.request_drafts).length > 0;
+        environments = normalizeEnvironments(hadServerEnvironments ? parsed.environments : environments);
+        activeEnvironmentId = resolveActiveEnvironmentId(environments, hadServerEnvironments ? parsed.active_environment_id : activeEnvironmentId);
+        requestDrafts = hadServerRequestDrafts ? parsed.request_drafts : requestDrafts;
+        const prunedDrafts = prunePersistedDrafts();
         if (!findCollection(activeCollectionId)) {
             activeCollectionId = parsed.collections[0]?.id ?? null;
         }
@@ -1524,9 +1636,13 @@ async function loadCollections() {
         }
         const activeSavedRequest = findSavedRequest(activeCollectionId, activeSavedRequestId);
         restoreDraftForCurrentSelection(activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined);
+        renderEnvironmentControls();
         renderCollections();
         renderEffectiveAggregationPlugin();
         persistState();
+        if (!hadServerEnvironments || !hadServerRequestDrafts || prunedDrafts) {
+            scheduleCollectionStateSave();
+        }
         setCollectionsStatus(parsed.collections.length === 0
             ? "Collections are stored in ./collections.json."
             : `Loaded ${parsed.collections.length} collection${parsed.collections.length === 1 ? "" : "s"}.`);
@@ -1551,6 +1667,7 @@ async function createCollection() {
         requests: [],
     };
     collectionStore = {
+        ...collectionStore,
         collections: [...collectionStore.collections, nextCollection],
     };
     activeCollectionId = nextCollection.id;
@@ -1583,6 +1700,7 @@ async function saveCurrentRequestToCollection() {
     });
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
+        ...collectionStore,
         collections: collectionStore.collections.map((item) => {
             if (item.id !== activeCollectionId) {
                 return item;
@@ -1640,6 +1758,7 @@ async function duplicateCurrentRequest() {
     });
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
+        ...collectionStore,
         collections: collectionStore.collections.map((collection) => {
             if (collection.id !== activeCollectionId) {
                 return collection;
@@ -1690,6 +1809,7 @@ async function deleteCollection(collectionId) {
     }
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
+        ...collectionStore,
         collections: collectionStore.collections.filter((item) => item.id !== collectionId),
     };
     if (activeCollectionId === collectionId) {
@@ -1699,7 +1819,9 @@ async function deleteCollection(collectionId) {
     if (!(await saveCollectionsToServer(previous))) {
         return;
     }
-    prunePersistedDrafts();
+    if (prunePersistedDrafts()) {
+        scheduleCollectionStateSave();
+    }
     restoreDraftForCurrentSelection();
     renderCollections();
     renderEffectiveAggregationPlugin();
@@ -1720,6 +1842,7 @@ async function deleteSavedRequest(collectionId, requestId) {
     }
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
+        ...collectionStore,
         collections: collectionStore.collections.map((item) => {
             if (item.id !== collectionId) {
                 return item;
@@ -1748,14 +1871,14 @@ async function saveCollectionsToServer(previous) {
         const response = await fetch("/api/collections", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(collectionStore),
+            body: JSON.stringify(buildCollectionStorePayload()),
         });
         const responseText = await response.text();
         if (!response.ok) {
             throw new Error(responseText || `Save failed (${response.status})`);
         }
         collectionStore = normalizeCollectionStore(JSON.parse(responseText));
-        prunePersistedDrafts();
+        const prunedDrafts = prunePersistedDrafts();
         if (activeCollectionId && !findCollection(activeCollectionId)) {
             activeCollectionId = collectionStore.collections[0]?.id ?? null;
             activeSavedRequestId = null;
@@ -1764,6 +1887,9 @@ async function saveCollectionsToServer(previous) {
             activeSavedRequestId = null;
         }
         renderDraftStatus();
+        if (prunedDrafts) {
+            scheduleCollectionStateSave();
+        }
         return true;
     }
     catch (error) {
@@ -1784,6 +1910,7 @@ async function updateCollectionAggregationPlugin(collectionId, pluginId) {
     }
     const previous = cloneCollectionStore(collectionStore);
     collectionStore = {
+        ...collectionStore,
         collections: collectionStore.collections.map((item) => item.id === collectionId ? { ...item, aggregation_plugin: pluginId } : item),
     };
     if (!(await saveCollectionsToServer(previous))) {
@@ -1925,6 +2052,15 @@ function renderCollections() {
 }
 function normalizeCollectionStore(input) {
     const rawCollections = Array.isArray(input.collections) ? input.collections : [];
+    const environments = Array.isArray(input.environments)
+        ? input.environments
+            .map((environment) => ({
+            id: typeof environment.id === "string" ? environment.id : makeId("env"),
+            name: typeof environment.name === "string" ? environment.name.trim() : "",
+            text: typeof environment.text === "string" ? environment.text : "",
+        }))
+            .filter((environment) => environment.name !== "")
+        : [];
     return {
         collections: rawCollections
             .map((collection) => ({
@@ -1960,6 +2096,12 @@ function normalizeCollectionStore(input) {
                 : [],
         }))
             .filter((collection) => collection.name.trim() !== ""),
+        environments,
+        active_environment_id: typeof input.active_environment_id === "string" &&
+            environments.some((environment) => environment.id === input.active_environment_id)
+            ? input.active_environment_id
+            : null,
+        request_drafts: normalizePersistedRequestDraftStore(input.request_drafts),
     };
 }
 function normalizeSavedHeaders(headers) {
@@ -2041,8 +2183,6 @@ function setLoading(isLoading) {
     aggregationPluginInput.disabled = isLoading;
     addHeaderBtn.disabled = isLoading;
     copyBodyBtn.disabled = isLoading;
-    copyRawResponseBtn.disabled = isLoading;
-    copyAggregateResponseBtn.disabled = isLoading;
     bodyPrettifyBtn.disabled = isLoading;
     abortBtn.disabled = !isLoading;
     sendBtn.textContent = isLoading ? "Sending..." : "Send";

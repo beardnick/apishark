@@ -122,11 +122,24 @@ export function normalizePersistedRequestDraftStore(input) {
     if (!input || typeof input !== "object") {
         return {};
     }
-    const entries = Object.values(input);
+    const entries = Array.isArray(input) ? input : Object.values(input);
     const normalizedEntries = entries
         .map(normalizePersistedRequestDraft)
         .filter((entry) => entry !== null);
     return Object.fromEntries(normalizedEntries.map((entry) => [entry.key, entry]));
+}
+export function serializePersistedRequestDraftStore(store) {
+    return Object.values(store)
+        .map((entry) => ({
+        ...entry,
+        draft: cloneRequestLibraryDraft(entry.draft),
+    }))
+        .sort((left, right) => {
+        if (left.updated_at === right.updated_at) {
+            return left.key.localeCompare(right.key);
+        }
+        return left.updated_at.localeCompare(right.updated_at);
+    });
 }
 export function resolveEffectiveAggregationPlugin(input) {
     if (input.useCollectionPlugin) {

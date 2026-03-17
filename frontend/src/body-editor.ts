@@ -81,6 +81,7 @@ export type CreateBodyEditorOptions = {
   input: HTMLTextAreaElement;
   placeholderText?: string;
   editable?: boolean;
+  undoStorageKey?: string;
   ariaLabelledBy?: string;
   onStateChange?: (event: BodyEditorStateChangeEvent) => void;
 };
@@ -91,6 +92,8 @@ export type BodyEditorController = {
   getText(): string;
   setText(text: string): void;
   setEditable(editable: boolean): void;
+  canUndo(): boolean;
+  undo(): boolean;
   getSnapshot(): BodyEditorSnapshot;
   collapseAll(): boolean;
   expandAll(): boolean;
@@ -130,12 +133,20 @@ type BodyEditorComputedState = {
   decorations: DecorationSet;
 };
 
+type BodyEditorUndoEntry = {
+  text: string;
+  foldedPaths: string[];
+};
+
 const setFoldedPathsEffect = StateEffect.define<readonly string[]>();
 
 const editableCompartment = new Compartment();
 
 export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorController {
   let dispatchSource: BodyEditorChangeSource = "user";
+  let undoEntry = loadUndoEntry(options.undoStorageKey);
+  let suppressNextUndoCapture = false;
+  let runUndoCommand = (_view: EditorView): boolean => false;
 
   const state = EditorState.create({
     doc: options.input.value,
@@ -145,9 +156,10 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
       bodyEditorFoldGutter(),
       lineNumbers(),
       placeholder(options.placeholderText ?? options.input.placeholder ?? ""),
+      EditorView.lineWrapping,
       editableCompartment.of(EditorView.editable.of(options.editable ?? true)),
       bodyEditorComputedField,
-      bodyEditorKeymap(),
+      bodyEditorKeymap((view) => runUndoCommand(view)),
       EditorView.contentAttributes.of({
         ...(options.ariaLabelledBy ? { "aria-labelledby": options.ariaLabelledBy } : {}),
         "aria-multiline": "true",
@@ -160,6 +172,12 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
         if (!update.docChanged && !hasFoldChange(update.transactions)) {
           return;
         }
+
+        if (update.docChanged && source === "user" && !suppressNextUndoCapture) {
+          undoEntry = getUndoEntry(update.startState);
+          persistUndoEntry(options.undoStorageKey, undoEntry);
+        }
+        suppressNextUndoCapture = false;
 
         options.input.value = update.state.doc.toString();
         options.onStateChange?.({
@@ -199,6 +217,32 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
   options.parent.classList.add("body-code-editor");
   options.input.value = view.state.doc.toString();
 
+  runUndoCommand = (view) => {
+    if (!undoEntry || !view.state.facet(EditorView.editable)) {
+      return false;
+    }
+
+    const entry = undoEntry;
+    undoEntry = null;
+    persistUndoEntry(options.undoStorageKey, null);
+    suppressNextUndoCapture = true;
+    dispatchSource = "user";
+    try {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: entry.text,
+        },
+        effects: setFoldedPathsEffect.of(entry.foldedPaths),
+      });
+    } finally {
+      dispatchSource = "user";
+    }
+    options.input.value = entry.text;
+    return true;
+  };
+
   function dispatchWithSource(spec: Parameters<EditorView["dispatch"]>[0], source: BodyEditorChangeSource): void {
     dispatchSource = source;
     try {
@@ -229,6 +273,8 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
       return view.state.doc.toString();
     },
     setText(text: string) {
+      undoEntry = null;
+      persistUndoEntry(options.undoStorageKey, null);
       if (text === view.state.doc.toString()) {
         options.input.value = text;
         return;
@@ -254,6 +300,12 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
         },
         "api",
       );
+    },
+    canUndo() {
+      return undoEntry !== null;
+    },
+    undo() {
+      return runUndoCommand(view);
     },
     getSnapshot() {
       return getSnapshot(view.state);
@@ -292,6 +344,9 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
       if (!pretty) {
         return null;
       }
+
+      undoEntry = getUndoEntry(view.state);
+      persistUndoEntry(options.undoStorageKey, undoEntry);
 
       dispatchWithSource(
         {
@@ -533,7 +588,7 @@ function bodyEditorFoldGutter(): Extension {
   });
 }
 
-function bodyEditorKeymap(): Extension {
+function bodyEditorKeymap(runUndo: (view: EditorView) => boolean): Extension {
   return keymap.of([
     {
       key: "Enter",
@@ -548,12 +603,64 @@ function bodyEditorKeymap(): Extension {
       },
     },
     {
+      key: "Mod-z",
+      run(view) {
+        runUndo(view);
+        return true;
+      },
+    },
+    {
       key: "Tab",
       run(view) {
         return insertBodyEditorText(view, "  ");
       },
     },
   ]);
+}
+
+function getUndoEntry(state: EditorState): BodyEditorUndoEntry {
+  return {
+    text: state.doc.toString(),
+    foldedPaths: [...state.field(bodyEditorComputedField).analysis.foldedPaths],
+  };
+}
+
+function loadUndoEntry(storageKey: string | undefined): BodyEditorUndoEntry | null {
+  if (!storageKey || typeof sessionStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<BodyEditorUndoEntry>;
+    return {
+      text: typeof parsed.text === "string" ? parsed.text : "",
+      foldedPaths: Array.isArray(parsed.foldedPaths)
+        ? parsed.foldedPaths.filter((value): value is string => typeof value === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistUndoEntry(storageKey: string | undefined, entry: BodyEditorUndoEntry | null): void {
+  if (!storageKey || typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  try {
+    if (!entry) {
+      sessionStorage.removeItem(storageKey);
+      return;
+    }
+    sessionStorage.setItem(storageKey, JSON.stringify(entry));
+  } catch {
+    // Ignore storage failures so the editor keeps working even in restricted browsers.
+  }
 }
 
 function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEditorComputedState {

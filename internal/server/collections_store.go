@@ -23,17 +23,17 @@ type SavedHeader struct {
 }
 
 type SavedRequest struct {
-	ID                           string        `json:"id"`
-	Name                         string        `json:"name"`
-	Method                       string        `json:"method"`
-	URL                          string        `json:"url"`
-	Headers                      []SavedHeader `json:"headers"`
-	Body                         string        `json:"body"`
-	AggregationPlugin            string        `json:"aggregation_plugin,omitempty"`
-	UseCollectionAggregationPlugin bool       `json:"use_collection_aggregation_plugin,omitempty"`
-	AggregateOpenAISSE           bool          `json:"aggregate_openai_sse"`
-	TimeoutSeconds               int           `json:"timeout_seconds"`
-	UpdatedAt                    string        `json:"updated_at,omitempty"`
+	ID                             string        `json:"id"`
+	Name                           string        `json:"name"`
+	Method                         string        `json:"method"`
+	URL                            string        `json:"url"`
+	Headers                        []SavedHeader `json:"headers"`
+	Body                           string        `json:"body"`
+	AggregationPlugin              string        `json:"aggregation_plugin,omitempty"`
+	UseCollectionAggregationPlugin bool          `json:"use_collection_aggregation_plugin,omitempty"`
+	AggregateOpenAISSE             bool          `json:"aggregate_openai_sse"`
+	TimeoutSeconds                 int           `json:"timeout_seconds"`
+	UpdatedAt                      string        `json:"updated_at,omitempty"`
 }
 
 type RequestCollection struct {
@@ -43,8 +43,37 @@ type RequestCollection struct {
 	Requests          []SavedRequest `json:"requests"`
 }
 
+type EnvironmentEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
+type RequestDraft struct {
+	Name                           string        `json:"name"`
+	Method                         string        `json:"method"`
+	URL                            string        `json:"url"`
+	Headers                        []SavedHeader `json:"headers"`
+	Body                           string        `json:"body"`
+	AggregationPlugin              string        `json:"aggregation_plugin,omitempty"`
+	UseCollectionAggregationPlugin bool          `json:"use_collection_aggregation_plugin"`
+	AggregateOpenAISSE             bool          `json:"aggregate_openai_sse"`
+	TimeoutSeconds                 int           `json:"timeout_seconds"`
+}
+
+type PersistedRequestDraft struct {
+	Key          string       `json:"key"`
+	CollectionID string       `json:"collection_id,omitempty"`
+	RequestID    string       `json:"request_id,omitempty"`
+	UpdatedAt    string       `json:"updated_at,omitempty"`
+	Draft        RequestDraft `json:"draft"`
+}
+
 type CollectionStore struct {
-	Collections []RequestCollection `json:"collections"`
+	Collections         []RequestCollection     `json:"collections"`
+	Environments        []EnvironmentEntry      `json:"environments"`
+	ActiveEnvironmentID string                  `json:"active_environment_id,omitempty"`
+	RequestDrafts       []PersistedRequestDraft `json:"request_drafts"`
 }
 
 type collectionFileStore struct {
@@ -130,8 +159,14 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 	}
 
 	normalized := CollectionStore{
-		Collections: make([]RequestCollection, 0, len(store.Collections)),
+		Collections:   make([]RequestCollection, 0, len(store.Collections)),
+		Environments:  normalizeEnvironmentEntries(store.Environments),
+		RequestDrafts: normalizePersistedRequestDrafts(store.RequestDrafts),
 	}
+	normalized.ActiveEnvironmentID = resolveActiveEnvironmentID(
+		normalized.Environments,
+		store.ActiveEnvironmentID,
+	)
 
 	for _, collection := range store.Collections {
 		name := strings.TrimSpace(collection.Name)
@@ -183,10 +218,125 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 	}
 
 	if len(normalized.Collections) == 0 {
-		return emptyCollectionStore()
+		return CollectionStore{
+			Collections:         []RequestCollection{},
+			Environments:        normalized.Environments,
+			ActiveEnvironmentID: normalized.ActiveEnvironmentID,
+			RequestDrafts:       normalized.RequestDrafts,
+		}
 	}
 
 	return normalized
+}
+
+func normalizeEnvironmentEntries(entries []EnvironmentEntry) []EnvironmentEntry {
+	if len(entries) == 0 {
+		return []EnvironmentEntry{}
+	}
+
+	normalized := make([]EnvironmentEntry, 0, len(entries))
+	for _, entry := range entries {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+
+		normalized = append(normalized, EnvironmentEntry{
+			ID:   strings.TrimSpace(entry.ID),
+			Name: name,
+			Text: entry.Text,
+		})
+	}
+
+	return normalized
+}
+
+func resolveActiveEnvironmentID(entries []EnvironmentEntry, preferred string) string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if entry.ID == preferred {
+			return preferred
+		}
+	}
+
+	return ""
+}
+
+func normalizePersistedRequestDrafts(drafts []PersistedRequestDraft) []PersistedRequestDraft {
+	if len(drafts) == 0 {
+		return []PersistedRequestDraft{}
+	}
+
+	normalized := make([]PersistedRequestDraft, 0, len(drafts))
+	for _, draft := range drafts {
+		requestID := strings.TrimSpace(draft.RequestID)
+		collectionID := strings.TrimSpace(draft.CollectionID)
+		key := strings.TrimSpace(draft.Key)
+		if key == "" {
+			key = requestDraftKey(collectionID, requestID)
+		}
+
+		normalized = append(normalized, PersistedRequestDraft{
+			Key:          key,
+			CollectionID: collectionID,
+			RequestID:    requestID,
+			UpdatedAt:    strings.TrimSpace(draft.UpdatedAt),
+			Draft:        normalizeRequestDraft(draft.Draft),
+		})
+	}
+
+	return normalized
+}
+
+func normalizeRequestDraft(draft RequestDraft) RequestDraft {
+	aggregationPlugin := normalizeAggregationPlugin(
+		draft.AggregationPlugin,
+		draft.AggregateOpenAISSE,
+	)
+	useCollectionAggregationPlugin := draft.UseCollectionAggregationPlugin
+	if useCollectionAggregationPlugin {
+		aggregationPlugin = ""
+	}
+
+	normalized := RequestDraft{
+		Name:                           strings.TrimSpace(draft.Name),
+		Method:                         strings.ToUpper(strings.TrimSpace(draft.Method)),
+		URL:                            draft.URL,
+		Headers:                        normalizeSavedHeaders(draft.Headers),
+		Body:                           draft.Body,
+		AggregationPlugin:              aggregationPlugin,
+		UseCollectionAggregationPlugin: useCollectionAggregationPlugin,
+		AggregateOpenAISSE:             aggregationPlugin == "openai",
+		TimeoutSeconds:                 draft.TimeoutSeconds,
+	}
+	if normalized.Name == "" {
+		normalized.Name = "Untitled Request"
+	}
+	if normalized.Method == "" {
+		normalized.Method = "GET"
+	}
+	if normalized.TimeoutSeconds <= 0 {
+		normalized.TimeoutSeconds = 120
+	}
+
+	return normalized
+}
+
+func requestDraftKey(collectionID string, requestID string) string {
+	if collectionID != "" && requestID != "" {
+		return fmt.Sprintf("collection:%s:request:%s", collectionID, requestID)
+	}
+	if requestID != "" {
+		return fmt.Sprintf("request:%s", requestID)
+	}
+	if collectionID != "" {
+		return fmt.Sprintf("collection:%s:unsaved", collectionID)
+	}
+	return "workspace:unsaved"
 }
 
 func normalizeSavedHeaders(headers []SavedHeader) []SavedHeader {
@@ -206,5 +356,9 @@ func normalizeSavedHeaders(headers []SavedHeader) []SavedHeader {
 }
 
 func emptyCollectionStore() CollectionStore {
-	return CollectionStore{Collections: []RequestCollection{}}
+	return CollectionStore{
+		Collections:   []RequestCollection{},
+		Environments:  []EnvironmentEntry{},
+		RequestDrafts: []PersistedRequestDraft{},
+	}
 }

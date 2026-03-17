@@ -5,6 +5,9 @@ const setFoldedPathsEffect = StateEffect.define();
 const editableCompartment = new Compartment();
 export function createBodyEditor(options) {
     let dispatchSource = "user";
+    let undoEntry = loadUndoEntry(options.undoStorageKey);
+    let suppressNextUndoCapture = false;
+    let runUndoCommand = (_view) => false;
     const state = EditorState.create({
         doc: options.input.value,
         extensions: [
@@ -13,9 +16,10 @@ export function createBodyEditor(options) {
             bodyEditorFoldGutter(),
             lineNumbers(),
             placeholder(options.placeholderText ?? options.input.placeholder ?? ""),
+            EditorView.lineWrapping,
             editableCompartment.of(EditorView.editable.of(options.editable ?? true)),
             bodyEditorComputedField,
-            bodyEditorKeymap(),
+            bodyEditorKeymap((view) => runUndoCommand(view)),
             EditorView.contentAttributes.of({
                 ...(options.ariaLabelledBy ? { "aria-labelledby": options.ariaLabelledBy } : {}),
                 "aria-multiline": "true",
@@ -27,6 +31,11 @@ export function createBodyEditor(options) {
                 if (!update.docChanged && !hasFoldChange(update.transactions)) {
                     return;
                 }
+                if (update.docChanged && source === "user" && !suppressNextUndoCapture) {
+                    undoEntry = getUndoEntry(update.startState);
+                    persistUndoEntry(options.undoStorageKey, undoEntry);
+                }
+                suppressNextUndoCapture = false;
                 options.input.value = update.state.doc.toString();
                 options.onStateChange?.({
                     reason: update.docChanged ? "doc" : "fold",
@@ -62,6 +71,31 @@ export function createBodyEditor(options) {
     });
     options.parent.classList.add("body-code-editor");
     options.input.value = view.state.doc.toString();
+    runUndoCommand = (view) => {
+        if (!undoEntry || !view.state.facet(EditorView.editable)) {
+            return false;
+        }
+        const entry = undoEntry;
+        undoEntry = null;
+        persistUndoEntry(options.undoStorageKey, null);
+        suppressNextUndoCapture = true;
+        dispatchSource = "user";
+        try {
+            view.dispatch({
+                changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: entry.text,
+                },
+                effects: setFoldedPathsEffect.of(entry.foldedPaths),
+            });
+        }
+        finally {
+            dispatchSource = "user";
+        }
+        options.input.value = entry.text;
+        return true;
+    };
     function dispatchWithSource(spec, source) {
         dispatchSource = source;
         try {
@@ -88,6 +122,8 @@ export function createBodyEditor(options) {
             return view.state.doc.toString();
         },
         setText(text) {
+            undoEntry = null;
+            persistUndoEntry(options.undoStorageKey, null);
             if (text === view.state.doc.toString()) {
                 options.input.value = text;
                 return;
@@ -106,6 +142,12 @@ export function createBodyEditor(options) {
             dispatchWithSource({
                 effects: editableCompartment.reconfigure(EditorView.editable.of(editable)),
             }, "api");
+        },
+        canUndo() {
+            return undoEntry !== null;
+        },
+        undo() {
+            return runUndoCommand(view);
         },
         getSnapshot() {
             return getSnapshot(view.state);
@@ -136,6 +178,8 @@ export function createBodyEditor(options) {
             if (!pretty) {
                 return null;
             }
+            undoEntry = getUndoEntry(view.state);
+            persistUndoEntry(options.undoStorageKey, undoEntry);
             dispatchWithSource({
                 changes: {
                     from: 0,
@@ -330,7 +374,7 @@ function bodyEditorFoldGutter() {
         },
     });
 }
-function bodyEditorKeymap() {
+function bodyEditorKeymap(runUndo) {
     return keymap.of([
         {
             key: "Enter",
@@ -345,12 +389,61 @@ function bodyEditorKeymap() {
             },
         },
         {
+            key: "Mod-z",
+            run(view) {
+                runUndo(view);
+                return true;
+            },
+        },
+        {
             key: "Tab",
             run(view) {
                 return insertBodyEditorText(view, "  ");
             },
         },
     ]);
+}
+function getUndoEntry(state) {
+    return {
+        text: state.doc.toString(),
+        foldedPaths: [...state.field(bodyEditorComputedField).analysis.foldedPaths],
+    };
+}
+function loadUndoEntry(storageKey) {
+    if (!storageKey || typeof sessionStorage === "undefined") {
+        return null;
+    }
+    try {
+        const raw = sessionStorage.getItem(storageKey);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        return {
+            text: typeof parsed.text === "string" ? parsed.text : "",
+            foldedPaths: Array.isArray(parsed.foldedPaths)
+                ? parsed.foldedPaths.filter((value) => typeof value === "string")
+                : [],
+        };
+    }
+    catch {
+        return null;
+    }
+}
+function persistUndoEntry(storageKey, entry) {
+    if (!storageKey || typeof sessionStorage === "undefined") {
+        return;
+    }
+    try {
+        if (!entry) {
+            sessionStorage.removeItem(storageKey);
+            return;
+        }
+        sessionStorage.setItem(storageKey, JSON.stringify(entry));
+    }
+    catch {
+        // Ignore storage failures so the editor keeps working even in restricted browsers.
+    }
 }
 function buildComputedState(text, foldedPaths) {
     const analysis = analyzeBodyEditorText(text, foldedPaths);
