@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   analyzeBodyEditorText,
   collapseJSONText,
+  createBodyEditorSelectionSnapshot,
   insertBodyEditorText,
+  popUndoEntry,
+  pushUndoEntry,
   resolveBodyEditorFoldTarget,
   toggleBodyEditorFoldedPath,
   tokenizeBodyEditorText,
@@ -151,4 +154,51 @@ test("resolveBodyEditorFoldTarget prefers an explicit marker path before falling
     { path: "$.messages", lineFrom: 18 },
   );
   assert.equal(resolveBodyEditorFoldTarget(foldTargets, { path: "$.missing", lineFrom: 999 }), null);
+});
+
+test("pushUndoEntry keeps multiple steps and avoids duplicating identical snapshots", () => {
+  let stack = [];
+  stack = pushUndoEntry(stack, {
+    text: "",
+    foldedPaths: [],
+    selection: createBodyEditorSelectionSnapshot({ anchor: 0, head: 0 }),
+  });
+  stack = pushUndoEntry(stack, {
+    text: "a",
+    foldedPaths: [],
+    selection: createBodyEditorSelectionSnapshot({ anchor: 1, head: 1 }),
+  });
+  stack = pushUndoEntry(stack, {
+    text: "a",
+    foldedPaths: [],
+    selection: createBodyEditorSelectionSnapshot({ anchor: 1, head: 1 }),
+  });
+
+  assert.deepEqual(
+    stack.map((entry) => [entry.text, entry.selection.anchor, entry.selection.head]),
+    [
+      ["", 0, 0],
+      ["a", 1, 1],
+    ],
+  );
+});
+
+test("popUndoEntry returns the latest snapshot with cursor selection intact", () => {
+  const originalEntry = {
+    text: '{\n  "value": 1\n}',
+    foldedPaths: ["$.value"],
+    selection: createBodyEditorSelectionSnapshot({ anchor: 5, head: 9 }),
+  };
+  const { entry, stack } = popUndoEntry([
+    {
+      text: "",
+      foldedPaths: [],
+      selection: createBodyEditorSelectionSnapshot({ anchor: 0, head: 0 }),
+    },
+    originalEntry,
+  ]);
+
+  assert.deepEqual(entry, originalEntry);
+  assert.equal(stack.length, 1);
+  assert.deepEqual(stack[0].selection, { anchor: 0, head: 0 });
 });

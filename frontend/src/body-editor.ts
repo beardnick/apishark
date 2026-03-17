@@ -133,18 +133,25 @@ type BodyEditorComputedState = {
   decorations: DecorationSet;
 };
 
+type BodyEditorSelectionSnapshot = {
+  anchor: number;
+  head: number;
+};
+
 type BodyEditorUndoEntry = {
   text: string;
   foldedPaths: string[];
+  selection: BodyEditorSelectionSnapshot;
 };
 
 const setFoldedPathsEffect = StateEffect.define<readonly string[]>();
 
 const editableCompartment = new Compartment();
+const MAX_UNDO_ENTRIES = 100;
 
 export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorController {
   let dispatchSource: BodyEditorChangeSource = "user";
-  let undoEntry = loadUndoEntry(options.undoStorageKey);
+  let undoStack = loadUndoStack(options.undoStorageKey);
   let suppressNextUndoCapture = false;
   let runUndoCommand = (_view: EditorView): boolean => false;
 
@@ -174,8 +181,8 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
         }
 
         if (update.docChanged && source === "user" && !suppressNextUndoCapture) {
-          undoEntry = getUndoEntry(update.startState);
-          persistUndoEntry(options.undoStorageKey, undoEntry);
+          undoStack = pushUndoEntry(undoStack, getUndoEntry(update.startState));
+          persistUndoStack(options.undoStorageKey, undoStack);
         }
         suppressNextUndoCapture = false;
 
@@ -218,13 +225,13 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
   options.input.value = view.state.doc.toString();
 
   runUndoCommand = (view) => {
-    if (!undoEntry || !view.state.facet(EditorView.editable)) {
+    if (undoStack.length === 0 || !view.state.facet(EditorView.editable)) {
       return false;
     }
 
-    const entry = undoEntry;
-    undoEntry = null;
-    persistUndoEntry(options.undoStorageKey, null);
+    const { entry, stack } = popUndoEntry(undoStack);
+    undoStack = stack;
+    persistUndoStack(options.undoStorageKey, undoStack);
     suppressNextUndoCapture = true;
     dispatchSource = "user";
     try {
@@ -235,6 +242,7 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
           insert: entry.text,
         },
         effects: setFoldedPathsEffect.of(entry.foldedPaths),
+        selection: selectionFromSnapshot(entry.selection, entry.text.length),
       });
     } finally {
       dispatchSource = "user";
@@ -273,8 +281,8 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
       return view.state.doc.toString();
     },
     setText(text: string) {
-      undoEntry = null;
-      persistUndoEntry(options.undoStorageKey, null);
+      undoStack = [];
+      persistUndoStack(options.undoStorageKey, undoStack);
       if (text === view.state.doc.toString()) {
         options.input.value = text;
         return;
@@ -302,7 +310,7 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
       );
     },
     canUndo() {
-      return undoEntry !== null;
+      return undoStack.length > 0;
     },
     undo() {
       return runUndoCommand(view);
@@ -345,8 +353,8 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
         return null;
       }
 
-      undoEntry = getUndoEntry(view.state);
-      persistUndoEntry(options.undoStorageKey, undoEntry);
+      undoStack = pushUndoEntry(undoStack, getUndoEntry(view.state));
+      persistUndoStack(options.undoStorageKey, undoStack);
 
       dispatchWithSource(
         {
@@ -618,49 +626,144 @@ function bodyEditorKeymap(runUndo: (view: EditorView) => boolean): Extension {
   ]);
 }
 
+export function createBodyEditorSelectionSnapshot(input: {
+  anchor: number;
+  head: number;
+}): BodyEditorSelectionSnapshot {
+  return {
+    anchor: Math.max(0, Math.trunc(input.anchor)),
+    head: Math.max(0, Math.trunc(input.head)),
+  };
+}
+
+export function pushUndoEntry(
+  stack: readonly BodyEditorUndoEntry[],
+  entry: BodyEditorUndoEntry,
+  maxEntries = MAX_UNDO_ENTRIES,
+): BodyEditorUndoEntry[] {
+  const normalizedEntry = normalizeUndoEntry(entry);
+  if (!normalizedEntry) {
+    return [...stack];
+  }
+  const lastEntry = stack[stack.length - 1];
+  if (lastEntry && bodyEditorUndoEntriesEqual(lastEntry, normalizedEntry)) {
+    return [...stack];
+  }
+
+  const nextStack = [...stack, normalizedEntry];
+  if (nextStack.length <= maxEntries) {
+    return nextStack;
+  }
+  return nextStack.slice(nextStack.length - maxEntries);
+}
+
+export function popUndoEntry(
+  stack: readonly BodyEditorUndoEntry[],
+): { entry: BodyEditorUndoEntry; stack: BodyEditorUndoEntry[] } {
+  const entry = stack[stack.length - 1];
+  if (!entry) {
+    throw new Error("Undo stack is empty.");
+  }
+
+  return {
+    entry,
+    stack: stack.slice(0, -1),
+  };
+}
+
 function getUndoEntry(state: EditorState): BodyEditorUndoEntry {
   return {
     text: state.doc.toString(),
     foldedPaths: [...state.field(bodyEditorComputedField).analysis.foldedPaths],
+    selection: createBodyEditorSelectionSnapshot({
+      anchor: state.selection.main.anchor,
+      head: state.selection.main.head,
+    }),
   };
 }
 
-function loadUndoEntry(storageKey: string | undefined): BodyEditorUndoEntry | null {
+function loadUndoStack(storageKey: string | undefined): BodyEditorUndoEntry[] {
   if (!storageKey || typeof sessionStorage === "undefined") {
-    return null;
+    return [];
   }
 
   try {
     const raw = sessionStorage.getItem(storageKey);
     if (!raw) {
-      return null;
+      return [];
     }
-    const parsed = JSON.parse(raw) as Partial<BodyEditorUndoEntry>;
-    return {
-      text: typeof parsed.text === "string" ? parsed.text : "",
-      foldedPaths: Array.isArray(parsed.foldedPaths)
-        ? parsed.foldedPaths.filter((value): value is string => typeof value === "string")
-        : [],
-    };
+    const parsed = JSON.parse(raw) as unknown;
+    const entries = Array.isArray(parsed) ? parsed : [parsed];
+    return entries
+      .map(normalizeUndoEntry)
+      .filter((entry): entry is BodyEditorUndoEntry => entry !== null);
   } catch {
-    return null;
+    return [];
   }
 }
 
-function persistUndoEntry(storageKey: string | undefined, entry: BodyEditorUndoEntry | null): void {
+function persistUndoStack(storageKey: string | undefined, stack: readonly BodyEditorUndoEntry[]): void {
   if (!storageKey || typeof sessionStorage === "undefined") {
     return;
   }
 
   try {
-    if (!entry) {
+    if (stack.length === 0) {
       sessionStorage.removeItem(storageKey);
       return;
     }
-    sessionStorage.setItem(storageKey, JSON.stringify(entry));
+    sessionStorage.setItem(storageKey, JSON.stringify(stack));
   } catch {
     // Ignore storage failures so the editor keeps working even in restricted browsers.
   }
+}
+
+function normalizeUndoEntry(input: unknown): BodyEditorUndoEntry | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const typed = input as Partial<BodyEditorUndoEntry>;
+  return {
+    text: typeof typed.text === "string" ? typed.text : "",
+    foldedPaths: Array.isArray(typed.foldedPaths)
+      ? typed.foldedPaths.filter((value): value is string => typeof value === "string")
+      : [],
+    selection: createBodyEditorSelectionSnapshot({
+      anchor:
+        typeof typed.selection?.anchor === "number" && Number.isFinite(typed.selection.anchor)
+          ? typed.selection.anchor
+          : 0,
+      head:
+        typeof typed.selection?.head === "number" && Number.isFinite(typed.selection.head)
+          ? typed.selection.head
+          : 0,
+    }),
+  };
+}
+
+function bodyEditorUndoEntriesEqual(left: BodyEditorUndoEntry, right: BodyEditorUndoEntry): boolean {
+  return (
+    left.text === right.text &&
+    left.selection.anchor === right.selection.anchor &&
+    left.selection.head === right.selection.head &&
+    left.foldedPaths.length === right.foldedPaths.length &&
+    left.foldedPaths.every((path, index) => path === right.foldedPaths[index])
+  );
+}
+
+function selectionFromSnapshot(
+  selection: BodyEditorSelectionSnapshot,
+  docLength: number,
+): EditorSelection {
+  return EditorSelection.single(
+    clampSelectionPosition(selection.anchor, docLength),
+    clampSelectionPosition(selection.head, docLength),
+  );
+}
+
+function clampSelectionPosition(position: number, docLength: number): number {
+  return Math.max(0, Math.min(docLength, Math.trunc(position)));
 }
 
 function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEditorComputedState {
