@@ -84,6 +84,7 @@ const copyAggregateResponseBtn = byId("copyAggregateResponseBtn");
 const sseInspector = byId("sseInspector");
 const sseLineList = byId("sseLineList");
 const ssePayloadMeta = byId("ssePayloadMeta");
+const copySseStreamBtn = byId("copySseStreamBtn");
 const copySsePayloadBtn = byId("copySsePayloadBtn");
 const ssePayloadCollapseBtn = byId("ssePayloadCollapseBtn");
 const ssePayloadExpandBtn = byId("ssePayloadExpandBtn");
@@ -205,6 +206,9 @@ function wireEvents() {
     bodyCollapseBtn.addEventListener("click", () => collapseBodyJSON());
     bodyExpandBtn.addEventListener("click", () => expandBodyJSON());
     copyRawResponseBtn.addEventListener("click", () => {
+        void copyRawResponse();
+    });
+    copySseStreamBtn.addEventListener("click", () => {
         void copyRawResponse();
     });
     copySsePayloadBtn.addEventListener("click", () => {
