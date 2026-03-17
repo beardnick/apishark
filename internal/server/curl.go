@@ -74,11 +74,46 @@ func ParseCurlCommand(input string) (*ParsedCurl, error) {
 				result.Method = httpMethodPost
 			}
 
-		case strings.HasPrefix(token, "--data="):
-			result.Body = strings.TrimPrefix(token, "--data=")
+		case strings.HasPrefix(token, "--data="),
+			strings.HasPrefix(token, "--data-raw="),
+			strings.HasPrefix(token, "--data-binary="),
+			strings.HasPrefix(token, "--data-urlencode="):
+			result.Body = token[strings.Index(token, "=")+1:]
 			if result.Method == httpMethodGet {
 				result.Method = httpMethodPost
 			}
+
+		case token == "--json":
+			next, ok := readNext(tokens, &i)
+			if !ok {
+				return nil, fmt.Errorf("%s expects a value", token)
+			}
+			result.Body = next
+			if result.Method == httpMethodGet {
+				result.Method = httpMethodPost
+			}
+			result.Headers = appendHeaderIfMissing(result.Headers, HeaderKV{
+				Key:   "Content-Type",
+				Value: "application/json",
+			})
+			result.Headers = appendHeaderIfMissing(result.Headers, HeaderKV{
+				Key:   "Accept",
+				Value: "application/json",
+			})
+
+		case strings.HasPrefix(token, "--json="):
+			result.Body = strings.TrimPrefix(token, "--json=")
+			if result.Method == httpMethodGet {
+				result.Method = httpMethodPost
+			}
+			result.Headers = appendHeaderIfMissing(result.Headers, HeaderKV{
+				Key:   "Content-Type",
+				Value: "application/json",
+			})
+			result.Headers = appendHeaderIfMissing(result.Headers, HeaderKV{
+				Key:   "Accept",
+				Value: "application/json",
+			})
 
 		case token == "--url":
 			next, ok := readNext(tokens, &i)
@@ -131,6 +166,15 @@ func parseHeader(raw string) HeaderKV {
 	}
 }
 
+func appendHeaderIfMissing(headers []HeaderKV, candidate HeaderKV) []HeaderKV {
+	for _, header := range headers {
+		if strings.EqualFold(strings.TrimSpace(header.Key), strings.TrimSpace(candidate.Key)) {
+			return headers
+		}
+	}
+	return append(headers, candidate)
+}
+
 func readNext(tokens []string, index *int) (string, bool) {
 	next := *index + 1
 	if next >= len(tokens) {
@@ -157,6 +201,10 @@ func shellSplit(input string) ([]string, error) {
 
 	for _, ch := range input {
 		if escaped {
+			if ch == '\n' || ch == '\r' {
+				escaped = false
+				continue
+			}
 			current.WriteRune(ch)
 			escaped = false
 			continue
