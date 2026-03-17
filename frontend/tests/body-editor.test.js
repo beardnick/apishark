@@ -84,6 +84,20 @@ test("analyzeBodyEditorText treats invalid JSON as plain text with no fold contr
   assert.equal(analysis.foldableBlockCount, 0);
   assert.equal(analysis.foldTargets.length, 0);
   assert.equal(analysis.lineCount, 1);
+  assert.deepEqual(analysis.syntaxError, {
+    message: "Expected string.",
+    from: 16,
+    to: 17,
+    line: 1,
+    column: 17,
+  });
+});
+
+test("analyzeBodyEditorText does not flag arbitrary plain text as invalid JSON", () => {
+  const analysis = analyzeBodyEditorText("hello world");
+
+  assert.equal(analysis.hasJSON, false);
+  assert.equal(analysis.syntaxError, null);
 });
 
 test("insertBodyEditorText dispatches inserted text only when the editor is editable", () => {

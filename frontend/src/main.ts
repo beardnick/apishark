@@ -1091,6 +1091,13 @@ function syncBodyEditor(): void {
 }
 
 function syncBodyEditorBanner(result: BodyEditorSnapshot): void {
+  if (result.syntaxError) {
+    bodyEditorShell.dataset.mode = "json-invalid";
+    bodyEditorModeBadge.textContent = "JSON error";
+    bodyEditorHint.textContent = `Invalid JSON at line ${result.syntaxError.line}, column ${result.syntaxError.column}: ${result.syntaxError.message}`;
+    return;
+  }
+
   if (!result.hasJSON) {
     bodyEditorShell.dataset.mode = "plain";
     bodyEditorModeBadge.textContent = "Plain text";

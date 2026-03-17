@@ -619,6 +619,12 @@ textarea {
   color: #9a3412;
 }
 
+.body-editor-shell[data-mode="json-invalid"] .body-editor-mode-badge {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
 .body-editor-frame {
   flex: 1 1 auto;
   position: relative;
@@ -766,6 +772,12 @@ textarea {
   border-radius: 999px;
   padding: 1px 7px;
   margin: 0 2px;
+}
+
+.body-code-editor .cm-body-json-error {
+  background: rgba(220, 38, 38, 0.16);
+  box-shadow: inset 0 -2px 0 rgba(220, 38, 38, 0.7);
+  border-radius: 2px;
 }
 
 input[type="checkbox"] {

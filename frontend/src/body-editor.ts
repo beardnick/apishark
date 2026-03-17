@@ -59,12 +59,21 @@ export type BodyEditorSnapshot = {
   lineCount: number;
   foldableBlockCount: number;
   foldedBlockCount: number;
+  syntaxError: BodyEditorSyntaxError | null;
 };
 
 export type BodyEditorAnalysis = BodyEditorSnapshot & {
   tokens: BodyEditorToken[];
   foldTargets: BodyEditorFoldTarget[];
   foldedPaths: string[];
+};
+
+export type BodyEditorSyntaxError = {
+  message: string;
+  from: number;
+  to: number;
+  line: number;
+  column: number;
 };
 
 export type BodyEditorChangeReason = "doc" | "fold" | "focus";
@@ -375,7 +384,8 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
 
 export function analyzeBodyEditorText(text: string, foldedPaths: Iterable<string> = []): BodyEditorAnalysis {
   const lineStarts = computeLineStarts(text);
-  const parsed = parseJSONWithRanges(text);
+  const jsonResult = parseJSONWithRanges(text);
+  const parsed = jsonResult.node;
   const foldTargets = parsed ? collectFoldTargets(parsed, lineStarts, text) : [];
   const foldTargetPaths = new Set(foldTargets.map((target) => target.path));
   const normalizedFoldedPaths = Array.from(new Set(foldedPaths)).filter((path) => foldTargetPaths.has(path));
@@ -393,6 +403,7 @@ export function analyzeBodyEditorText(text: string, foldedPaths: Iterable<string
     tokens: parsed ? tokenizeBodyEditorText(text) : [],
     foldTargets,
     foldedPaths: normalizedFoldedPaths,
+    syntaxError: parsed ? null : jsonResult.error,
   };
 }
 
@@ -794,6 +805,15 @@ function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEd
     }
   }
 
+  if (analysis.syntaxError) {
+    ranges.push(
+      Decoration.mark({ class: "cm-body-json-error" }).range(
+        analysis.syntaxError.from,
+        analysis.syntaxError.to,
+      ),
+    );
+  }
+
   return {
     analysis,
     decorations: Decoration.set(ranges, true),
@@ -809,6 +829,7 @@ function getSnapshot(state: EditorState): BodyEditorSnapshot {
     lineCount: analysis.lineCount,
     foldableBlockCount: analysis.foldableBlockCount,
     foldedBlockCount: analysis.foldedBlockCount,
+    syntaxError: analysis.syntaxError,
   };
 }
 
@@ -867,7 +888,7 @@ function placeholderTextForNode(node: JsonRangeObjectNode | JsonRangeArrayNode):
 }
 
 function buildBodyEditorProjection(text: string, collapsed: boolean): string | null {
-  const parsed = parseJSONWithRanges(text);
+  const parsed = parseJSONWithRanges(text).node;
   if (!parsed) {
     return null;
   }
@@ -877,7 +898,7 @@ function buildBodyEditorProjection(text: string, collapsed: boolean): string | n
   }
 
   const prettyText = prettifyJSONText(text) ?? text;
-  const prettyParsed = parseJSONWithRanges(prettyText);
+  const prettyParsed = parseJSONWithRanges(prettyText).node;
   const segments = prettyParsed
     ? buildCollapsedProjectionSegments(prettyText, prettyParsed)
     : buildCollapsedProjectionSegments(text, parsed);
@@ -980,16 +1001,90 @@ function isCompositeNode(node: JsonRangeNode): node is JsonRangeObjectNode | Jso
   return node.type === "object" || node.type === "array";
 }
 
-function parseJSONWithRanges(text: string): JsonRangeNode | null {
+function parseJSONWithRanges(text: string): {
+  node: JsonRangeNode | null;
+  error: BodyEditorSyntaxError | null;
+} {
   if (!text.trim()) {
-    return null;
+    return { node: null, error: null };
+  }
+
+  if (!looksLikeJSONObjectOrArray(text)) {
+    return { node: null, error: null };
   }
 
   try {
-    JSON.parse(text);
-    return new JsonRangeParser(text).parseDocument();
-  } catch {
-    return null;
+    return {
+      node: new JsonRangeParser(text).parseDocument(),
+      error: null,
+    };
+  } catch (error) {
+    if (error instanceof JsonRangeParseError) {
+      return {
+        node: null,
+        error: createBodyEditorSyntaxError(text, error),
+      };
+    }
+
+    return {
+      node: null,
+      error: null,
+    };
+  }
+}
+
+function looksLikeJSONObjectOrArray(text: string): boolean {
+  const trimmed = text.trimStart();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+function createBodyEditorSyntaxError(
+  text: string,
+  error: JsonRangeParseError,
+): BodyEditorSyntaxError {
+  const lineStarts = computeLineStarts(text);
+  const boundedPosition = clampSelectionPosition(error.position, text.length);
+  const lineIndex = lineIndexForPosition(lineStarts, boundedPosition);
+  const lineStart = lineStarts[lineIndex] ?? 0;
+  const range = syntaxErrorRangeForPosition(text, boundedPosition);
+
+  return {
+    message: error.message,
+    from: range.from,
+    to: range.to,
+    line: lineIndex + 1,
+    column: boundedPosition - lineStart + 1,
+  };
+}
+
+function syntaxErrorRangeForPosition(
+  text: string,
+  position: number,
+): {
+  from: number;
+  to: number;
+} {
+  if (text.length === 0) {
+    return { from: 0, to: 0 };
+  }
+
+  if (position < text.length) {
+    return { from: position, to: position + 1 };
+  }
+
+  return {
+    from: Math.max(0, text.length - 1),
+    to: text.length,
+  };
+}
+
+class JsonRangeParseError extends Error {
+  readonly position: number;
+
+  constructor(message: string, position: number) {
+    super(message);
+    this.name = "JsonRangeParseError";
+    this.position = position;
   }
 }
 
@@ -1006,7 +1101,7 @@ class JsonRangeParser {
     const value = this.parseValue();
     this.skipWhitespace();
     if (this.index !== this.text.length) {
-      throw new Error("Unexpected trailing content.");
+      throw this.error("Unexpected trailing content.");
     }
     return value;
   }
@@ -1037,7 +1132,7 @@ class JsonRangeParser {
       return this.parseLiteral("null", "null");
     }
 
-    throw new Error("Unexpected JSON token.");
+    throw this.error("Unexpected JSON token.");
   }
 
   private parseObject(): JsonRangeObjectNode {
@@ -1070,7 +1165,7 @@ class JsonRangeParser {
       this.skipWhitespace();
     }
 
-    throw new Error("Unterminated object.");
+    throw this.error("Unterminated object.");
   }
 
   private parseArray(): JsonRangeArrayNode {
@@ -1098,13 +1193,13 @@ class JsonRangeParser {
       this.skipWhitespace();
     }
 
-    throw new Error("Unterminated array.");
+    throw this.error("Unterminated array.");
   }
 
   private parseString(): JsonRangePrimitiveNode {
     const start = this.index;
     if (this.text[this.index] !== '"') {
-      throw new Error("Expected string.");
+      throw this.error("Expected string.");
     }
 
     this.index += 1;
@@ -1121,14 +1216,14 @@ class JsonRangeParser {
       this.index += 1;
     }
 
-    throw new Error("Unterminated string.");
+    throw this.error("Unterminated string.");
   }
 
   private parseNumber(): JsonRangePrimitiveNode {
     const start = this.index;
     const numberMatch = this.text.slice(this.index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
     if (!numberMatch) {
-      throw new Error("Invalid number.");
+      throw this.error("Invalid number.");
     }
 
     this.index += numberMatch[0].length;
@@ -1153,8 +1248,12 @@ class JsonRangeParser {
 
   private expect(value: string): void {
     if (!this.text.startsWith(value, this.index)) {
-      throw new Error(`Expected ${value}.`);
+      throw this.error(`Expected ${value}.`);
     }
+  }
+
+  private error(message: string): JsonRangeParseError {
+    return new JsonRangeParseError(message, this.index);
   }
 }
 
