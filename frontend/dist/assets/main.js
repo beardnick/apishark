@@ -67,6 +67,7 @@ const createCollectionBtn = byId("createCollectionBtn");
 const duplicateRequestBtn = byId("duplicateRequestBtn");
 const saveRequestBtn = byId("saveRequestBtn");
 const newCollectionNameInput = byId("newCollectionNameInput");
+const requestSearchInput = byId("requestSearchInput");
 const collectionsStatusText = byId("collectionsStatusText");
 const collectionsList = byId("collectionsList");
 const statusText = byId("statusText");
@@ -109,6 +110,8 @@ let collectionStore = {
 let requestDrafts = {};
 let activeCollectionId = null;
 let activeSavedRequestId = null;
+let requestSearchQuery = "";
+let collapsedCollectionIds = new Set();
 let draftAutosaveTimer = null;
 let collectionStateSaveTimer = null;
 let latestSentHeaders = {};
@@ -230,6 +233,10 @@ function wireEvents() {
     saveRequestBtn.addEventListener("click", () => {
         void saveCurrentRequestToCollection();
     });
+    requestSearchInput.addEventListener("input", () => {
+        requestSearchQuery = requestSearchInput.value;
+        renderCollections();
+    });
     aggregationPluginInput.addEventListener("change", () => {
         renderEffectiveAggregationPlugin();
     });
@@ -297,6 +304,7 @@ function defaultState() {
         requestDrafts: {},
         activeCollectionId: null,
         activeSavedRequestId: null,
+        collapsedCollectionIds: [],
     };
 }
 function applyInitialState(state) {
@@ -316,6 +324,7 @@ function applyInitialState(state) {
     requestDrafts = state.requestDrafts;
     activeCollectionId = state.activeCollectionId;
     activeSavedRequestId = state.activeSavedRequestId;
+    collapsedCollectionIds = new Set(state.collapsedCollectionIds ?? []);
     renderEnvironmentControls();
     renderHeaderRows();
     syncBodyEditor();
@@ -368,6 +377,7 @@ function loadState() {
             requestDrafts: normalizePersistedRequestDraftStore(parsed.requestDrafts),
             activeCollectionId: typeof parsed.activeCollectionId === "string" ? parsed.activeCollectionId : null,
             activeSavedRequestId: typeof parsed.activeSavedRequestId === "string" ? parsed.activeSavedRequestId : null,
+            collapsedCollectionIds: normalizeCollapsedCollectionIds(parsed.collapsedCollectionIds),
         };
     }
     catch {
@@ -393,6 +403,7 @@ function persistState() {
         requestDrafts,
         activeCollectionId,
         activeSavedRequestId,
+        collapsedCollectionIds: [...collapsedCollectionIds].sort(),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
@@ -1956,6 +1967,8 @@ async function updateCollectionAggregationPlugin(collectionId, pluginId) {
 }
 function renderCollections() {
     collectionsList.textContent = "";
+    const normalizedSearch = requestSearchQuery.trim().toLowerCase();
+    collapsedCollectionIds = pruneCollapsedCollectionIds(collapsedCollectionIds, collectionStore.collections);
     if (collectionStore.collections.length === 0) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
@@ -1964,10 +1977,21 @@ function renderCollections() {
         return;
     }
     const fragment = document.createDocumentFragment();
+    let renderedCollectionCount = 0;
     for (const collection of collectionStore.collections) {
         const collectionScratchDraft = getCollectionScratchDraft(requestDrafts, collection.id);
+        const scratchMatches = collectionScratchDraft !== null &&
+            matchesRequestSearch(collectionScratchDraft.draft, normalizedSearch);
+        const matchingRequests = collection.requests.filter((request) => matchesRequestSearch(request, normalizedSearch));
+        if (normalizedSearch !== "" && !scratchMatches && matchingRequests.length === 0) {
+            continue;
+        }
+        const effectiveCollapsed = normalizedSearch === "" && collapsedCollectionIds.has(collection.id);
         const card = document.createElement("article");
         card.className = `collection-card${collection.id === activeCollectionId ? " is-selected" : ""}`;
+        if (effectiveCollapsed) {
+            card.classList.add("is-collapsed");
+        }
         const head = document.createElement("div");
         head.className = "collection-card-head";
         const selectBtn = document.createElement("button");
@@ -1993,6 +2017,23 @@ function renderCollections() {
         selectBtn.append(name, meta);
         const actions = document.createElement("div");
         actions.className = "collection-card-actions";
+        const collapseBtn = document.createElement("button");
+        collapseBtn.type = "button";
+        collapseBtn.className = "small-btn collection-collapse-btn";
+        collapseBtn.textContent = effectiveCollapsed ? "▸" : "▾";
+        collapseBtn.ariaLabel =
+            normalizedSearch === ""
+                ? `${effectiveCollapsed ? "Expand" : "Collapse"} collection ${collection.name}`
+                : `Collection search is active for ${collection.name}`;
+        collapseBtn.title =
+            normalizedSearch === ""
+                ? `${effectiveCollapsed ? "Expand" : "Collapse"} collection`
+                : "Matching collections stay expanded while search is active";
+        collapseBtn.setAttribute("aria-expanded", effectiveCollapsed ? "false" : "true");
+        collapseBtn.disabled = normalizedSearch !== "";
+        collapseBtn.addEventListener("click", () => {
+            toggleCollectionCollapsed(collection.id);
+        });
         const saveBtn = document.createElement("button");
         saveBtn.type = "button";
         saveBtn.className = "small-btn";
@@ -2013,11 +2054,12 @@ function renderCollections() {
         deleteBtn.addEventListener("click", () => {
             void deleteCollection(collection.id);
         });
-        actions.append(saveBtn, deleteBtn);
+        actions.append(collapseBtn, saveBtn, deleteBtn);
         head.append(selectBtn, actions);
         card.appendChild(head);
         const bindingRow = document.createElement("label");
         bindingRow.className = "collection-plugin-row";
+        bindingRow.hidden = effectiveCollapsed;
         const bindingLabel = document.createElement("span");
         bindingLabel.className = "hint compact";
         bindingLabel.textContent = "Aggregation";
@@ -2032,7 +2074,9 @@ function renderCollections() {
         card.appendChild(bindingRow);
         const requestList = document.createElement("div");
         requestList.className = "request-list";
-        if (collectionScratchDraft) {
+        requestList.hidden = effectiveCollapsed;
+        let requestItemCount = 0;
+        if (collectionScratchDraft && scratchMatches) {
             const item = document.createElement("div");
             item.className = `request-item${collection.id === activeCollectionId && activeSavedRequestId === null ? " is-selected" : ""}`;
             const loadBtn = document.createElement("button");
@@ -2058,15 +2102,19 @@ function renderCollections() {
             loadBtn.append(requestPrimary);
             item.appendChild(loadBtn);
             requestList.appendChild(item);
+            requestItemCount += 1;
         }
-        if (collection.requests.length === 0 && !collectionScratchDraft) {
+        if (matchingRequests.length === 0 && requestItemCount === 0) {
             const empty = document.createElement("p");
             empty.className = "empty-state";
-            empty.textContent = "No saved requests in this collection yet.";
+            empty.textContent =
+                normalizedSearch === ""
+                    ? "No saved requests in this collection yet."
+                    : `No requests match "${requestSearchQuery.trim()}".`;
             requestList.appendChild(empty);
         }
         else {
-            for (const request of collection.requests) {
+            for (const request of matchingRequests) {
                 const item = document.createElement("div");
                 item.className = `request-item${request.id === activeSavedRequestId ? " is-selected" : ""}`;
                 const loadBtn = document.createElement("button");
@@ -2104,12 +2152,63 @@ function renderCollections() {
                 requestActions.appendChild(deleteBtn);
                 item.append(loadBtn, requestActions);
                 requestList.appendChild(item);
+                requestItemCount += 1;
             }
         }
         card.appendChild(requestList);
         fragment.appendChild(card);
+        renderedCollectionCount += 1;
+    }
+    if (renderedCollectionCount === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = `No requests match "${requestSearchQuery.trim()}".`;
+        collectionsList.appendChild(empty);
+        return;
     }
     collectionsList.appendChild(fragment);
+}
+function matchesRequestSearch(request, normalizedSearch) {
+    if (normalizedSearch === "") {
+        return true;
+    }
+    return [request.name, request.method, request.url]
+        .filter((value) => typeof value === "string")
+        .some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+function normalizeCollapsedCollectionIds(input) {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+    return input
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value !== "");
+}
+function pruneCollapsedCollectionIds(collapsed, collections) {
+    if (collapsed.size === 0) {
+        return new Set();
+    }
+    const validIds = new Set(collections.map((collection) => collection.id));
+    const next = new Set();
+    for (const id of collapsed) {
+        if (validIds.has(id)) {
+            next.add(id);
+        }
+    }
+    return next;
+}
+function toggleCollectionCollapsed(collectionId) {
+    const next = new Set(collapsedCollectionIds);
+    if (next.has(collectionId)) {
+        next.delete(collectionId);
+    }
+    else {
+        next.add(collectionId);
+    }
+    collapsedCollectionIds = next;
+    renderCollections();
+    persistState();
 }
 function normalizeCollectionStore(input) {
     const rawCollections = Array.isArray(input.collections) ? input.collections : [];
