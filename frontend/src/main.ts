@@ -70,6 +70,12 @@ type EditableHeader = HeaderKV & {
   enabled: boolean;
 };
 
+type EditableEnvironmentVariable = {
+  id: string;
+  key: string;
+  value: string;
+};
+
 type EnvironmentEntry = {
   id: string;
   name: string;
@@ -180,13 +186,16 @@ const VALID_UTILITY_PANEL_IDS = new Set([
   "importUtility",
   "pluginUtility",
 ]);
+const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/;
+const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/;
 
 const utilitySidebarBody = byId<HTMLElement>("appUtilitySidebarBody");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
+const addEnvironmentRowBtn = byId<HTMLButtonElement>("addEnvironmentRowBtn");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
 const renameEnvironmentBtn = byId<HTMLButtonElement>("renameEnvironmentBtn");
 const deleteEnvironmentBtn = byId<HTMLButtonElement>("deleteEnvironmentBtn");
-const envInput = byId<HTMLTextAreaElement>("envInput");
+const envEditor = byId<HTMLElement>("envEditor");
 const curlInput = byId<HTMLTextAreaElement>("curlInput");
 const importCurlBtn = byId<HTMLButtonElement>("importCurlBtn");
 const importPluginBtn = byId<HTMLButtonElement>("importPluginBtn");
@@ -261,6 +270,9 @@ let rawResponseMode: RawResponseMode = "plain";
 let requestIsLoading = false;
 let environments: EnvironmentEntry[] = [];
 let activeEnvironmentId: string | null = null;
+let environmentRows: EditableEnvironmentVariable[] = [];
+let environmentRowsSourceId: string | null = null;
+let environmentRowsSourceText = "";
 let headerRows: EditableHeader[] = [];
 let collectionStore: CollectionStore = {
   collections: [],
@@ -325,8 +337,8 @@ function wireEvents(): void {
     deleteActiveEnvironment();
   });
 
-  envInput.addEventListener("input", () => {
-    patchActiveEnvironment({ text: envInput.value });
+  addEnvironmentRowBtn.addEventListener("click", () => {
+    insertEnvironmentRowAfter(environmentRows[environmentRows.length - 1]?.id ?? null);
   });
 
   importCurlBtn.addEventListener("click", () => {
@@ -374,6 +386,10 @@ function wireEvents(): void {
     headerRows.push(createEmptyHeaderRow());
     renderHeaderRows();
     markRequestEditorChanged();
+  });
+
+  urlInput.addEventListener("input", () => {
+    applyTemplateTone(urlInput, urlInput.value);
   });
 
   copyBodyBtn.addEventListener("click", () => {
@@ -514,6 +530,7 @@ function applyInitialState(state: PersistedState): void {
   curlInput.value = state.curlText;
   methodInput.value = state.method;
   urlInput.value = state.url;
+  applyTemplateTone(urlInput, state.url);
   headerRows = normalizeHeaderRows(state.headers);
   setBodyEditorText(state.bodyText);
   renderPluginOptionsIntoSelect(
@@ -762,6 +779,7 @@ function applyEditorDraft(draft: RequestLibraryDraft): void {
   requestNameInput.value = draft.name;
   methodInput.value = draft.method || "GET";
   urlInput.value = draft.url;
+  applyTemplateTone(urlInput, draft.url);
   setBodyEditorText(draft.body);
   aggregationPluginInput.value = resolveAggregationPluginId(
     draft.aggregation_plugin,
@@ -813,8 +831,16 @@ function renderEnvironmentControls(): void {
 
 function syncEnvironmentEditor(): void {
   const activeEnvironment = getActiveEnvironment();
-  envInput.value = activeEnvironment?.text ?? "";
+  const activeText = activeEnvironment?.text ?? "";
+  if (environmentRowsSourceId !== activeEnvironment?.id || environmentRowsSourceText !== activeText) {
+    environmentRows = parseEnvironmentRows(activeText);
+    environmentRowsSourceId = activeEnvironment?.id ?? null;
+    environmentRowsSourceText = activeText;
+  }
+
+  renderEnvironmentRows();
   environmentSelect.disabled = requestIsLoading || environments.length === 0;
+  addEnvironmentRowBtn.disabled = requestIsLoading || !activeEnvironment;
   createEnvironmentBtn.disabled = requestIsLoading;
   renameEnvironmentBtn.disabled = requestIsLoading || !activeEnvironment;
   deleteEnvironmentBtn.disabled = requestIsLoading || environments.length <= 1 || !activeEnvironment;
@@ -833,9 +859,17 @@ function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
     return;
   }
 
-  environments = environments.map((environment) =>
-    environment.id === activeEnvironment.id ? { ...environment, ...patch } : environment,
-  );
+  environments = environments.map((environment) => {
+    if (environment.id !== activeEnvironment.id) {
+      return environment;
+    }
+    const next = { ...environment, ...patch };
+    if (next.id === activeEnvironment.id && typeof next.text === "string") {
+      environmentRowsSourceId = next.id;
+      environmentRowsSourceText = next.text;
+    }
+    return next;
+  });
   persistState();
   scheduleCollectionStateSave();
 }
@@ -967,8 +1001,10 @@ function renderHeaderRows(): void {
     keyInput.placeholder = "Header name";
     keyInput.value = header.key;
     keyInput.disabled = requestIsLoading;
+    applyTemplateTone(keyInput, header.key);
     keyInput.addEventListener("input", () => {
       patchHeaderRow(header.id, { key: keyInput.value });
+      applyTemplateTone(keyInput, keyInput.value);
     });
     const keyCell = document.createElement("div");
     keyCell.className = "header-input-cell header-cell";
@@ -980,8 +1016,10 @@ function renderHeaderRows(): void {
     valueInput.placeholder = "Header value";
     valueInput.value = header.value;
     valueInput.disabled = requestIsLoading;
+    applyTemplateTone(valueInput, header.value);
     valueInput.addEventListener("input", () => {
       patchHeaderRow(header.id, { value: valueInput.value });
+      applyTemplateTone(valueInput, valueInput.value);
     });
     const valueCell = document.createElement("div");
     valueCell.className = "header-input-cell header-cell";
@@ -1019,6 +1057,78 @@ function renderHeaderRows(): void {
   headersEditor.appendChild(fragment);
 }
 
+function renderEnvironmentRows(): void {
+  if (environmentRows.length === 0) {
+    environmentRows = [createEmptyEnvironmentRow()];
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const rowState of environmentRows) {
+    const row = document.createElement("div");
+    row.className = "env-row";
+
+    const keyInput = document.createElement("input");
+    keyInput.className = "env-key-input";
+    keyInput.type = "text";
+    keyInput.placeholder = "Variable name";
+    keyInput.value = rowState.key;
+    keyInput.disabled = requestIsLoading;
+    applyTemplateTone(keyInput, rowState.key);
+    keyInput.addEventListener("input", () => {
+      patchEnvironmentRow(rowState.id, { key: keyInput.value });
+      applyTemplateTone(keyInput, keyInput.value);
+    });
+    const keyCell = document.createElement("div");
+    keyCell.className = "header-input-cell env-cell";
+    keyCell.appendChild(keyInput);
+
+    const valueInput = document.createElement("input");
+    valueInput.className = "env-value-input";
+    valueInput.type = "text";
+    valueInput.placeholder = "Value";
+    valueInput.value = rowState.value;
+    valueInput.disabled = requestIsLoading;
+    applyTemplateTone(valueInput, rowState.value);
+    valueInput.addEventListener("input", () => {
+      patchEnvironmentRow(rowState.id, { value: valueInput.value });
+      applyTemplateTone(valueInput, valueInput.value);
+    });
+    const valueCell = document.createElement("div");
+    valueCell.className = "header-input-cell env-cell";
+    valueCell.appendChild(valueInput);
+
+    const actions = document.createElement("div");
+    actions.className = "env-row-actions env-cell";
+    actions.append(
+      createHeaderActionButton(
+        "＋",
+        "Insert variable below",
+        () => insertEnvironmentRowAfter(rowState.id),
+        requestIsLoading,
+      ),
+      createHeaderActionButton(
+        "⎘",
+        "Duplicate variable",
+        () => duplicateEnvironmentRow(rowState.id),
+        requestIsLoading,
+      ),
+      createHeaderActionButton(
+        "✕",
+        "Delete variable",
+        () => removeEnvironmentRow(rowState.id),
+        requestIsLoading,
+        true,
+      ),
+    );
+
+    row.append(keyCell, valueCell, actions);
+    fragment.appendChild(row);
+  }
+
+  envEditor.textContent = "";
+  envEditor.appendChild(fragment);
+}
+
 function createHeaderActionButton(
   symbol: string,
   label: string,
@@ -1039,6 +1149,94 @@ function createHeaderActionButton(
   button.disabled = disabled;
   button.addEventListener("click", onClick);
   return button;
+}
+
+function applyTemplateTone(element: HTMLElement, text: string): void {
+  const hasEnvTemplate = ENV_TEMPLATE_PATTERN.test(text);
+  const hasDynamicTemplate = DYNAMIC_TEMPLATE_PATTERN.test(text);
+  element.classList.toggle("has-template", hasEnvTemplate || hasDynamicTemplate);
+  element.classList.toggle("has-env-template", hasEnvTemplate);
+  element.classList.toggle("has-dynamic-template", hasDynamicTemplate);
+}
+
+function createEnvironmentRow(key: string, value: string): EditableEnvironmentVariable {
+  return {
+    id: makeId("envrow"),
+    key,
+    value,
+  };
+}
+
+function createEmptyEnvironmentRow(): EditableEnvironmentVariable {
+  return createEnvironmentRow("", "");
+}
+
+function parseEnvironmentRows(text: string): EditableEnvironmentVariable[] {
+  const rows = text
+    .split(/\r?\n/)
+    .filter((line, index, all) => line.trim() !== "" || all.length === 1)
+    .map((line) => {
+      const splitIndex = line.indexOf("=");
+      if (splitIndex < 0) {
+        return createEnvironmentRow(line.trim(), "");
+      }
+      return createEnvironmentRow(line.slice(0, splitIndex).trim(), line.slice(splitIndex + 1));
+    });
+
+  return rows.length > 0 ? rows : [createEmptyEnvironmentRow()];
+}
+
+function serializeEnvironmentRows(rows: readonly EditableEnvironmentVariable[]): string {
+  return rows
+    .map((row) => [row.key.trim(), row.value] as const)
+    .filter(([key, value]) => key !== "" || value.trim() !== "")
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
+function patchEnvironmentRow(id: string, patch: Partial<EditableEnvironmentVariable>): void {
+  environmentRows = environmentRows.map((row) => (row.id === id ? { ...row, ...patch } : row));
+  patchActiveEnvironment({ text: serializeEnvironmentRows(environmentRows) });
+}
+
+function insertEnvironmentRowAfter(id: string | null): void {
+  if (id === null) {
+    environmentRows = [...environmentRows, createEmptyEnvironmentRow()];
+  } else {
+    const index = environmentRows.findIndex((row) => row.id === id);
+    if (index < 0) {
+      environmentRows = [...environmentRows, createEmptyEnvironmentRow()];
+    } else {
+      const next = [...environmentRows];
+      next.splice(index + 1, 0, createEmptyEnvironmentRow());
+      environmentRows = next;
+    }
+  }
+  renderEnvironmentRows();
+  patchActiveEnvironment({ text: serializeEnvironmentRows(environmentRows) });
+}
+
+function duplicateEnvironmentRow(id: string): void {
+  const index = environmentRows.findIndex((row) => row.id === id);
+  if (index < 0) {
+    return;
+  }
+  const source = environmentRows[index];
+  const duplicate = createEnvironmentRow(source.key, source.value);
+  const next = [...environmentRows];
+  next.splice(index + 1, 0, duplicate);
+  environmentRows = next;
+  renderEnvironmentRows();
+  patchActiveEnvironment({ text: serializeEnvironmentRows(environmentRows) });
+}
+
+function removeEnvironmentRow(id: string): void {
+  environmentRows =
+    environmentRows.length === 1
+      ? [createEmptyEnvironmentRow()]
+      : environmentRows.filter((row) => row.id !== id);
+  renderEnvironmentRows();
+  patchActiveEnvironment({ text: serializeEnvironmentRows(environmentRows) });
 }
 
 function updateHeaderRow(id: string, patch: Partial<EditableHeader>): void {
@@ -1217,6 +1415,7 @@ async function importCurl(): Promise<void> {
     flushDraftAutosave();
     methodInput.value = parsed.method || "GET";
     urlInput.value = parsed.url || "";
+    applyTemplateTone(urlInput, urlInput.value);
     headerRows = normalizeHeaderRows(
       (parsed.headers || []).map((header) => ({ ...header, enabled: true })),
     );
@@ -2646,8 +2845,6 @@ function renderCollections(): void {
       loadBtn.className = "request-load-btn";
       loadBtn.addEventListener("click", () => loadCollectionScratch(collection.id));
 
-      const requestPrimary = document.createElement("div");
-      requestPrimary.className = "request-primary";
       const requestMethod = document.createElement("span");
       requestMethod.className = "request-method";
       requestMethod.dataset.method = collectionScratchDraft.draft.method || "GET";
@@ -2660,9 +2857,11 @@ function renderCollections(): void {
       const requestMeta = document.createElement("p");
       requestMeta.className = "request-meta hint compact";
       requestMeta.textContent = formatCollectionScratchMeta(collectionScratchDraft.draft);
+      const requestUrl = document.createElement("p");
+      requestUrl.className = "request-url";
+      requestUrl.textContent = formatRequestRowUrl(collectionScratchDraft.draft.url);
       requestText.append(requestName, requestMeta);
-      requestPrimary.append(requestMethod, requestText);
-      loadBtn.append(requestPrimary);
+      loadBtn.append(requestMethod, requestText, requestUrl);
       item.appendChild(loadBtn);
       requestList.appendChild(item);
       requestItemCount += 1;
@@ -2686,8 +2885,6 @@ function renderCollections(): void {
         loadBtn.className = "request-load-btn";
         loadBtn.addEventListener("click", () => loadSavedRequest(collection.id, request.id));
 
-        const requestPrimary = document.createElement("div");
-        requestPrimary.className = "request-primary";
         const requestMethod = document.createElement("span");
         requestMethod.className = "request-method";
         requestMethod.dataset.method = request.method;
@@ -2700,9 +2897,11 @@ function renderCollections(): void {
         const requestMeta = document.createElement("p");
         requestMeta.className = "request-meta hint compact";
         requestMeta.textContent = formatSavedRequestMeta(request, collection);
+        const requestUrl = document.createElement("p");
+        requestUrl.className = "request-url";
+        requestUrl.textContent = formatRequestRowUrl(request.url);
         requestText.append(requestName, requestMeta);
-        requestPrimary.append(requestMethod, requestText);
-        loadBtn.append(requestPrimary);
+        loadBtn.append(requestMethod, requestText, requestUrl);
 
         const requestActions = document.createElement("div");
         requestActions.className = "request-item-actions";
@@ -2913,21 +3112,20 @@ function formatCollectionMeta(collection: RequestCollection): string {
 }
 
 function formatSavedRequestMeta(request: SavedRequest, collection: RequestCollection): string {
-  const url = request.url.trim() || "(no URL)";
   const binding = request.use_collection_aggregation_plugin
     ? `via ${aggregationPluginLabel(collection.aggregation_plugin)} collection default`
     : `${aggregationPluginLabel(request.aggregation_plugin)} override`;
 
   if (!request.updated_at) {
-    return `${url} • ${binding}`;
+    return binding;
   }
 
   const parsed = new Date(request.updated_at);
   if (Number.isNaN(parsed.getTime())) {
-    return `${url} • ${binding}`;
+    return binding;
   }
 
-  return `${url} • ${binding} • ${parsed.toLocaleString([], {
+  return `${binding} • ${parsed.toLocaleString([], {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -2936,8 +3134,12 @@ function formatSavedRequestMeta(request: SavedRequest, collection: RequestCollec
 }
 
 function formatCollectionScratchMeta(draft: RequestLibraryDraft): string {
-  const url = draft.url.trim() || "(no URL)";
-  return `${url} • unsaved draft`;
+  return "Unsaved draft";
+}
+
+function formatRequestRowUrl(url: string): string {
+  const trimmed = url.trim();
+  return trimmed || "(no URL)";
 }
 
 function setLoading(isLoading: boolean): void {
@@ -2948,7 +3150,6 @@ function setLoading(isLoading: boolean): void {
   pluginImportInput.disabled = isLoading;
   exportCurlBtn.disabled = isLoading;
   requestNameInput.disabled = isLoading;
-  envInput.disabled = isLoading;
   methodInput.disabled = isLoading;
   urlInput.disabled = isLoading;
   bodyInput.disabled = isLoading;

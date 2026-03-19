@@ -39,6 +39,12 @@ export type BodyEditorToken = {
   to: number;
 };
 
+export type BodyEditorTemplateRange = {
+  from: number;
+  to: number;
+  className: "cm-template-env" | "cm-template-dynamic";
+};
+
 export type BodyEditorFoldTarget = {
   path: string;
   depth: number;
@@ -157,6 +163,8 @@ const setFoldedPathsEffect = StateEffect.define<readonly string[]>();
 
 const editableCompartment = new Compartment();
 const MAX_UNDO_ENTRIES = 100;
+const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/g;
+const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/g;
 
 export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorController {
   let dispatchSource: BodyEditorChangeSource = "user";
@@ -814,10 +822,42 @@ function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEd
     );
   }
 
+  for (const templateRange of collectBodyEditorTemplateRanges(text)) {
+    ranges.push(
+      Decoration.mark({ class: templateRange.className }).range(
+        templateRange.from,
+        templateRange.to,
+      ),
+    );
+  }
+
   return {
     analysis,
     decorations: Decoration.set(ranges, true),
   };
+}
+
+export function collectBodyEditorTemplateRanges(text: string): BodyEditorTemplateRange[] {
+  const ranges: BodyEditorTemplateRange[] = [];
+
+  for (const match of text.matchAll(new RegExp(DYNAMIC_TEMPLATE_PATTERN))) {
+    ranges.push({
+      from: match.index ?? 0,
+      to: (match.index ?? 0) + match[0].length,
+      className: "cm-template-dynamic",
+    });
+  }
+
+  for (const match of text.matchAll(new RegExp(ENV_TEMPLATE_PATTERN))) {
+    ranges.push({
+      from: match.index ?? 0,
+      to: (match.index ?? 0) + match[0].length,
+      className: "cm-template-env",
+    });
+  }
+
+  ranges.sort((left, right) => left.from - right.from || left.to - right.to);
+  return ranges;
 }
 
 function getSnapshot(state: EditorState): BodyEditorSnapshot {

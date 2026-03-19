@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   analyzeBodyEditorText,
+  collectBodyEditorTemplateRanges,
   collapseJSONText,
   createBodyEditorSelectionSnapshot,
   insertBodyEditorText,
@@ -98,6 +99,18 @@ test("analyzeBodyEditorText does not flag arbitrary plain text as invalid JSON",
 
   assert.equal(analysis.hasJSON, false);
   assert.equal(analysis.syntaxError, null);
+});
+
+test("collectBodyEditorTemplateRanges marks env and dynamic placeholders separately", () => {
+  const text = '{\n  "url": "{{BASE_URL}}",\n  "requestId": "{{$uuid}}"\n}';
+
+  assert.deepEqual(
+    collectBodyEditorTemplateRanges(text),
+    [
+      { from: 12, to: 24, className: "cm-template-env" },
+      { from: 43, to: 52, className: "cm-template-dynamic" },
+    ],
+  );
 });
 
 test("insertBodyEditorText dispatches inserted text only when the editor is editable", () => {

@@ -54,6 +54,15 @@ test("utility section headers stay compact without disclosure controls", async (
   assert.doesNotMatch(html, /Open only the helpers you need and keep the request editor centered/);
 });
 
+test("utility panels render as drawer-style shells with helper token snippets", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+
+  assert.match(html, /class="utility-section-panel drawer-panel"/);
+  assert.match(html, /class="helper-token-grid"/);
+  assert.match(html, /class="helper-token">\{\{VAR_NAME\}\}<\/code>/);
+  assert.match(html, /class="utility-action-row"/);
+});
+
 test("effective aggregation status lives in the plugin utility panel instead of the request workbench", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const pluginSectionMatch = html.match(/<section[\s\S]*?id="pluginUtility"[\s\S]*?<\/section>/);
@@ -99,6 +108,21 @@ test("request workspace topbar stays compact without descriptive chrome", async 
   assert.doesNotMatch(topbarMatch[0], /utilitySidebarToggle/);
 });
 
+test("request workspace keeps a grid-style control strip for request settings", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const requestWorkbenchMatch = html.match(
+    /<section id="requestWorkbench"[\s\S]*?<\/section>\s*<section id="responseWorkbench"/,
+  );
+
+  assert.ok(requestWorkbenchMatch, "request workbench should exist");
+  assert.match(requestWorkbenchMatch[0], /class="request-tool-grid"/);
+  assert.match(requestWorkbenchMatch[0], /class="request-tool-grid-head"/);
+  assert.match(requestWorkbenchMatch[0], /class="workspace-row workspace-row-request"/);
+  assert.match(requestWorkbenchMatch[0], /class="workspace-row workspace-row-meta"/);
+  assert.match(requestWorkbenchMatch[0], /class="request-meta-label">Aggregation<\/span>/);
+  assert.match(requestWorkbenchMatch[0], /class="request-meta-label">Timeout \(seconds\)<\/span>/);
+});
+
 test("headers panel keeps a compact table-style heading", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const headersPanelMatch = html.match(/<section id="headersPanel"[\s\S]*?<\/section>/);
@@ -107,6 +131,18 @@ test("headers panel keeps a compact table-style heading", async () => {
   assert.match(headersPanelMatch[0], /class="panel-head headers-panel-head"/);
   assert.match(headersPanelMatch[0], /class="headers-panel-copy"/);
   assert.match(headersPanelMatch[0], /class="editor-grid-head"/);
+});
+
+test("response workspace keeps a summary strip and grid-aligned headers panel", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const responseWorkbenchMatch = html.match(/<section id="responseWorkbench"[\s\S]*?<\/section>\s*<\/main>/);
+
+  assert.ok(responseWorkbenchMatch, "response workbench should exist");
+  assert.match(responseWorkbenchMatch[0], /class="response-status-strip"/);
+  assert.match(responseWorkbenchMatch[0], /class="response-status-label">Status<\/span>/);
+  assert.match(responseWorkbenchMatch[0], /class="response-status-label">Inspector<\/span>/);
+  assert.match(responseWorkbenchMatch[0], /class="response-headers-grid-head"/);
+  assert.match(responseWorkbenchMatch[0], /class="headers-panel-stack response-headers-stack"/);
 });
 
 test("built utility sidebar body contains only the four dedicated tool panels", async () => {

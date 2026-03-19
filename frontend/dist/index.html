@@ -120,10 +120,19 @@
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Environments</span>
             </div>
-            <div class="utility-section-panel">
+            <div class="utility-section-panel drawer-panel">
               <div class="utility-panel-head">
                 <label for="environmentSelect" class="panel-label compact-label">Active environment</label>
                 <div class="environment-actions side-card-tools">
+                  <button
+                    id="addEnvironmentRowBtn"
+                    type="button"
+                    class="ghost icon-btn control-icon-btn"
+                    aria-label="Add environment variable"
+                    title="Add environment variable"
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
+                  </button>
                   <button
                     id="createEnvironmentBtn"
                     type="button"
@@ -154,11 +163,12 @@
                 </div>
               </div>
               <select id="environmentSelect" aria-label="Active environment"></select>
-              <textarea
-                id="envInput"
-                rows="8"
-                placeholder="OPENAI_API_KEY=sk-...\nBASE_URL=https://api.openai.com"
-              ></textarea>
+              <div class="editor-grid-head env-grid-head" aria-hidden="true">
+                <span>Key</span>
+                <span>Value</span>
+                <span>Actions</span>
+              </div>
+              <div id="envEditor" class="env-editor"></div>
             </div>
           </section>
 
@@ -174,17 +184,21 @@
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Variable helpers</span>
             </div>
-            <div class="utility-section-panel">
-              <p class="hint compact">
-                Use <code>{{VAR_NAME}}</code> plus dynamic send-time placeholders like
-                <code>{{$uuid}}</code>, <code>{{$now}}</code>, <code>{{$nowMs}}</code>,
-                <code>{{$isoNow}}</code>, <code>{{$randInt(1,10)}}</code>,
-                <code>{{$randStr(16)}}</code>, <code>{{$base64(text)}}</code>, and
-                <code>{{$urlencode(text)}}</code>.
-              </p>
-              <p class="hint compact">
-                Matching dynamic tokens reuse one value per send or cURL export action. Invalid
-                <code>{{$...}}</code> syntax shows an error before sending.
+            <div class="utility-section-panel drawer-panel">
+              <div class="helper-token-grid" aria-label="Variable helper snippets">
+                <code class="helper-token">{{VAR_NAME}}</code>
+                <code class="helper-token">{{$uuid}}</code>
+                <code class="helper-token">{{$now}}</code>
+                <code class="helper-token">{{$isoNow}}</code>
+                <code class="helper-token">{{$randInt(1,10)}}</code>
+                <code class="helper-token">{{$randStr(16)}}</code>
+                <code class="helper-token">{{$base64(text)}}</code>
+                <code class="helper-token">{{$urlencode(text)}}</code>
+              </div>
+              <p class="hint compact helper-note">
+                Use <code>{{VAR_NAME}}</code> for environment lookup. Dynamic placeholders are resolved
+                once per send or cURL export action, and invalid <code>{{$...}}</code> syntax is blocked
+                before sending.
               </p>
             </div>
           </section>
@@ -201,13 +215,15 @@
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Import with cURL</span>
             </div>
-            <div class="utility-section-panel">
+            <div class="utility-section-panel drawer-panel">
               <textarea
                 id="curlInput"
                 rows="6"
                 placeholder='curl -X POST "https://example.com" -H "Authorization: Bearer {{OPENAI_API_KEY}}" -d "{\"hello\":\"world\"}"'
               ></textarea>
-              <button id="importCurlBtn" type="button">Import to request</button>
+              <div class="utility-action-row">
+                <button id="importCurlBtn" type="button">Import</button>
+              </div>
             </div>
           </section>
 
@@ -223,14 +239,16 @@
               <span class="workspace-kicker">Utilities</span>
               <span class="utility-section-title">Aggregation plugins</span>
             </div>
-            <div class="utility-section-panel">
+            <div class="utility-section-panel drawer-panel">
               <input
                 id="pluginImportInput"
                 type="file"
                 accept=".json,.js,.mjs,application/json,text/javascript"
                 hidden
               />
-              <button id="importPluginBtn" type="button">Import plugin</button>
+              <div class="utility-action-row">
+                <button id="importPluginBtn" type="button">Add plugin</button>
+              </div>
               <p id="pluginsStatusText" class="hint compact">
                 Imported plugins are stored in <code>./.apishark/plugins.json</code>.
               </p>
@@ -267,45 +285,52 @@
         </header>
 
         <section id="requestWorkbench" class="workspace-block request-workspace">
-          <div class="workspace-row workspace-row-request">
-            <select id="methodInput" class="method-select">
-              <option>GET</option>
-              <option>POST</option>
-              <option>PUT</option>
-              <option>PATCH</option>
-              <option>DELETE</option>
-              <option>HEAD</option>
-            </select>
-            <input id="urlInput" type="text" placeholder="https://example.com/path" />
-            <div class="request-actions">
-              <button
-                id="exportCurlBtn"
-                type="button"
-                class="secondary"
-                aria-controls="curlExportOverlay"
-                aria-expanded="false"
-                aria-haspopup="dialog"
-              >
-                Export cURL
-              </button>
-              <button id="sendBtn" type="button" class="send-btn">Send</button>
-              <button id="abortBtn" type="button" class="secondary">Abort</button>
+          <div class="request-tool-grid">
+            <div class="request-tool-grid-head" aria-hidden="true">
+              <span>Method</span>
+              <span>URL</span>
+              <span>Actions</span>
             </div>
-          </div>
-
-          <div class="workspace-row workspace-row-meta">
-            <label for="aggregationPluginInput" class="timeout-label">
-              Aggregation
-              <select id="aggregationPluginInput">
-                <option value="__collection__">Collection default</option>
-                <option value="none">None</option>
-                <option value="openai">OpenAI</option>
+            <div class="workspace-row workspace-row-request">
+              <select id="methodInput" class="method-select">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option>
+                <option>HEAD</option>
               </select>
-            </label>
-            <label for="timeoutInput" class="timeout-label">
-              Timeout (seconds)
-              <input id="timeoutInput" type="number" min="1" value="120" />
-            </label>
+              <input id="urlInput" type="text" placeholder="https://example.com/path" />
+              <div class="request-actions">
+                <button
+                  id="exportCurlBtn"
+                  type="button"
+                  class="secondary"
+                  aria-controls="curlExportOverlay"
+                  aria-expanded="false"
+                  aria-haspopup="dialog"
+                >
+                  Export
+                </button>
+                <button id="sendBtn" type="button" class="send-btn">Send</button>
+                <button id="abortBtn" type="button" class="secondary">Abort</button>
+              </div>
+            </div>
+
+            <div class="workspace-row workspace-row-meta">
+              <label for="aggregationPluginInput" class="timeout-label request-meta-field">
+                <span class="request-meta-label">Aggregation</span>
+                <select id="aggregationPluginInput">
+                  <option value="__collection__">Collection default</option>
+                  <option value="none">None</option>
+                  <option value="openai">OpenAI</option>
+                </select>
+              </label>
+              <label for="timeoutInput" class="timeout-label request-meta-field request-timeout-field">
+                <span class="request-meta-label">Timeout (seconds)</span>
+                <input id="timeoutInput" type="number" min="1" value="120" />
+              </label>
+            </div>
           </div>
           <p id="draftStatusText" class="hint compact draft-status"></p>
 
@@ -449,9 +474,15 @@
               <span class="workspace-kicker">Response</span>
               <h2 class="workspace-heading">Live response</h2>
             </div>
-            <div class="status-line">
-              <strong>Status:</strong>
-              <span id="statusText">-</span>
+            <div class="response-status-strip">
+              <div class="response-status-item">
+                <span class="response-status-label">Status</span>
+                <strong id="statusText">-</strong>
+              </div>
+              <div class="response-status-item response-status-note">
+                <span class="response-status-label">Inspector</span>
+                <strong>Streaming-aware</strong>
+              </div>
             </div>
           </div>
           <p id="errorText" class="error"></p>
@@ -484,7 +515,11 @@
           </div>
 
           <div class="pm-panel-stack">
-            <section id="responseRawPanel" class="pm-panel is-active" data-tab-panel="response">
+            <section
+              id="responseRawPanel"
+              class="pm-panel is-active response-panel-shell"
+              data-tab-panel="response"
+            >
               <p class="hint compact">
                 SSE mode: each incoming line is clickable to inspect payload and view JSON.
               </p>
@@ -581,7 +616,11 @@
               <pre id="rawOutput" class="output output-tall raw-fallback"></pre>
             </section>
 
-            <section id="responseAggregatePanel" class="pm-panel" data-tab-panel="response">
+            <section
+              id="responseAggregatePanel"
+              class="pm-panel response-panel-shell"
+              data-tab-panel="response"
+            >
               <div class="json-toolbar">
                 <p class="hint compact">
                   Long aggregated output is capped to keep the page responsive.
@@ -601,8 +640,16 @@
               <div id="aggregateOutput" class="output output-tall aggregate-output"></div>
             </section>
 
-            <section id="responseHeadersPanel" class="pm-panel" data-tab-panel="response">
-              <div class="headers-panel-stack">
+            <section
+              id="responseHeadersPanel"
+              class="pm-panel response-panel-shell"
+              data-tab-panel="response"
+            >
+              <div class="response-headers-grid-head" aria-hidden="true">
+                <span>Sent headers</span>
+                <span>Response headers</span>
+              </div>
+              <div class="headers-panel-stack response-headers-stack">
                 <div>
                   <p class="panel-label compact-label">Sent headers</p>
                   <div id="sentHeadersOutput" class="json-viewer-shell output"></div>
@@ -621,7 +668,7 @@
         <header class="library-head">
           <div>
             <span class="workspace-kicker">Collections</span>
-            <h2>Requests library</h2>
+            <h2>Request library</h2>
           </div>
           <div class="side-card-tools">
             <button
@@ -638,25 +685,31 @@
 
         <div class="library-toolbar">
           <div class="inline-form">
-            <input id="newCollectionNameInput" type="text" placeholder="New collection name" />
-            <button id="createCollectionBtn" type="button">Create</button>
+            <input id="newCollectionNameInput" type="text" placeholder="Collection name" />
+            <button id="createCollectionBtn" type="button">New</button>
           </div>
           <input
             id="requestSearchInput"
             type="search"
             class="library-search-input"
-            placeholder="Search requests"
+            placeholder="Search"
             aria-label="Search requests"
           />
           <div class="library-request-actions">
-            <button id="duplicateRequestBtn" type="button" class="secondary">Duplicate</button>
-            <button id="saveRequestBtn" type="button" class="secondary">Save current request</button>
+            <button id="duplicateRequestBtn" type="button" class="secondary">Clone</button>
+            <button id="saveRequestBtn" type="button" class="secondary">Save</button>
           </div>
         </div>
 
         <p id="collectionsStatusText" class="hint compact">
           Collections are stored in <code>./collections.json</code>.
         </p>
+        <div class="library-grid-head" aria-hidden="true">
+          <span>Method</span>
+          <span>Request</span>
+          <span>URL</span>
+          <span>Actions</span>
+        </div>
         <div id="collectionsList" class="collections-list"></div>
       </aside>
     </div>

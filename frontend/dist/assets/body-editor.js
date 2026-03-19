@@ -4,6 +4,8 @@ import { prettifyJSONText } from "./json-view.js";
 const setFoldedPathsEffect = StateEffect.define();
 const editableCompartment = new Compartment();
 const MAX_UNDO_ENTRIES = 100;
+const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/g;
+const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/g;
 export function createBodyEditor(options) {
     let dispatchSource = "user";
     let undoStack = loadUndoStack(options.undoStorageKey);
@@ -539,10 +541,32 @@ function buildComputedState(text, foldedPaths) {
     if (analysis.syntaxError) {
         ranges.push(Decoration.mark({ class: "cm-body-json-error" }).range(analysis.syntaxError.from, analysis.syntaxError.to));
     }
+    for (const templateRange of collectBodyEditorTemplateRanges(text)) {
+        ranges.push(Decoration.mark({ class: templateRange.className }).range(templateRange.from, templateRange.to));
+    }
     return {
         analysis,
         decorations: Decoration.set(ranges, true),
     };
+}
+export function collectBodyEditorTemplateRanges(text) {
+    const ranges = [];
+    for (const match of text.matchAll(new RegExp(DYNAMIC_TEMPLATE_PATTERN))) {
+        ranges.push({
+            from: match.index ?? 0,
+            to: (match.index ?? 0) + match[0].length,
+            className: "cm-template-dynamic",
+        });
+    }
+    for (const match of text.matchAll(new RegExp(ENV_TEMPLATE_PATTERN))) {
+        ranges.push({
+            from: match.index ?? 0,
+            to: (match.index ?? 0) + match[0].length,
+            className: "cm-template-env",
+        });
+    }
+    ranges.sort((left, right) => left.from - right.from || left.to - right.to);
+    return ranges;
 }
 function getSnapshot(state) {
     const analysis = state.field(bodyEditorComputedField).analysis;

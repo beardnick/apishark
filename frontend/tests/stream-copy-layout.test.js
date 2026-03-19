@@ -4,7 +4,7 @@ import test from "node:test";
 
 test("built SSE payload inspector exposes copy-all and copy-payload actions", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
-  const rawPanelMatch = html.match(/<section id="responseRawPanel"[\s\S]*?<\/section>/);
+  const rawPanelMatch = html.match(/<section[^>]*id="responseRawPanel"[\s\S]*?<\/section>/);
 
   assert.ok(rawPanelMatch, "raw response panel should exist");
   const rawPanel = rawPanelMatch[0];

@@ -8,11 +8,19 @@ test("built collections library exposes a request search input", async () => {
 
   assert.ok(libraryMatch, "collections library should exist");
   assert.match(libraryMatch[0], /id="requestSearchInput"/);
-  assert.match(libraryMatch[0], /placeholder="Search requests"/);
+  assert.match(libraryMatch[0], /placeholder="Search"/);
   assert.ok(
     libraryMatch[0].indexOf('id="newCollectionNameInput"') <
       libraryMatch[0].indexOf('id="requestSearchInput"'),
   );
+});
+
+test("built utilities render environment variables as grid rows instead of a textarea", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+
+  assert.match(html, /id="envEditor"/);
+  assert.match(html, /class="editor-grid-head env-grid-head"/);
+  assert.doesNotMatch(html, /id="envInput"/);
 });
 
 test("collections library styles keep the request list scrollable inside the sidebar", async () => {
@@ -27,6 +35,9 @@ test("collections library styles keep the request list scrollable inside the sid
   assert.match(css, /\.collections-list\s*\{[^}]*display:\s*flex/);
   assert.match(css, /\.collections-list\s*\{[^}]*flex:\s*1 1 auto/);
   assert.match(css, /\.collections-list\s*\{[^}]*overflow:\s*auto/);
+  assert.match(css, /\.env-editor\s*\{[^}]*overflow:\s*auto/);
+  assert.match(css, /\.body-code-editor \.cm-template-env\s*\{/);
+  assert.match(css, /\.body-code-editor \.cm-template-dynamic\s*\{/);
 });
 
 test("built runtime keeps collection collapse controls and persisted collapse state", async () => {
