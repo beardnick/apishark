@@ -35,6 +35,31 @@ go build -o apishark .
 ./apishark -addr 127.0.0.1:18080
 ```
 
+## CLI automation
+
+APIShark also exposes a non-interactive CLI for automation and AI agents.
+
+Print the built-in Markdown guide:
+
+```bash
+go run . doc
+```
+
+Manage collections, requests, environments, and plugins:
+
+```bash
+go run . collections list
+go run . collections put --name "OpenAI Demo" --plugin openai
+go run . requests put --collection "OpenAI Demo" --name "Streaming Chat" --method POST --url "https://api.openai.com/v1/responses"
+go run . requests import --collection "OpenAI Demo" --name "Imported Chat" --file openai.curl
+go run . envs put --name "local" --kv "OPENAI_API_KEY=sk-example"
+go run . plugins list
+go run . requests delete --collection "OpenAI Demo" --request "Streaming Chat"
+go run . envs delete --env "local"
+```
+
+Run `go run . doc` to get the full AI-oriented Markdown guide, including plugin authoring and command examples.
+
 ## Frontend development
 
 Frontend source is in `frontend/src`.

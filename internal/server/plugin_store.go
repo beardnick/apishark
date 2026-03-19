@@ -130,6 +130,48 @@ func (s *pluginFileStore) Import(payload PluginImportPayload) (ImportedAggregati
 	return plugin, nil
 }
 
+func (s *pluginFileStore) Delete(pluginID string) (ImportedAggregationPlugin, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	normalizedID := normalizeImportedAggregationPluginID(pluginID)
+	if normalizedID == "" {
+		return ImportedAggregationPlugin{}, errors.New("plugin id must be lowercase letters, numbers, dots, underscores, or dashes")
+	}
+
+	store, err := loadPluginStoreFromFile(s.manifestPath)
+	if err != nil {
+		return ImportedAggregationPlugin{}, err
+	}
+
+	nextPlugins := make([]ImportedAggregationPlugin, 0, len(store.Plugins))
+	var deleted ImportedAggregationPlugin
+	found := false
+	for _, existing := range store.Plugins {
+		if existing.ID == normalizedID {
+			deleted = existing
+			found = true
+			continue
+		}
+		nextPlugins = append(nextPlugins, existing)
+	}
+	if !found {
+		return ImportedAggregationPlugin{}, fmt.Errorf("plugin %q was not found", normalizedID)
+	}
+
+	store.Plugins = normalizePluginEntries(nextPlugins)
+	if err := savePluginStoreToFile(s.manifestPath, store); err != nil {
+		return ImportedAggregationPlugin{}, err
+	}
+
+	modulePath := filepath.Join(s.modulesDir, deleted.SourceFile)
+	if err := os.Remove(modulePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return ImportedAggregationPlugin{}, fmt.Errorf("remove plugin module: %w", err)
+	}
+
+	return deleted, nil
+}
+
 func loadPluginStoreFromFile(filePath string) (PluginStore, error) {
 	file, err := os.Open(filePath)
 	if errors.Is(err, os.ErrNotExist) {
