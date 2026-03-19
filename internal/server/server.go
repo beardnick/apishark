@@ -186,13 +186,13 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	contentType := upstreamResp.Header.Get("Content-Type")
 	streaming := strings.Contains(strings.ToLower(contentType), "text/event-stream")
 	if !sendEvent(w, flusher, map[string]any{
-		"type":             "meta",
-		"status":           upstreamResp.StatusCode,
-		"status_text":      upstreamResp.Status,
-		"headers":          flattenHeaders(upstreamResp.Header),
-		"response_headers": flattenHeaders(upstreamResp.Header),
-		"sent_headers":     flattenHeaders(upstreamReq.Header),
-		"streaming":        streaming,
+		"type":               "meta",
+		"status":             upstreamResp.StatusCode,
+		"status_text":        upstreamResp.Status,
+		"headers":            flattenHeaders(upstreamResp.Header),
+		"response_headers":   flattenHeaders(upstreamResp.Header),
+		"sent_headers":       flattenHeaders(upstreamReq.Header),
+		"streaming":          streaming,
 		"aggregation_plugin": normalizeAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
 	}) {
 		return
@@ -249,14 +249,9 @@ func (s *server) handleCollections(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		defer r.Body.Close()
 
-		limitedBody := io.LimitReader(r.Body, maxCollectionsFileSize+1)
-		body, err := io.ReadAll(limitedBody)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
-			return
-		}
-		if len(body) > maxCollectionsFileSize {
-			http.Error(w, "collections payload is too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 

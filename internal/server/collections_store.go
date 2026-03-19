@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	collectionsFileName    = "collections.json"
-	maxCollectionsFileSize = 4 << 20
+	collectionsFileName = "collections.json"
 )
 
 type SavedHeader struct {
@@ -124,13 +123,9 @@ func loadCollectionStoreFromFile(filePath string) (CollectionStore, error) {
 	}
 	defer file.Close()
 
-	limited := io.LimitReader(file, maxCollectionsFileSize+1)
-	data, err := io.ReadAll(limited)
+	data, err := io.ReadAll(file)
 	if err != nil {
 		return CollectionStore{}, fmt.Errorf("read collections file: %w", err)
-	}
-	if len(data) > maxCollectionsFileSize {
-		return CollectionStore{}, fmt.Errorf("collections file exceeds %d bytes", maxCollectionsFileSize)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return emptyCollectionStore(), nil

@@ -208,6 +208,57 @@ func TestHandleSendRequestStreamsSSERawEventsWithParsedJSON(t *testing.T) {
 	}
 }
 
+func TestHandleCollectionsAcceptsLargePayload(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	collectionStore, err := newCollectionFileStore(projectDir)
+	if err != nil {
+		t.Fatalf("newCollectionFileStore() error = %v", err)
+	}
+
+	largeBody := strings.Repeat("x", 5<<20)
+	payload := CollectionStore{
+		Collections: []RequestCollection{
+			{
+				ID:   "large",
+				Name: "Large",
+				Requests: []SavedRequest{
+					{
+						ID:             "req-large",
+						Name:           "Large Body",
+						Method:         "POST",
+						URL:            "https://example.com/upload",
+						Body:           largeBody,
+						TimeoutSeconds: 120,
+					},
+				},
+			},
+		},
+	}
+
+	requestBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/collections", bytes.NewReader(requestBody))
+	(&server{collectionStore: collectionStore}).handleCollections(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleCollections() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	reloaded, err := collectionStore.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := reloaded.Collections[0].Requests[0].Body; got != largeBody {
+		t.Fatalf("reloaded body length = %d, want %d", len(got), len(largeBody))
+	}
+}
+
 func parseSSEEvents(t *testing.T, body string) []map[string]any {
 	t.Helper()
 

@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -174,5 +175,47 @@ func TestLoadCollectionStoreFromFileRejectsInvalidJSON(t *testing.T) {
 
 	if _, err := loadCollectionStoreFromFile(filePath); err == nil {
 		t.Fatal("loadCollectionStoreFromFile() error = nil, want parse error")
+	}
+}
+
+func TestCollectionFileStoreAllowsLargeCollections(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store, err := newCollectionFileStore(dir)
+	if err != nil {
+		t.Fatalf("newCollectionFileStore() error = %v", err)
+	}
+
+	largeBody := strings.Repeat("x", 5<<20)
+	input := CollectionStore{
+		Collections: []RequestCollection{
+			{
+				ID:   "large",
+				Name: "Large",
+				Requests: []SavedRequest{
+					{
+						ID:             "req-large",
+						Name:           "Large Body",
+						Method:         "POST",
+						URL:            "https://example.com/upload",
+						Body:           largeBody,
+						TimeoutSeconds: 120,
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := store.Save(input); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	reloaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := reloaded.Collections[0].Requests[0].Body; got != largeBody {
+		t.Fatalf("reloaded body length = %d, want %d", len(got), len(largeBody))
 	}
 }
