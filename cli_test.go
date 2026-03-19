@@ -28,11 +28,23 @@ func TestDocCommandPrintsMarkdownGuide(t *testing.T) {
 	if !strings.Contains(stdout, "apishark requests import") {
 		t.Fatalf("doc output missing import command: %s", stdout)
 	}
+	if !strings.Contains(stdout, "--data-raw") || !strings.Contains(stdout, "--json") {
+		t.Fatalf("doc output missing curl import support details: %s", stdout)
+	}
+	if !strings.Contains(stdout, "Unsupported or ignored curl content:") || !strings.Contains(stdout, "--form") {
+		t.Fatalf("doc output missing curl import limits: %s", stdout)
+	}
 	if !strings.Contains(stdout, "apishark requests delete") {
 		t.Fatalf("doc output missing delete command: %s", stdout)
 	}
 	if !strings.Contains(stdout, "plugins import") {
 		t.Fatalf("doc output missing plugin instructions: %s", stdout)
+	}
+	if !strings.Contains(stdout, "onNormalizedEvent(event)") || !strings.Contains(stdout, "finalize()") {
+		t.Fatalf("doc output missing plugin lifecycle details: %s", stdout)
+	}
+	if !strings.Contains(stdout, `kind: "content"`) || !strings.Contains(stdout, `kind: "image"`) {
+		t.Fatalf("doc output missing fragment examples: %s", stdout)
 	}
 }
 
