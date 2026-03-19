@@ -336,6 +336,8 @@ html[data-utilities-collapsed="true"] .pm-sidebar {
 .pm-main {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: auto;
   background: var(--panel);
 }
 
