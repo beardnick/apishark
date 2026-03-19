@@ -83,6 +83,7 @@ a {
 }
 
 .pm-shell {
+  height: calc(100vh - 24px);
   min-height: calc(100vh - 24px);
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--library-width);
@@ -104,6 +105,7 @@ html[data-utilities-collapsed="true"] .pm-shell {
 .pm-main,
 .pm-library {
   min-width: 0;
+  min-height: 0;
 }
 
 .pm-sidebar {
@@ -499,6 +501,12 @@ html[data-utilities-collapsed="true"] .pm-sidebar {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.collection-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
 }
 
 .section-head,
@@ -1425,7 +1433,7 @@ button.ghost:hover:not(:disabled) {
 .collection-select-btn,
 .request-load-btn {
   min-width: 0;
-  width: 100%;
+  width: auto;
   justify-content: flex-start;
   align-items: flex-start;
   flex-direction: column;
@@ -1474,6 +1482,11 @@ button.ghost:hover:not(:disabled) {
   border-radius: 8px;
   border-color: transparent;
   background: transparent;
+}
+
+.collection-card-actions {
+  position: relative;
+  z-index: 1;
 }
 
 .collection-collapse-btn {
@@ -1651,6 +1664,7 @@ button.ghost:hover:not(:disabled) {
   }
 
   .pm-shell {
+    height: 100vh;
     min-height: 100vh;
     border-radius: 0;
     grid-template-columns: 1fr;

@@ -2584,7 +2584,8 @@ function renderCollections(): void {
         : "Matching collections stay expanded while search is active";
     collapseBtn.setAttribute("aria-expanded", effectiveCollapsed ? "false" : "true");
     collapseBtn.disabled = normalizedSearch !== "";
-    collapseBtn.addEventListener("click", () => {
+    collapseBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
       toggleCollectionCollapsed(collection.id);
     });
     const saveBtn = document.createElement("button");

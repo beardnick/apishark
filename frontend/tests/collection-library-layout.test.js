@@ -18,8 +18,10 @@ test("built collections library exposes a request search input", async () => {
 test("collections library styles keep the request list scrollable inside the sidebar", async () => {
   const css = await readFile(new URL("../dist/assets/main.css", import.meta.url), "utf8");
 
+  assert.match(css, /\.pm-shell\s*\{[^}]*height:\s*calc\(100vh - 24px\)/);
   assert.match(css, /\.pm-library\s*\{[^}]*min-height:\s*0/);
   assert.match(css, /\.pm-library\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /\.pm-sidebar,\s*\.pm-main,\s*\.pm-library\s*\{[^}]*min-height:\s*0/);
   assert.match(css, /\.collections-list\s*\{[^}]*display:\s*flex/);
   assert.match(css, /\.collections-list\s*\{[^}]*flex:\s*1 1 auto/);
   assert.match(css, /\.collections-list\s*\{[^}]*overflow:\s*auto/);
