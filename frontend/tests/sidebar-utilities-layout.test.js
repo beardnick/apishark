@@ -85,7 +85,7 @@ test("response workspace keeps a summary strip and grid-aligned headers panel", 
   assert.ok(responseWorkbenchMatch, "response workbench should exist");
   assert.match(responseWorkbenchMatch[0], /class="response-status-strip"/);
   assert.match(responseWorkbenchMatch[0], /class="response-status-label">Status<\/span>/);
-  assert.match(responseWorkbenchMatch[0], /class="response-status-label">Inspector<\/span>/);
+  assert.doesNotMatch(responseWorkbenchMatch[0], /Streaming-aware/);
   assert.match(responseWorkbenchMatch[0], /class="response-headers-grid-head"/);
   assert.match(responseWorkbenchMatch[0], /class="headers-panel-stack response-headers-stack"/);
 });

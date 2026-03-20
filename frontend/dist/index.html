@@ -166,7 +166,6 @@
               <div class="panel-head headers-panel-head">
                 <div class="headers-panel-copy">
                   <p class="panel-label">Headers</p>
-                  <p class="hint compact">Disabled rows stay editable but won’t be sent.</p>
                 </div>
                 <div class="panel-tools">
                   <button
@@ -248,10 +247,8 @@
 
               <div id="bodyEditorShell" class="body-editor-shell">
                 <div id="bodyEditorBanner" class="body-editor-banner" aria-live="polite">
-                  <span id="bodyEditorModeBadge" class="body-editor-mode-badge">Plain text</span>
-                  <p id="bodyEditorHint" class="body-editor-hint">
-                    Paste valid JSON to enable folding.
-                  </p>
+                  <span id="bodyEditorModeBadge" class="body-editor-mode-badge" hidden></span>
+                  <p id="bodyEditorHint" class="body-editor-hint"></p>
                 </div>
                 <div class="body-editor-frame">
                   <div
@@ -285,10 +282,6 @@
               <div class="response-status-item">
                 <span class="response-status-label">Status</span>
                 <strong id="statusText">-</strong>
-              </div>
-              <div class="response-status-item response-status-note">
-                <span class="response-status-label">Inspector</span>
-                <strong>Streaming-aware</strong>
               </div>
             </div>
           </div>
@@ -327,10 +320,6 @@
               class="pm-panel is-active response-panel-shell"
               data-tab-panel="response"
             >
-              <p class="hint compact">
-                SSE mode: each incoming line is clickable to inspect payload and view JSON.
-              </p>
-
               <div id="sseInspector" class="sse-inspector">
                 <div class="sse-lines-pane">
                   <p class="sse-pane-title">SSE lines</p>
@@ -338,9 +327,7 @@
                 </div>
                 <div class="sse-payload-pane">
                   <div class="json-toolbar">
-                    <p id="ssePayloadMeta" class="sse-pane-title">
-                      Click a line to inspect payload.
-                    </p>
+                    <p id="ssePayloadMeta" class="sse-pane-title"></p>
                     <div class="inline-actions panel-tools">
                       <button
                         id="copySseStreamBtn"
@@ -386,9 +373,7 @@
               </div>
 
               <div class="json-toolbar">
-                <span id="rawJsonMeta" class="hint compact">
-                  JSON tools appear automatically when the final response body is valid JSON.
-                </span>
+                <span id="rawJsonMeta" class="hint compact"></span>
                 <div class="inline-actions panel-tools">
                   <button
                     id="copyRawResponseBtn"
@@ -429,9 +414,7 @@
               data-tab-panel="response"
             >
               <div class="json-toolbar">
-                <p class="hint compact">
-                  Long aggregated output is capped to keep the page responsive.
-                </p>
+                <span></span>
                 <div class="inline-actions panel-tools">
                   <button
                     id="copyAggregateResponseBtn"
@@ -458,11 +441,9 @@
               </div>
               <div class="headers-panel-stack response-headers-stack">
                 <div>
-                  <p class="panel-label compact-label">Sent headers</p>
                   <div id="sentHeadersOutput" class="json-viewer-shell output"></div>
                 </div>
                 <div>
-                  <p class="panel-label compact-label">Response headers</p>
                   <div id="headersOutput" class="json-viewer-shell output"></div>
                 </div>
               </div>
@@ -517,9 +498,7 @@
           </div>
         </div>
 
-        <p id="collectionsStatusText" class="hint compact">
-          Collections are stored in <code>./collections.json</code>.
-        </p>
+        <p id="collectionsStatusText" class="hint compact"></p>
         <div class="library-grid-head" aria-hidden="true">
           <span>Requests</span>
         </div>
@@ -555,7 +534,6 @@
         <div class="panel-head">
           <div>
             <p id="helperModalTitle" class="panel-label">Variable helpers</p>
-            <p class="hint compact">Reusable placeholders for env lookup and dynamic request values.</p>
           </div>
           <div class="panel-tools">
             <button id="closeHelperModalBtn" type="button" class="secondary compact-btn">Close</button>
@@ -572,11 +550,6 @@
             <code class="helper-token">{{$base64(text)}}</code>
             <code class="helper-token">{{$urlencode(text)}}</code>
           </div>
-          <p class="hint compact helper-note">
-            Use <code>{{VAR_NAME}}</code> for environment lookup. Dynamic placeholders are resolved
-            once per send or cURL export action, and invalid <code>{{$...}}</code> syntax is blocked
-            before sending.
-          </p>
         </div>
       </section>
     </div>
@@ -590,8 +563,7 @@
       >
         <div class="panel-head">
           <div>
-            <p id="environmentModalTitle" class="panel-label">Environment manager</p>
-            <p class="hint compact">Switch environments and edit variables in one place.</p>
+            <p id="environmentModalTitle" class="panel-label">Environment</p>
           </div>
           <div class="panel-tools">
             <button id="closeEnvironmentModalBtn" type="button" class="secondary compact-btn">Close</button>
@@ -660,7 +632,6 @@
         <div class="panel-head">
           <div>
             <p id="pluginModalTitle" class="panel-label">Aggregation plugins</p>
-            <p class="hint compact">Manage imported plugins and inspect the effective aggregation mode.</p>
           </div>
           <div class="panel-tools">
             <button id="closePluginModalBtn" type="button" class="secondary compact-btn">Close</button>
@@ -676,9 +647,7 @@
           <div class="utility-action-row">
             <button id="importPluginBtn" type="button">Add plugin</button>
           </div>
-          <p id="pluginsStatusText" class="hint compact">
-            Imported plugins are stored in <code>./.apishark/plugins.json</code>.
-          </p>
+          <p id="pluginsStatusText" class="hint compact"></p>
           <p id="effectiveAggregationText" class="hint compact utility-status"></p>
           <div id="pluginsList" class="plugin-list"></div>
         </div>
@@ -695,7 +664,6 @@
         <div class="panel-head">
           <div>
             <p id="importCurlTitle" class="panel-label">cURL import</p>
-            <p class="hint compact">Import a cURL command into the current request editor.</p>
           </div>
           <div class="panel-tools">
             <button id="closeImportModalBtn" type="button" class="secondary compact-btn">Close</button>
@@ -724,7 +692,6 @@
         <div class="panel-head">
           <div>
             <p id="curlExportTitle" class="panel-label">cURL export</p>
-            <p class="hint compact">Generated from the current editor state without env interpolation.</p>
           </div>
           <div class="panel-tools">
             <button id="copyExportCurlBtn" type="button" class="secondary compact-btn">Copy</button>

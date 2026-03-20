@@ -806,6 +806,10 @@ textarea.has-env-template.has-dynamic-template {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(236, 244, 252, 0.82));
 }
 
+.body-editor-banner.is-empty {
+  display: none;
+}
+
 .body-editor-mode-badge {
   display: inline-flex;
   align-items: center;
@@ -828,6 +832,13 @@ textarea.has-env-template.has-dynamic-template {
   color: var(--text-muted);
   font-size: 0.74rem;
   line-height: 1.35;
+}
+
+#rawJsonMeta:empty,
+#ssePayloadMeta:empty,
+#pluginsStatusText:empty,
+#collectionsStatusText:empty {
+  display: none;
 }
 
 .body-editor-shell[data-mode="json-expanded"] .body-editor-mode-badge {

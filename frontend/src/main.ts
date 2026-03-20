@@ -214,6 +214,7 @@ const urlInput = byId<HTMLInputElement>("urlInput");
 const addHeaderBtn = byId<HTMLButtonElement>("addHeaderBtn");
 const headersEditor = byId<HTMLElement>("headersEditor");
 const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
+const bodyEditorBanner = byId<HTMLElement>("bodyEditorBanner");
 const bodyEditorModeBadge = byId<HTMLElement>("bodyEditorModeBadge");
 const bodyEditorHint = byId<HTMLElement>("bodyEditorHint");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
@@ -1474,34 +1475,18 @@ function syncBodyEditor(): void {
 function syncBodyEditorBanner(result: BodyEditorSnapshot): void {
   if (result.syntaxError) {
     bodyEditorShell.dataset.mode = "json-invalid";
-    bodyEditorModeBadge.textContent = "JSON error";
+    bodyEditorModeBadge.hidden = false;
+    bodyEditorModeBadge.textContent = "Invalid JSON";
     bodyEditorHint.textContent = `Invalid JSON at line ${result.syntaxError.line}, column ${result.syntaxError.column}: ${result.syntaxError.message}`;
+    bodyEditorBanner.classList.remove("is-empty");
     return;
   }
 
-  if (!result.hasJSON) {
-    bodyEditorShell.dataset.mode = "plain";
-    bodyEditorModeBadge.textContent = "Plain text";
-    bodyEditorHint.textContent = bodyInput.value.trim()
-      ? "Valid JSON unlocks folding and prettify helpers."
-      : "Paste valid JSON to enable folding.";
-    return;
-  }
-
-  if (result.hasFoldedBlocks) {
-    bodyEditorShell.dataset.mode = "json-collapsed";
-    bodyEditorModeBadge.textContent = "JSON folded";
-    bodyEditorHint.textContent = requestIsLoading
-      ? "Request is running. Folding is preserved while editing is temporarily disabled."
-      : "Use gutter toggles for per-block folding, or Expand to open every JSON block.";
-    return;
-  }
-
-  bodyEditorShell.dataset.mode = "json-expanded";
-  bodyEditorModeBadge.textContent = "Editing JSON";
-  bodyEditorHint.textContent = requestIsLoading
-    ? "Request is running. Editing is temporarily disabled."
-    : "Use gutter toggles for nested JSON, Collapse to fold all, or Prettify to normalize formatting.";
+  bodyEditorShell.dataset.mode = !result.hasJSON ? "plain" : result.hasFoldedBlocks ? "json-collapsed" : "json-expanded";
+  bodyEditorModeBadge.hidden = true;
+  bodyEditorModeBadge.textContent = "";
+  bodyEditorHint.textContent = "";
+  bodyEditorBanner.classList.add("is-empty");
 }
 
 function focusBodyEditor(selectAll = false): void {
@@ -1668,7 +1653,7 @@ async function loadPlugins(options?: { successMessage?: string }): Promise<void>
     setPluginsStatus(
       options?.successMessage ??
         (getImportedAggregationPluginManifests().length === 0
-          ? 'Imported plugins are stored in "./.apishark/plugins.json".'
+          ? ""
           : `Loaded ${getImportedAggregationPluginManifests().length} imported plugin${getImportedAggregationPluginManifests().length === 1 ? "" : "s"}.`),
     );
   } catch (error) {
@@ -2208,8 +2193,7 @@ function clearOutputs(): void {
   rawJsonViewer.textContent = "";
   rawJsonViewer.classList.add("is-hidden");
   rawOutput.classList.remove("is-hidden");
-  rawJsonMeta.textContent =
-    "JSON tools appear automatically when the final response body is valid JSON.";
+  rawJsonMeta.textContent = "";
   rawCollapseBtn.disabled = true;
   rawExpandBtn.disabled = true;
 }
@@ -2239,8 +2223,7 @@ function renderRawJSONIfPossible(text: string): void {
   if (!controller.hasJSON) {
     rawOutput.classList.remove("is-hidden");
     rawJsonViewer.classList.add("is-hidden");
-    rawJsonMeta.textContent =
-      "JSON tools appear automatically when the final response body is valid JSON.";
+    rawJsonMeta.textContent = "";
     rawCollapseBtn.disabled = true;
     rawExpandBtn.disabled = true;
     return;
@@ -2248,7 +2231,7 @@ function renderRawJSONIfPossible(text: string): void {
 
   rawOutput.classList.add("is-hidden");
   rawJsonViewer.classList.remove("is-hidden");
-  rawJsonMeta.textContent = "Response body rendered as collapsible JSON.";
+  rawJsonMeta.textContent = "";
   rawCollapseBtn.disabled = false;
   rawExpandBtn.disabled = false;
 }
@@ -2274,7 +2257,7 @@ function clearSseInspector(): void {
   selectedSseLine = null;
   sseLineCounter = 0;
   sseLineList.textContent = "";
-  ssePayloadMeta.textContent = "Click a line to inspect payload.";
+  ssePayloadMeta.textContent = "";
   copySsePayloadBtn.disabled = true;
   ssePayloadOutput.textContent = "";
   ssePayloadJsonViewer.textContent = "";
@@ -2357,7 +2340,7 @@ function selectSseLine(entry: SseLineEntry): void {
     ssePayloadOutput.classList.add("is-hidden");
     ssePayloadCollapseBtn.disabled = false;
     ssePayloadExpandBtn.disabled = false;
-    ssePayloadMeta.textContent = `Line ${entry.index} payload (JSON view)`;
+    ssePayloadMeta.textContent = `Line ${entry.index}`;
     return;
   }
 
@@ -2367,7 +2350,7 @@ function selectSseLine(entry: SseLineEntry): void {
   ssePayloadOutput.textContent = entry.payloadText;
   ssePayloadCollapseBtn.disabled = true;
   ssePayloadExpandBtn.disabled = true;
-  ssePayloadMeta.textContent = `Line ${entry.index} payload`;
+  ssePayloadMeta.textContent = `Line ${entry.index}`;
 }
 
 function extractPayloadText(rawLine: string): string {
@@ -2518,7 +2501,7 @@ async function loadCollections(): Promise<void> {
     }
     setCollectionsStatus(
       parsed.collections.length === 0
-        ? "Collections are stored in ./collections.json."
+        ? ""
         : `Loaded ${parsed.collections.length} collection${parsed.collections.length === 1 ? "" : "s"}.`,
     );
   } catch (error) {
