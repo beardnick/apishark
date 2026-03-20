@@ -121,54 +121,12 @@
               <span class="utility-section-title">Environments</span>
             </div>
             <div class="utility-section-panel drawer-panel">
-              <div class="utility-panel-head">
-                <label for="environmentSelect" class="panel-label compact-label">Active environment</label>
-                <div class="environment-actions side-card-tools">
-                  <button
-                    id="addEnvironmentRowBtn"
-                    type="button"
-                    class="ghost icon-btn control-icon-btn"
-                    aria-label="Add environment variable"
-                    title="Add environment variable"
-                  >
-                    <span class="action-symbol" aria-hidden="true">+</span>
-                  </button>
-                  <button
-                    id="createEnvironmentBtn"
-                    type="button"
-                    class="ghost icon-btn control-icon-btn"
-                    aria-label="New environment"
-                    title="New environment"
-                  >
-                    <span class="action-symbol" aria-hidden="true">+</span>
-                  </button>
-                  <button
-                    id="renameEnvironmentBtn"
-                    type="button"
-                    class="ghost icon-btn control-icon-btn"
-                    aria-label="Rename environment"
-                    title="Rename environment"
-                  >
-                    <span class="action-symbol" aria-hidden="true">✎</span>
-                  </button>
-                  <button
-                    id="deleteEnvironmentBtn"
-                    type="button"
-                    class="ghost icon-btn control-icon-btn danger-btn"
-                    aria-label="Delete environment"
-                    title="Delete environment"
-                  >
-                    <span class="action-symbol" aria-hidden="true">×</span>
-                  </button>
-                </div>
+              <p id="environmentSummaryText" class="hint compact">
+                Open the environment manager to switch environments and edit variables.
+              </p>
+              <div class="utility-action-row">
+                <button id="openEnvironmentModalBtn" type="button">Open manager</button>
               </div>
-              <select id="environmentSelect" aria-label="Active environment"></select>
-              <div class="editor-grid-head env-grid-head" aria-hidden="true">
-                <span>Key</span>
-                <span>Value</span>
-                <span>Actions</span>
-              </div>
-              <div id="envEditor" class="env-editor"></div>
             </div>
           </section>
 
@@ -216,13 +174,11 @@
               <span class="utility-section-title">Import with cURL</span>
             </div>
             <div class="utility-section-panel drawer-panel">
-              <textarea
-                id="curlInput"
-                rows="6"
-                placeholder='curl -X POST "https://example.com" -H "Authorization: Bearer {{OPENAI_API_KEY}}" -d "{\"hello\":\"world\"}"'
-              ></textarea>
+              <p class="hint compact">
+                Use the request toolbar to import a cURL command into the current request.
+              </p>
               <div class="utility-action-row">
-                <button id="importCurlBtn" type="button">Import</button>
+                <button id="openImportModalFromSidebarBtn" type="button">Open importer</button>
               </div>
             </div>
           </section>
@@ -258,6 +214,15 @@
           </section>
         </div>
       </aside>
+
+      <div
+        id="sidebarResizeHandle"
+        class="pane-divider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize utilities panel"
+        data-pane-resize-handle="sidebar"
+      ></div>
 
       <main class="pm-main">
         <header class="pm-topbar">
@@ -302,6 +267,16 @@
               </select>
               <input id="urlInput" type="text" placeholder="https://example.com/path" />
               <div class="request-actions">
+                <button
+                  id="openImportModalBtn"
+                  type="button"
+                  class="secondary"
+                  aria-controls="importCurlOverlay"
+                  aria-expanded="false"
+                  aria-haspopup="dialog"
+                >
+                  Import
+                </button>
                 <button
                   id="exportCurlBtn"
                   type="button"
@@ -373,11 +348,10 @@
                 </div>
               </div>
 
-              <div class="editor-grid-head" aria-hidden="true">
+              <div class="editor-grid-head header-grid-head" aria-hidden="true">
                 <span>Active</span>
                 <span>Header</span>
                 <span>Value</span>
-                <span>Actions</span>
               </div>
               <div id="headersEditor" class="headers-editor"></div>
             </section>
@@ -664,6 +638,15 @@
         </section>
       </main>
 
+      <div
+        id="libraryResizeHandle"
+        class="pane-divider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize request library"
+        data-pane-resize-handle="library"
+      ></div>
+
       <aside class="pm-library">
         <header class="library-head">
           <div>
@@ -705,13 +688,136 @@
           Collections are stored in <code>./collections.json</code>.
         </p>
         <div class="library-grid-head" aria-hidden="true">
-          <span>Method</span>
-          <span>Request</span>
-          <span>URL</span>
-          <span>Actions</span>
+          <span>Requests</span>
         </div>
         <div id="collectionsList" class="collections-list"></div>
       </aside>
+    </div>
+
+    <div id="requestContextMenu" class="context-menu" hidden>
+      <button id="requestContextDuplicateBtn" type="button" class="context-menu-item">
+        Duplicate
+      </button>
+      <button id="requestContextDeleteBtn" type="button" class="context-menu-item danger">
+        Delete
+      </button>
+    </div>
+
+    <div id="headerContextMenu" class="context-menu" hidden>
+      <button id="headerContextDuplicateBtn" type="button" class="context-menu-item">
+        Duplicate
+      </button>
+      <button id="headerContextDeleteBtn" type="button" class="context-menu-item danger">
+        Delete
+      </button>
+    </div>
+
+    <div
+      id="environmentOverlay"
+      class="utility-modal-overlay"
+      hidden
+      aria-hidden="true"
+    >
+      <section
+        class="utility-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="environmentModalTitle"
+      >
+        <div class="panel-head">
+          <div>
+            <p id="environmentModalTitle" class="panel-label">Environment manager</p>
+            <p class="hint compact">Switch environments and edit variables in one place.</p>
+          </div>
+          <div class="panel-tools">
+            <button id="closeEnvironmentModalBtn" type="button" class="secondary compact-btn">Close</button>
+          </div>
+        </div>
+        <div class="utility-modal-stack">
+          <div class="utility-panel-head">
+            <label for="environmentSelect" class="panel-label compact-label">Active environment</label>
+            <div class="environment-actions side-card-tools">
+              <button
+                id="addEnvironmentRowBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="Add environment variable"
+                title="Add environment variable"
+              >
+                <span class="action-symbol" aria-hidden="true">+</span>
+              </button>
+              <button
+                id="createEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="New environment"
+                title="New environment"
+              >
+                <span class="action-symbol" aria-hidden="true">+</span>
+              </button>
+              <button
+                id="renameEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn"
+                aria-label="Rename environment"
+                title="Rename environment"
+              >
+                <span class="action-symbol" aria-hidden="true">✎</span>
+              </button>
+              <button
+                id="deleteEnvironmentBtn"
+                type="button"
+                class="ghost icon-btn control-icon-btn danger-btn"
+                aria-label="Delete environment"
+                title="Delete environment"
+              >
+                <span class="action-symbol" aria-hidden="true">×</span>
+              </button>
+            </div>
+          </div>
+          <select id="environmentSelect" aria-label="Active environment"></select>
+          <div class="editor-grid-head env-grid-head" aria-hidden="true">
+            <span>Key</span>
+            <span>Value</span>
+            <span>Actions</span>
+          </div>
+          <div id="envEditor" class="env-editor"></div>
+        </div>
+      </section>
+    </div>
+
+    <div
+      id="importCurlOverlay"
+      class="utility-modal-overlay"
+      hidden
+      aria-hidden="true"
+    >
+      <section
+        class="utility-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="importCurlTitle"
+      >
+        <div class="panel-head">
+          <div>
+            <p id="importCurlTitle" class="panel-label">cURL import</p>
+            <p class="hint compact">Import a cURL command into the current request editor.</p>
+          </div>
+          <div class="panel-tools">
+            <button id="closeImportModalBtn" type="button" class="secondary compact-btn">Close</button>
+          </div>
+        </div>
+        <div class="utility-modal-stack">
+          <textarea
+            id="curlInput"
+            rows="8"
+            placeholder='curl -X POST "https://example.com" -H "Authorization: Bearer {{OPENAI_API_KEY}}" -d "{\"hello\":\"world\"}"'
+          ></textarea>
+          <div class="utility-action-row">
+            <button id="importCurlBtn" type="button">Import</button>
+          </div>
+        </div>
+      </section>
     </div>
 
     <div

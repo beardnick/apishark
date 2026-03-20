@@ -96,6 +96,20 @@ test("curl export uses a compact overlay instead of an inline request workbench 
   assert.doesNotMatch(requestWorkbenchMatch[0], /id="curlExportOutput"/);
 });
 
+test("environment and import tools use dedicated modal overlays", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+
+  assert.match(html, /id="openEnvironmentModalBtn"/);
+  assert.match(html, /id="environmentOverlay"[\s\S]*?class="utility-modal-card"/);
+  assert.match(html, /id="environmentSelect"/);
+  assert.match(html, /id="openImportModalFromSidebarBtn"/);
+  assert.match(
+    html,
+    /id="openImportModalBtn"[\s\S]*?aria-controls="importCurlOverlay"[\s\S]*?aria-expanded="false"/,
+  );
+  assert.match(html, /id="importCurlOverlay"[\s\S]*?class="utility-modal-card"/);
+});
+
 test("request workspace topbar stays compact without descriptive chrome", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
   const topbarMatch = html.match(/<header class="pm-topbar">[\s\S]*?<\/header>/);
@@ -130,7 +144,9 @@ test("headers panel keeps a compact table-style heading", async () => {
   assert.ok(headersPanelMatch, "headers panel should exist");
   assert.match(headersPanelMatch[0], /class="panel-head headers-panel-head"/);
   assert.match(headersPanelMatch[0], /class="headers-panel-copy"/);
-  assert.match(headersPanelMatch[0], /class="editor-grid-head"/);
+  assert.match(headersPanelMatch[0], /class="editor-grid-head header-grid-head"/);
+  assert.match(html, /id="headerContextMenu"/);
+  assert.doesNotMatch(headersPanelMatch[0], />Actions<\/span>/);
 });
 
 test("response workspace keeps a summary strip and grid-aligned headers panel", async () => {
@@ -157,4 +173,17 @@ test("built utility sidebar body contains only the four dedicated tool panels", 
   assert.equal(panelMatches.length, 4);
   assert.doesNotMatch(sidebarBodyMatch[0], /sidebar-copy/);
   assert.doesNotMatch(sidebarBodyMatch[0], /data-utility-toggle/);
+});
+
+test("main workspace exposes draggable pane dividers", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+  const css = await readFile(new URL("../dist/assets/main.css", import.meta.url), "utf8");
+  const js = await readFile(new URL("../dist/assets/main.js", import.meta.url), "utf8");
+
+  assert.match(html, /id="sidebarResizeHandle"[\s\S]*?data-pane-resize-handle="sidebar"/);
+  assert.match(html, /id="libraryResizeHandle"[\s\S]*?data-pane-resize-handle="library"/);
+  assert.match(css, /\.pane-divider\s*\{/);
+  assert.match(css, /--pane-divider-size:\s*8px/);
+  assert.match(js, /setupPaneResizeHandles/);
+  assert.match(js, /PANE_LAYOUT_STORAGE_KEY/);
 });

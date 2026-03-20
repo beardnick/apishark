@@ -15,6 +15,15 @@ test("built collections library exposes a request search input", async () => {
   );
 });
 
+test("built collections library uses a request context menu instead of inline row action buttons", async () => {
+  const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
+
+  assert.match(html, /id="requestContextMenu"/);
+  assert.match(html, /id="requestContextDuplicateBtn"/);
+  assert.match(html, /id="requestContextDeleteBtn"/);
+  assert.doesNotMatch(html, /request-delete-btn/);
+});
+
 test("built utilities render environment variables as grid rows instead of a textarea", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 
@@ -46,4 +55,6 @@ test("built runtime keeps collection collapse controls and persisted collapse st
   assert.match(js, /collection-collapse-btn/);
   assert.match(js, /collapsedCollectionIds/);
   assert.match(js, /toggleCollectionCollapsed/);
+  assert.match(js, /showRequestContextMenu/);
+  assert.match(js, /duplicateSavedRequest/);
 });

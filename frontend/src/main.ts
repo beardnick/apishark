@@ -171,6 +171,12 @@ type SseLineEntry = {
   button: HTMLButtonElement;
 };
 
+type PaneLayoutState = {
+  sidebarWidth?: number;
+  sidebarRailWidth?: number;
+  libraryWidth?: number;
+};
+
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220_000;
@@ -180,6 +186,7 @@ const SSE_MAX_LINES = 1_200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
 const COLLECTION_STATE_SAVE_DELAY_MS = 500;
 const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
+const PANE_LAYOUT_STORAGE_KEY = "apishark.pane-layout.v1";
 const VALID_UTILITY_PANEL_IDS = new Set([
   "environmentUtility",
   "helperUtility",
@@ -189,15 +196,29 @@ const VALID_UTILITY_PANEL_IDS = new Set([
 const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/;
 const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/;
 
+const pmShell =
+  document.querySelector<HTMLElement>(".pm-shell") ??
+  (() => {
+    throw new Error("Missing root shell");
+  })();
 const utilitySidebarBody = byId<HTMLElement>("appUtilitySidebarBody");
+const sidebarResizeHandle = byId<HTMLElement>("sidebarResizeHandle");
+const environmentSummaryText = byId<HTMLElement>("environmentSummaryText");
+const openEnvironmentModalBtn = byId<HTMLButtonElement>("openEnvironmentModalBtn");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const addEnvironmentRowBtn = byId<HTMLButtonElement>("addEnvironmentRowBtn");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
 const renameEnvironmentBtn = byId<HTMLButtonElement>("renameEnvironmentBtn");
 const deleteEnvironmentBtn = byId<HTMLButtonElement>("deleteEnvironmentBtn");
 const envEditor = byId<HTMLElement>("envEditor");
+const closeEnvironmentModalBtn = byId<HTMLButtonElement>("closeEnvironmentModalBtn");
+const environmentOverlay = byId<HTMLElement>("environmentOverlay");
 const curlInput = byId<HTMLTextAreaElement>("curlInput");
 const importCurlBtn = byId<HTMLButtonElement>("importCurlBtn");
+const openImportModalBtn = byId<HTMLButtonElement>("openImportModalBtn");
+const openImportModalFromSidebarBtn = byId<HTMLButtonElement>("openImportModalFromSidebarBtn");
+const closeImportModalBtn = byId<HTMLButtonElement>("closeImportModalBtn");
+const importCurlOverlay = byId<HTMLElement>("importCurlOverlay");
 const importPluginBtn = byId<HTMLButtonElement>("importPluginBtn");
 const pluginImportInput = byId<HTMLInputElement>("pluginImportInput");
 const pluginsStatusText = byId<HTMLElement>("pluginsStatusText");
@@ -238,6 +259,13 @@ const newCollectionNameInput = byId<HTMLInputElement>("newCollectionNameInput");
 const requestSearchInput = byId<HTMLInputElement>("requestSearchInput");
 const collectionsStatusText = byId<HTMLElement>("collectionsStatusText");
 const collectionsList = byId<HTMLElement>("collectionsList");
+const libraryResizeHandle = byId<HTMLElement>("libraryResizeHandle");
+const requestContextMenu = byId<HTMLElement>("requestContextMenu");
+const requestContextDuplicateBtn = byId<HTMLButtonElement>("requestContextDuplicateBtn");
+const requestContextDeleteBtn = byId<HTMLButtonElement>("requestContextDeleteBtn");
+const headerContextMenu = byId<HTMLElement>("headerContextMenu");
+const headerContextDuplicateBtn = byId<HTMLButtonElement>("headerContextDuplicateBtn");
+const headerContextDeleteBtn = byId<HTMLButtonElement>("headerContextDeleteBtn");
 
 const statusText = byId<HTMLSpanElement>("statusText");
 const errorText = byId<HTMLParagraphElement>("errorText");
@@ -285,6 +313,18 @@ let activeCollectionId: string | null = null;
 let activeSavedRequestId: string | null = null;
 let requestSearchQuery = "";
 let collapsedCollectionIds = new Set<string>();
+let requestContextMenuTarget:
+  | {
+      collectionId: string;
+      requestId: string;
+      name: string;
+    }
+  | null = null;
+let headerContextMenuTarget:
+  | {
+      headerId: string;
+    }
+  | null = null;
 let draftAutosaveTimer: number | null = null;
 let collectionStateSaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
@@ -302,6 +342,8 @@ let utilitySidebarLastPanelId =
   normalizeActiveUtilityPanelId(document.documentElement.getAttribute("data-active-utility")) ??
   DEFAULT_UTILITY_PANEL_ID;
 let utilitySectionsController: UtilitySectionController;
+let environmentModalTrigger: HTMLElement | null = null;
+let importModalTrigger: HTMLElement | null = null;
 
 const bodyEditorController = createBodyEditor({
   parent: bodyEditor,
@@ -321,8 +363,16 @@ function wireEvents(): void {
   environmentSelect.addEventListener("change", () => {
     activeEnvironmentId = environmentSelect.value || null;
     syncEnvironmentEditor();
+    renderEnvironmentSummary();
     persistState();
     scheduleCollectionStateSave();
+  });
+
+  openEnvironmentModalBtn.addEventListener("click", () => {
+    showEnvironmentModal();
+  });
+  closeEnvironmentModalBtn.addEventListener("click", () => {
+    hideEnvironmentModal(true);
   });
 
   createEnvironmentBtn.addEventListener("click", () => {
@@ -344,6 +394,15 @@ function wireEvents(): void {
   importCurlBtn.addEventListener("click", () => {
     void importCurl();
   });
+  openImportModalBtn.addEventListener("click", () => {
+    showImportModal();
+  });
+  openImportModalFromSidebarBtn.addEventListener("click", () => {
+    showImportModal();
+  });
+  closeImportModalBtn.addEventListener("click", () => {
+    hideImportModal(true);
+  });
   importPluginBtn.addEventListener("click", () => {
     pluginImportInput.click();
   });
@@ -364,8 +423,17 @@ function wireEvents(): void {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !curlExportOverlay.hidden) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!curlExportOverlay.hidden) {
       hideCurlExport(true);
+    }
+    if (!environmentOverlay.hidden) {
+      hideEnvironmentModal(true);
+    }
+    if (!importCurlOverlay.hidden) {
+      hideImportModal(true);
     }
   });
 
@@ -434,9 +502,60 @@ function wireEvents(): void {
     requestSearchQuery = requestSearchInput.value;
     renderCollections();
   });
+  requestContextDuplicateBtn.addEventListener("click", () => {
+    void handleRequestContextDuplicate();
+  });
+  requestContextDeleteBtn.addEventListener("click", () => {
+    void handleRequestContextDelete();
+  });
+  headerContextDuplicateBtn.addEventListener("click", () => {
+    handleHeaderContextDuplicate();
+  });
+  headerContextDeleteBtn.addEventListener("click", () => {
+    handleHeaderContextDelete();
+  });
   aggregationPluginInput.addEventListener("change", () => {
     renderEffectiveAggregationPlugin();
   });
+
+  document.addEventListener("click", (event) => {
+    if (
+      event.target instanceof Node &&
+      !requestContextMenu.hidden &&
+      !requestContextMenu.contains(event.target)
+    ) {
+      hideRequestContextMenu();
+    }
+    if (
+      event.target instanceof Node &&
+      !headerContextMenu.hidden &&
+      !headerContextMenu.contains(event.target)
+    ) {
+      hideHeaderContextMenu();
+    }
+    if (event.target === environmentOverlay) {
+      hideEnvironmentModal();
+    }
+    if (event.target === importCurlOverlay) {
+      hideImportModal();
+    }
+  });
+  window.addEventListener("blur", () => {
+    hideRequestContextMenu();
+    hideHeaderContextMenu();
+  });
+  window.addEventListener("resize", () => {
+    hideRequestContextMenu();
+    hideHeaderContextMenu();
+  });
+  window.addEventListener(
+    "scroll",
+    () => {
+      hideRequestContextMenu();
+      hideHeaderContextMenu();
+    },
+    true,
+  );
 
   const persistTargets: Array<
     EventTarget & { addEventListener: typeof EventTarget.prototype.addEventListener }
@@ -546,6 +665,7 @@ function applyInitialState(state: PersistedState): void {
   activeSavedRequestId = state.activeSavedRequestId;
   collapsedCollectionIds = new Set(state.collapsedCollectionIds ?? []);
   renderEnvironmentControls();
+  renderEnvironmentSummary();
   renderHeaderRows();
   syncBodyEditor();
   renderDraftStatus();
@@ -689,6 +809,7 @@ function setUtilitySidebarCollapsed(collapsed: boolean, panelId?: string | null)
     utilitySidebarBody,
     utilitySidebarCollapsed,
   );
+  syncPaneResizeHandleState();
 }
 
 function handleUtilitySectionToggle(panelId: string | null): void {
@@ -702,6 +823,131 @@ function handleUtilitySectionToggle(panelId: string | null): void {
 
 function normalizeActiveUtilityPanelId(value: unknown): string | null {
   return typeof value === "string" && VALID_UTILITY_PANEL_IDS.has(value) ? value : null;
+}
+
+function loadPaneLayoutState(): PaneLayoutState {
+  const fallback: PaneLayoutState = {};
+  const raw = localStorage.getItem(PANE_LAYOUT_STORAGE_KEY);
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as PaneLayoutState;
+    return {
+      sidebarWidth:
+        typeof parsed.sidebarWidth === "number" && Number.isFinite(parsed.sidebarWidth)
+          ? parsed.sidebarWidth
+          : undefined,
+      sidebarRailWidth:
+        typeof parsed.sidebarRailWidth === "number" && Number.isFinite(parsed.sidebarRailWidth)
+          ? parsed.sidebarRailWidth
+          : undefined,
+      libraryWidth:
+        typeof parsed.libraryWidth === "number" && Number.isFinite(parsed.libraryWidth)
+          ? parsed.libraryWidth
+          : undefined,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function applyPaneLayoutState(state: PaneLayoutState): void {
+  if (typeof state.sidebarWidth === "number") {
+    document.documentElement.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
+  }
+  if (typeof state.sidebarRailWidth === "number") {
+    document.documentElement.style.setProperty("--sidebar-rail-width", `${state.sidebarRailWidth}px`);
+  }
+  if (typeof state.libraryWidth === "number") {
+    document.documentElement.style.setProperty("--library-width", `${state.libraryWidth}px`);
+  }
+}
+
+function persistPaneLayoutState(): void {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const state: PaneLayoutState = {
+    sidebarWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-width")),
+    sidebarRailWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-rail-width")),
+    libraryWidth: parseFloat(rootStyle.getPropertyValue("--library-width")),
+  };
+  localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(state));
+}
+
+function syncPaneResizeHandleState(): void {
+  const isCompact = window.innerWidth <= 1120;
+  const sidebarDisabled = isCompact;
+  const libraryDisabled = isCompact;
+
+  sidebarResizeHandle.classList.toggle("is-disabled", sidebarDisabled);
+  libraryResizeHandle.classList.toggle("is-disabled", libraryDisabled);
+  sidebarResizeHandle.setAttribute("aria-disabled", sidebarDisabled ? "true" : "false");
+  libraryResizeHandle.setAttribute("aria-disabled", libraryDisabled ? "true" : "false");
+}
+
+function setupPaneResizeHandles(): void {
+  const setup = (
+    handle: HTMLElement,
+    type: "sidebar" | "library",
+  ) => {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || window.innerWidth <= 1120) {
+        return;
+      }
+
+      event.preventDefault();
+      handle.classList.add("is-dragging");
+      document.body.classList.add("is-resizing");
+      handle.setPointerCapture(event.pointerId);
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const shellBounds = pmShell.getBoundingClientRect();
+        if (type === "sidebar") {
+          const visibleWidth = moveEvent.clientX - shellBounds.left;
+          if (utilitySidebarCollapsed) {
+            document.documentElement.style.setProperty(
+              "--sidebar-rail-width",
+              `${clamp(visibleWidth, 64, 118)}px`,
+            );
+          } else {
+            document.documentElement.style.setProperty(
+              "--sidebar-width",
+              `${clamp(visibleWidth, 248, 520)}px`,
+            );
+          }
+        } else {
+          const width = shellBounds.right - moveEvent.clientX;
+          document.documentElement.style.setProperty(
+            "--library-width",
+            `${clamp(width, 240, 540)}px`,
+          );
+        }
+      };
+
+      const finish = () => {
+        handle.classList.remove("is-dragging");
+        document.body.classList.remove("is-resizing");
+        handle.removeEventListener("pointermove", onPointerMove);
+        handle.removeEventListener("pointerup", finish);
+        handle.removeEventListener("pointercancel", finish);
+        persistPaneLayoutState();
+      };
+
+      handle.addEventListener("pointermove", onPointerMove);
+      handle.addEventListener("pointerup", finish);
+      handle.addEventListener("pointercancel", finish);
+    });
+  };
+
+  setup(sidebarResizeHandle, "sidebar");
+  setup(libraryResizeHandle, "library");
+  syncPaneResizeHandleState();
+  window.addEventListener("resize", syncPaneResizeHandleState);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function markRequestEditorChanged(): void {
@@ -827,6 +1073,7 @@ function renderEnvironmentControls(): void {
   environmentSelect.value = activeEnvironmentId ?? "";
 
   syncEnvironmentEditor();
+  renderEnvironmentSummary();
 }
 
 function syncEnvironmentEditor(): void {
@@ -844,6 +1091,19 @@ function syncEnvironmentEditor(): void {
   createEnvironmentBtn.disabled = requestIsLoading;
   renameEnvironmentBtn.disabled = requestIsLoading || !activeEnvironment;
   deleteEnvironmentBtn.disabled = requestIsLoading || environments.length <= 1 || !activeEnvironment;
+}
+
+function renderEnvironmentSummary(): void {
+  const activeEnvironment = getActiveEnvironment();
+  if (!activeEnvironment) {
+    environmentSummaryText.textContent = "No active environment.";
+    return;
+  }
+
+  const variableCount = parseEnvironmentRows(activeEnvironment.text).filter(
+    (row) => row.key.trim() !== "" || row.value.trim() !== "",
+  ).length;
+  environmentSummaryText.textContent = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
 }
 
 function getActiveEnvironment(): EnvironmentEntry | null {
@@ -870,6 +1130,7 @@ function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
     }
     return next;
   });
+  renderEnvironmentSummary();
   persistState();
   scheduleCollectionStateSave();
 }
@@ -968,6 +1229,7 @@ function resolveActiveEnvironmentId(
 }
 
 function renderHeaderRows(): void {
+  hideHeaderContextMenu();
   if (headerRows.length === 0) {
     headerRows = [createEmptyHeaderRow()];
   }
@@ -976,6 +1238,10 @@ function renderHeaderRows(): void {
   for (const header of headerRows) {
     const row = document.createElement("div");
     row.className = `header-row${header.enabled ? "" : " is-disabled"}`;
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      showHeaderContextMenu(event.clientX, event.clientY, header.id);
+    });
 
     const toggleLabel = document.createElement("label");
     toggleLabel.className = "header-toggle header-cell";
@@ -1025,31 +1291,7 @@ function renderHeaderRows(): void {
     valueCell.className = "header-input-cell header-cell";
     valueCell.appendChild(valueInput);
 
-    const actions = document.createElement("div");
-    actions.className = "header-row-actions header-cell";
-    actions.append(
-      createHeaderActionButton(
-        "＋",
-        "Insert header below",
-        () => insertHeaderAfter(header.id),
-        requestIsLoading,
-      ),
-      createHeaderActionButton(
-        "⎘",
-        "Duplicate header",
-        () => duplicateHeader(header.id),
-        requestIsLoading,
-      ),
-      createHeaderActionButton(
-        "✕",
-        "Delete header",
-        () => removeHeader(header.id),
-        requestIsLoading,
-        true,
-      ),
-    );
-
-    row.append(toggleLabel, keyCell, valueCell, actions);
+    row.append(toggleLabel, keyCell, valueCell);
     fragment.appendChild(row);
   }
 
@@ -1427,6 +1669,7 @@ async function importCurl(): Promise<void> {
     persistCurrentRequestDraft();
     renderCollections();
     renderEffectiveAggregationPlugin();
+    hideImportModal();
     setCollectionsStatus(
       activeCollectionId
         ? `Imported cURL into an unsaved request in "${findCollection(activeCollectionId)?.name ?? "the selected collection"}".`
@@ -2515,6 +2758,47 @@ async function duplicateCurrentRequest(): Promise<void> {
   );
 }
 
+async function duplicateSavedRequest(collectionId: string, requestId: string): Promise<void> {
+  const collection = findCollection(collectionId);
+  const sourceRequest = collection?.requests.find((request) => request.id === requestId);
+  if (!collection || !sourceRequest) {
+    return;
+  }
+
+  const duplicateDraft = createDuplicateRequestDraft(
+    savedRequestToDraft(sourceRequest),
+    collection.requests.map((request) => request.name),
+  );
+  const savedRequest = createSavedRequest({
+    id: makeId("req"),
+    draft: duplicateDraft,
+  });
+  const previous = cloneCollectionStore(collectionStore);
+  collectionStore = {
+    ...collectionStore,
+    collections: collectionStore.collections.map((item) => {
+      if (item.id !== collectionId) {
+        return item;
+      }
+      return {
+        ...item,
+        requests: insertSavedRequest(item.requests, savedRequest, requestId),
+      };
+    }),
+  };
+
+  if (!(await saveCollectionsToServer(previous))) {
+    return;
+  }
+
+  clearPersistedRequestDraft({ collectionId, requestId: savedRequest.id });
+  renderCollections();
+  persistState();
+  setCollectionsStatus(
+    `Duplicated "${sourceRequest.name}" to "${savedRequest.name}" in "${collection.name}".`,
+  );
+}
+
 function loadSavedRequest(collectionId: string, requestId: string): void {
   const collection = findCollection(collectionId);
   const savedRequest = collection?.requests.find((request) => request.id === requestId);
@@ -2551,6 +2835,136 @@ function loadCollectionScratch(collectionId: string): void {
   renderEffectiveAggregationPlugin();
   persistState();
   setCollectionsStatus(`Loaded the unsaved request draft from "${collection.name}".`);
+}
+
+function showRequestContextMenu(
+  clientX: number,
+  clientY: number,
+  target: {
+    collectionId: string;
+    requestId: string;
+    name: string;
+  },
+): void {
+  hideHeaderContextMenu();
+  requestContextMenuTarget = target;
+  requestContextDeleteBtn.disabled = false;
+  requestContextMenu.hidden = false;
+
+  const { innerWidth, innerHeight } = window;
+  const menuWidth = 164;
+  const menuHeight = 84;
+  const left = Math.max(8, Math.min(clientX, innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(clientY, innerHeight - menuHeight - 8));
+  requestContextMenu.style.left = `${left}px`;
+  requestContextMenu.style.top = `${top}px`;
+}
+
+function hideRequestContextMenu(): void {
+  requestContextMenuTarget = null;
+  requestContextMenu.hidden = true;
+}
+
+async function handleRequestContextDuplicate(): Promise<void> {
+  const target = requestContextMenuTarget;
+  hideRequestContextMenu();
+  if (!target) {
+    return;
+  }
+  await duplicateSavedRequest(target.collectionId, target.requestId);
+}
+
+async function handleRequestContextDelete(): Promise<void> {
+  const target = requestContextMenuTarget;
+  hideRequestContextMenu();
+  if (!target) {
+    return;
+  }
+  await deleteSavedRequest(target.collectionId, target.requestId);
+}
+
+function showHeaderContextMenu(clientX: number, clientY: number, headerId: string): void {
+  hideRequestContextMenu();
+  headerContextMenuTarget = { headerId };
+  headerContextDeleteBtn.disabled = headerRows.length <= 1;
+  headerContextMenu.hidden = false;
+
+  const { innerWidth, innerHeight } = window;
+  const menuWidth = 164;
+  const menuHeight = 84;
+  const left = Math.max(8, Math.min(clientX, innerWidth - menuWidth - 8));
+  const top = Math.max(8, Math.min(clientY, innerHeight - menuHeight - 8));
+  headerContextMenu.style.left = `${left}px`;
+  headerContextMenu.style.top = `${top}px`;
+}
+
+function hideHeaderContextMenu(): void {
+  headerContextMenuTarget = null;
+  headerContextMenu.hidden = true;
+}
+
+function handleHeaderContextDuplicate(): void {
+  const target = headerContextMenuTarget;
+  hideHeaderContextMenu();
+  if (!target) {
+    return;
+  }
+  duplicateHeader(target.headerId);
+}
+
+function handleHeaderContextDelete(): void {
+  const target = headerContextMenuTarget;
+  hideHeaderContextMenu();
+  if (!target) {
+    return;
+  }
+  removeHeader(target.headerId);
+}
+
+function showEnvironmentModal(): void {
+  hideRequestContextMenu();
+  hideHeaderContextMenu();
+  environmentModalTrigger =
+    document.activeElement instanceof HTMLElement ? document.activeElement : openEnvironmentModalBtn;
+  environmentOverlay.hidden = false;
+  environmentOverlay.setAttribute("aria-hidden", "false");
+  window.requestAnimationFrame(() => {
+    environmentSelect.focus();
+  });
+}
+
+function hideEnvironmentModal(restoreFocus = false): void {
+  environmentOverlay.hidden = true;
+  environmentOverlay.setAttribute("aria-hidden", "true");
+  if (restoreFocus) {
+    (environmentModalTrigger ?? openEnvironmentModalBtn).focus();
+  }
+  environmentModalTrigger = null;
+}
+
+function showImportModal(): void {
+  hideCurlExport();
+  hideRequestContextMenu();
+  hideHeaderContextMenu();
+  importModalTrigger =
+    document.activeElement instanceof HTMLElement ? document.activeElement : openImportModalBtn;
+  importCurlOverlay.hidden = false;
+  importCurlOverlay.setAttribute("aria-hidden", "false");
+  openImportModalBtn.setAttribute("aria-expanded", "true");
+  window.requestAnimationFrame(() => {
+    curlInput.focus();
+    curlInput.select();
+  });
+}
+
+function hideImportModal(restoreFocus = false): void {
+  importCurlOverlay.hidden = true;
+  importCurlOverlay.setAttribute("aria-hidden", "true");
+  openImportModalBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    (importModalTrigger ?? openImportModalBtn).focus();
+  }
+  importModalTrigger = null;
 }
 
 async function deleteCollection(collectionId: string): Promise<void> {
@@ -2702,6 +3116,7 @@ async function updateCollectionAggregationPlugin(
 }
 
 function renderCollections(): void {
+  hideRequestContextMenu();
   collectionsList.textContent = "";
   const normalizedSearch = requestSearchQuery.trim().toLowerCase();
   collapsedCollectionIds = pruneCollapsedCollectionIds(
@@ -2844,24 +3259,10 @@ function renderCollections(): void {
       loadBtn.type = "button";
       loadBtn.className = "request-load-btn";
       loadBtn.addEventListener("click", () => loadCollectionScratch(collection.id));
-
-      const requestMethod = document.createElement("span");
-      requestMethod.className = "request-method";
-      requestMethod.dataset.method = collectionScratchDraft.draft.method || "GET";
-      requestMethod.textContent = collectionScratchDraft.draft.method || "GET";
-      const requestText = document.createElement("div");
-      requestText.className = "request-text";
       const requestName = document.createElement("strong");
       requestName.className = "request-title";
       requestName.textContent = collectionScratchDraft.draft.name || "Unsaved Request";
-      const requestMeta = document.createElement("p");
-      requestMeta.className = "request-meta hint compact";
-      requestMeta.textContent = formatCollectionScratchMeta(collectionScratchDraft.draft);
-      const requestUrl = document.createElement("p");
-      requestUrl.className = "request-url";
-      requestUrl.textContent = formatRequestRowUrl(collectionScratchDraft.draft.url);
-      requestText.append(requestName, requestMeta);
-      loadBtn.append(requestMethod, requestText, requestUrl);
+      loadBtn.append(requestName);
       item.appendChild(loadBtn);
       requestList.appendChild(item);
       requestItemCount += 1;
@@ -2884,39 +3285,20 @@ function renderCollections(): void {
         loadBtn.type = "button";
         loadBtn.className = "request-load-btn";
         loadBtn.addEventListener("click", () => loadSavedRequest(collection.id, request.id));
+        item.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          showRequestContextMenu(event.clientX, event.clientY, {
+            collectionId: collection.id,
+            requestId: request.id,
+            name: request.name,
+          });
+        });
 
-        const requestMethod = document.createElement("span");
-        requestMethod.className = "request-method";
-        requestMethod.dataset.method = request.method;
-        requestMethod.textContent = request.method;
-        const requestText = document.createElement("div");
-        requestText.className = "request-text";
         const requestName = document.createElement("strong");
         requestName.className = "request-title";
         requestName.textContent = request.name;
-        const requestMeta = document.createElement("p");
-        requestMeta.className = "request-meta hint compact";
-        requestMeta.textContent = formatSavedRequestMeta(request, collection);
-        const requestUrl = document.createElement("p");
-        requestUrl.className = "request-url";
-        requestUrl.textContent = formatRequestRowUrl(request.url);
-        requestText.append(requestName, requestMeta);
-        loadBtn.append(requestMethod, requestText, requestUrl);
-
-        const requestActions = document.createElement("div");
-        requestActions.className = "request-item-actions";
-        const deleteBtn = document.createElement("button");
-        deleteBtn.type = "button";
-        deleteBtn.className = "small-btn request-delete-btn";
-        deleteBtn.textContent = "✕";
-        deleteBtn.ariaLabel = `Delete saved request ${request.name}`;
-        deleteBtn.title = `Delete saved request ${request.name}`;
-        deleteBtn.addEventListener("click", () => {
-          void deleteSavedRequest(collection.id, request.id);
-        });
-        requestActions.appendChild(deleteBtn);
-
-        item.append(loadBtn, requestActions);
+        loadBtn.append(requestName);
+        item.append(loadBtn);
         requestList.appendChild(item);
         requestItemCount += 1;
       }
@@ -3111,40 +3493,12 @@ function formatCollectionMeta(collection: RequestCollection): string {
   return `${collection.requests.length} saved request${collection.requests.length === 1 ? "" : "s"} • ${aggregationPluginLabel(collection.aggregation_plugin)}`;
 }
 
-function formatSavedRequestMeta(request: SavedRequest, collection: RequestCollection): string {
-  const binding = request.use_collection_aggregation_plugin
-    ? `via ${aggregationPluginLabel(collection.aggregation_plugin)} collection default`
-    : `${aggregationPluginLabel(request.aggregation_plugin)} override`;
-
-  if (!request.updated_at) {
-    return binding;
-  }
-
-  const parsed = new Date(request.updated_at);
-  if (Number.isNaN(parsed.getTime())) {
-    return binding;
-  }
-
-  return `${binding} • ${parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-}
-
-function formatCollectionScratchMeta(draft: RequestLibraryDraft): string {
-  return "Unsaved draft";
-}
-
-function formatRequestRowUrl(url: string): string {
-  const trimmed = url.trim();
-  return trimmed || "(no URL)";
-}
-
 function setLoading(isLoading: boolean): void {
   requestIsLoading = isLoading;
   sendBtn.disabled = isLoading;
+  openImportModalBtn.disabled = isLoading;
+  openImportModalFromSidebarBtn.disabled = isLoading;
+  openEnvironmentModalBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
   importPluginBtn.disabled = isLoading;
   pluginImportInput.disabled = isLoading;
@@ -3302,6 +3656,7 @@ function getCurrentRequestDraft(): {
 }
 
 function showCurlExport(command: string): void {
+  hideImportModal();
   curlExportOutput.value = command;
   curlExportOverlay.hidden = false;
   curlExportOverlay.setAttribute("aria-hidden", "false");
@@ -3630,8 +3985,10 @@ aggregateAppender = new BatchedAggregateAppender(aggregateOutput, AGGREGATE_OUTP
 setRawResponseMode("plain");
 clearSseInspector();
 const initialState = loadState();
+applyPaneLayoutState(loadPaneLayoutState());
 utilitySectionsController = setupUtilitySections(document, handleUtilitySectionToggle);
 setUtilitySidebarCollapsed(initialState.sidebarCollapsed, initialState.activeUtilityPanelId);
+setupPaneResizeHandles();
 setupTabs();
 wireEvents();
 void initializeApp(initialState);
