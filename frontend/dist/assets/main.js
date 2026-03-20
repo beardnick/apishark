@@ -6,8 +6,6 @@ import { buildCurlCommand } from "./curl-export.js";
 import { resolveRequestDraft } from "./request-resolution.js";
 import { createDuplicateRequestDraft, deletePersistedRequestDraft, getCollectionScratchDraft, getPersistedRequestDraft, normalizePersistedRequestDraftStore, prunePersistedRequestDraftStore, requestLibraryDraftsEqual, resolveEffectiveAggregationPlugin, serializePersistedRequestDraftStore, setPersistedRequestDraft, } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
-import { applyUtilitySidebarCollapsedState, normalizeUtilitySidebarCollapsed, } from "./utility-sidebar.js";
-import { setupUtilitySections, } from "./utility-sections.js";
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220000;
@@ -16,23 +14,16 @@ const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
 const COLLECTION_STATE_SAVE_DELAY_MS = 500;
-const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
 const PANE_LAYOUT_STORAGE_KEY = "apishark.pane-layout.v1";
-const VALID_UTILITY_PANEL_IDS = new Set([
-    "environmentUtility",
-    "helperUtility",
-    "importUtility",
-    "pluginUtility",
-]);
 const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/;
 const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/;
 const pmShell = document.querySelector(".pm-shell") ??
     (() => {
         throw new Error("Missing root shell");
     })();
-const utilitySidebarBody = byId("appUtilitySidebarBody");
-const sidebarResizeHandle = byId("sidebarResizeHandle");
-const environmentSummaryText = byId("environmentSummaryText");
+const openHelperModalBtn = byId("openHelperModalBtn");
+const closeHelperModalBtn = byId("closeHelperModalBtn");
+const helperOverlay = byId("helperOverlay");
 const openEnvironmentModalBtn = byId("openEnvironmentModalBtn");
 const environmentSelect = byId("environmentSelect");
 const addEnvironmentRowBtn = byId("addEnvironmentRowBtn");
@@ -45,9 +36,11 @@ const environmentOverlay = byId("environmentOverlay");
 const curlInput = byId("curlInput");
 const importCurlBtn = byId("importCurlBtn");
 const openImportModalBtn = byId("openImportModalBtn");
-const openImportModalFromSidebarBtn = byId("openImportModalFromSidebarBtn");
 const closeImportModalBtn = byId("closeImportModalBtn");
 const importCurlOverlay = byId("importCurlOverlay");
+const openPluginModalBtn = byId("openPluginModalBtn");
+const closePluginModalBtn = byId("closePluginModalBtn");
+const pluginOverlay = byId("pluginOverlay");
 const importPluginBtn = byId("importPluginBtn");
 const pluginImportInput = byId("pluginImportInput");
 const pluginsStatusText = byId("pluginsStatusText");
@@ -151,12 +144,10 @@ let ssePayloadJsonController = null;
 let sseLineEntries = [];
 let selectedSseLine = null;
 let sseLineCounter = 0;
-let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(document.documentElement.getAttribute("data-utilities-collapsed") === "true");
-let utilitySidebarLastPanelId = normalizeActiveUtilityPanelId(document.documentElement.getAttribute("data-active-utility")) ??
-    DEFAULT_UTILITY_PANEL_ID;
-let utilitySectionsController;
+let helperModalTrigger = null;
 let environmentModalTrigger = null;
 let importModalTrigger = null;
+let pluginModalTrigger = null;
 const bodyEditorController = createBodyEditor({
     parent: bodyEditor,
     input: bodyInput,
@@ -177,6 +168,12 @@ function wireEvents() {
         renderEnvironmentSummary();
         persistState();
         scheduleCollectionStateSave();
+    });
+    openHelperModalBtn.addEventListener("click", () => {
+        showHelperModal();
+    });
+    closeHelperModalBtn.addEventListener("click", () => {
+        hideHelperModal(true);
     });
     openEnvironmentModalBtn.addEventListener("click", () => {
         showEnvironmentModal();
@@ -202,11 +199,14 @@ function wireEvents() {
     openImportModalBtn.addEventListener("click", () => {
         showImportModal();
     });
-    openImportModalFromSidebarBtn.addEventListener("click", () => {
-        showImportModal();
-    });
     closeImportModalBtn.addEventListener("click", () => {
         hideImportModal(true);
+    });
+    openPluginModalBtn.addEventListener("click", () => {
+        showPluginModal();
+    });
+    closePluginModalBtn.addEventListener("click", () => {
+        hidePluginModal(true);
     });
     importPluginBtn.addEventListener("click", () => {
         pluginImportInput.click();
@@ -230,11 +230,17 @@ function wireEvents() {
         if (!curlExportOverlay.hidden) {
             hideCurlExport(true);
         }
+        if (!helperOverlay.hidden) {
+            hideHelperModal(true);
+        }
         if (!environmentOverlay.hidden) {
             hideEnvironmentModal(true);
         }
         if (!importCurlOverlay.hidden) {
             hideImportModal(true);
+        }
+        if (!pluginOverlay.hidden) {
+            hidePluginModal(true);
         }
     });
     sendBtn.addEventListener("click", () => {
@@ -328,6 +334,15 @@ function wireEvents() {
         if (event.target === importCurlOverlay) {
             hideImportModal();
         }
+        if (event.target === curlExportOverlay) {
+            hideCurlExport();
+        }
+        if (event.target === helperOverlay) {
+            hideHelperModal();
+        }
+        if (event.target === pluginOverlay) {
+            hidePluginModal();
+        }
     });
     window.addEventListener("blur", () => {
         hideRequestContextMenu();
@@ -381,8 +396,6 @@ function activateTab(group, targetId) {
 function defaultState() {
     const defaultEnvironment = createEnvironmentEntry("Default", "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com");
     return {
-        sidebarCollapsed: true,
-        activeUtilityPanelId: DEFAULT_UTILITY_PANEL_ID,
         requestName: "Streaming Chat Request",
         environments: [defaultEnvironment],
         activeEnvironmentId: defaultEnvironment.id,
@@ -409,7 +422,6 @@ function defaultState() {
     };
 }
 function applyInitialState(state) {
-    setUtilitySidebarCollapsed(state.sidebarCollapsed, state.activeUtilityPanelId);
     requestNameInput.value = state.requestName;
     environments = normalizeEnvironments(state.environments);
     activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -453,8 +465,6 @@ function loadState() {
                 ? [createEnvironmentEntry("Default", parsed.envText)]
                 : fallback.environments;
         return {
-            sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
-            activeUtilityPanelId: normalizeActiveUtilityPanelId(parsed.activeUtilityPanelId) ?? fallback.activeUtilityPanelId,
             requestName: typeof parsed.requestName === "string" && parsed.requestName.trim()
                 ? parsed.requestName
                 : fallback.requestName,
@@ -489,8 +499,6 @@ function loadState() {
 }
 function persistState() {
     const state = {
-        sidebarCollapsed: utilitySidebarCollapsed,
-        activeUtilityPanelId: utilitySidebarLastPanelId,
         requestName: requestNameInput.value.trim() || "Untitled Request",
         environments: environments.map((environment) => ({ ...environment })),
         activeEnvironmentId,
@@ -544,27 +552,6 @@ async function saveCollectionStateToServer() {
         setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
     }
 }
-function setUtilitySidebarCollapsed(collapsed, panelId) {
-    const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
-    utilitySidebarCollapsed = collapsed;
-    utilitySidebarLastPanelId = normalizedPanelId;
-    utilitySectionsController.setActivePanel(collapsed ? null : normalizedPanelId);
-    document.documentElement.setAttribute("data-active-utility", utilitySidebarLastPanelId);
-    applyUtilitySidebarCollapsedState(document.documentElement, utilitySidebarBody, utilitySidebarCollapsed);
-    syncPaneResizeHandleState();
-}
-function handleUtilitySectionToggle(panelId) {
-    if (panelId) {
-        setUtilitySidebarCollapsed(false, panelId);
-    }
-    else {
-        setUtilitySidebarCollapsed(true, utilitySidebarLastPanelId);
-    }
-    persistState();
-}
-function normalizeActiveUtilityPanelId(value) {
-    return typeof value === "string" && VALID_UTILITY_PANEL_IDS.has(value) ? value : null;
-}
 function loadPaneLayoutState() {
     const fallback = {};
     const raw = localStorage.getItem(PANE_LAYOUT_STORAGE_KEY);
@@ -574,12 +561,6 @@ function loadPaneLayoutState() {
     try {
         const parsed = JSON.parse(raw);
         return {
-            sidebarWidth: typeof parsed.sidebarWidth === "number" && Number.isFinite(parsed.sidebarWidth)
-                ? parsed.sidebarWidth
-                : undefined,
-            sidebarRailWidth: typeof parsed.sidebarRailWidth === "number" && Number.isFinite(parsed.sidebarRailWidth)
-                ? parsed.sidebarRailWidth
-                : undefined,
             libraryWidth: typeof parsed.libraryWidth === "number" && Number.isFinite(parsed.libraryWidth)
                 ? parsed.libraryWidth
                 : undefined,
@@ -590,12 +571,6 @@ function loadPaneLayoutState() {
     }
 }
 function applyPaneLayoutState(state) {
-    if (typeof state.sidebarWidth === "number") {
-        document.documentElement.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
-    }
-    if (typeof state.sidebarRailWidth === "number") {
-        document.documentElement.style.setProperty("--sidebar-rail-width", `${state.sidebarRailWidth}px`);
-    }
     if (typeof state.libraryWidth === "number") {
         document.documentElement.style.setProperty("--library-width", `${state.libraryWidth}px`);
     }
@@ -603,62 +578,41 @@ function applyPaneLayoutState(state) {
 function persistPaneLayoutState() {
     const rootStyle = getComputedStyle(document.documentElement);
     const state = {
-        sidebarWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-width")),
-        sidebarRailWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-rail-width")),
         libraryWidth: parseFloat(rootStyle.getPropertyValue("--library-width")),
     };
     localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(state));
 }
 function syncPaneResizeHandleState() {
     const isCompact = window.innerWidth <= 1120;
-    const sidebarDisabled = isCompact;
-    const libraryDisabled = isCompact;
-    sidebarResizeHandle.classList.toggle("is-disabled", sidebarDisabled);
-    libraryResizeHandle.classList.toggle("is-disabled", libraryDisabled);
-    sidebarResizeHandle.setAttribute("aria-disabled", sidebarDisabled ? "true" : "false");
-    libraryResizeHandle.setAttribute("aria-disabled", libraryDisabled ? "true" : "false");
+    libraryResizeHandle.classList.toggle("is-disabled", isCompact);
+    libraryResizeHandle.setAttribute("aria-disabled", isCompact ? "true" : "false");
 }
 function setupPaneResizeHandles() {
-    const setup = (handle, type) => {
-        handle.addEventListener("pointerdown", (event) => {
-            if (event.button !== 0 || window.innerWidth <= 1120) {
-                return;
-            }
-            event.preventDefault();
-            handle.classList.add("is-dragging");
-            document.body.classList.add("is-resizing");
-            handle.setPointerCapture(event.pointerId);
-            const onPointerMove = (moveEvent) => {
-                const shellBounds = pmShell.getBoundingClientRect();
-                if (type === "sidebar") {
-                    const visibleWidth = moveEvent.clientX - shellBounds.left;
-                    if (utilitySidebarCollapsed) {
-                        document.documentElement.style.setProperty("--sidebar-rail-width", `${clamp(visibleWidth, 64, 118)}px`);
-                    }
-                    else {
-                        document.documentElement.style.setProperty("--sidebar-width", `${clamp(visibleWidth, 248, 520)}px`);
-                    }
-                }
-                else {
-                    const width = shellBounds.right - moveEvent.clientX;
-                    document.documentElement.style.setProperty("--library-width", `${clamp(width, 240, 540)}px`);
-                }
-            };
-            const finish = () => {
-                handle.classList.remove("is-dragging");
-                document.body.classList.remove("is-resizing");
-                handle.removeEventListener("pointermove", onPointerMove);
-                handle.removeEventListener("pointerup", finish);
-                handle.removeEventListener("pointercancel", finish);
-                persistPaneLayoutState();
-            };
-            handle.addEventListener("pointermove", onPointerMove);
-            handle.addEventListener("pointerup", finish);
-            handle.addEventListener("pointercancel", finish);
-        });
-    };
-    setup(sidebarResizeHandle, "sidebar");
-    setup(libraryResizeHandle, "library");
+    libraryResizeHandle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || window.innerWidth <= 1120) {
+            return;
+        }
+        event.preventDefault();
+        libraryResizeHandle.classList.add("is-dragging");
+        document.body.classList.add("is-resizing");
+        libraryResizeHandle.setPointerCapture(event.pointerId);
+        const onPointerMove = (moveEvent) => {
+            const shellBounds = pmShell.getBoundingClientRect();
+            const width = shellBounds.right - moveEvent.clientX;
+            document.documentElement.style.setProperty("--library-width", `${clamp(width, 240, 540)}px`);
+        };
+        const finish = () => {
+            libraryResizeHandle.classList.remove("is-dragging");
+            document.body.classList.remove("is-resizing");
+            libraryResizeHandle.removeEventListener("pointermove", onPointerMove);
+            libraryResizeHandle.removeEventListener("pointerup", finish);
+            libraryResizeHandle.removeEventListener("pointercancel", finish);
+            persistPaneLayoutState();
+        };
+        libraryResizeHandle.addEventListener("pointermove", onPointerMove);
+        libraryResizeHandle.addEventListener("pointerup", finish);
+        libraryResizeHandle.addEventListener("pointercancel", finish);
+    });
     syncPaneResizeHandleState();
     window.addEventListener("resize", syncPaneResizeHandleState);
 }
@@ -788,11 +742,13 @@ function syncEnvironmentEditor() {
 function renderEnvironmentSummary() {
     const activeEnvironment = getActiveEnvironment();
     if (!activeEnvironment) {
-        environmentSummaryText.textContent = "No active environment.";
+        openEnvironmentModalBtn.textContent = "Environment";
+        openEnvironmentModalBtn.title = "No active environment";
         return;
     }
     const variableCount = parseEnvironmentRows(activeEnvironment.text).filter((row) => row.key.trim() !== "" || row.value.trim() !== "").length;
-    environmentSummaryText.textContent = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
+    openEnvironmentModalBtn.textContent = activeEnvironment.name;
+    openEnvironmentModalBtn.title = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
 }
 function getActiveEnvironment() {
     if (!activeEnvironmentId) {
@@ -2304,13 +2260,40 @@ function handleHeaderContextDelete() {
     }
     removeHeader(target.headerId);
 }
+function showHelperModal() {
+    hidePluginModal();
+    hideEnvironmentModal();
+    hideImportModal();
+    hideCurlExport();
+    hideRequestContextMenu();
+    hideHeaderContextMenu();
+    helperModalTrigger =
+        document.activeElement instanceof HTMLElement ? document.activeElement : openHelperModalBtn;
+    helperOverlay.hidden = false;
+    helperOverlay.setAttribute("aria-hidden", "false");
+    openHelperModalBtn.setAttribute("aria-expanded", "true");
+}
+function hideHelperModal(restoreFocus = false) {
+    helperOverlay.hidden = true;
+    helperOverlay.setAttribute("aria-hidden", "true");
+    openHelperModalBtn.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+        (helperModalTrigger ?? openHelperModalBtn).focus();
+    }
+    helperModalTrigger = null;
+}
 function showEnvironmentModal() {
+    hideHelperModal();
+    hidePluginModal();
+    hideImportModal();
+    hideCurlExport();
     hideRequestContextMenu();
     hideHeaderContextMenu();
     environmentModalTrigger =
         document.activeElement instanceof HTMLElement ? document.activeElement : openEnvironmentModalBtn;
     environmentOverlay.hidden = false;
     environmentOverlay.setAttribute("aria-hidden", "false");
+    openEnvironmentModalBtn.setAttribute("aria-expanded", "true");
     window.requestAnimationFrame(() => {
         environmentSelect.focus();
     });
@@ -2318,12 +2301,16 @@ function showEnvironmentModal() {
 function hideEnvironmentModal(restoreFocus = false) {
     environmentOverlay.hidden = true;
     environmentOverlay.setAttribute("aria-hidden", "true");
+    openEnvironmentModalBtn.setAttribute("aria-expanded", "false");
     if (restoreFocus) {
         (environmentModalTrigger ?? openEnvironmentModalBtn).focus();
     }
     environmentModalTrigger = null;
 }
 function showImportModal() {
+    hideHelperModal();
+    hidePluginModal();
+    hideEnvironmentModal();
     hideCurlExport();
     hideRequestContextMenu();
     hideHeaderContextMenu();
@@ -2345,6 +2332,28 @@ function hideImportModal(restoreFocus = false) {
         (importModalTrigger ?? openImportModalBtn).focus();
     }
     importModalTrigger = null;
+}
+function showPluginModal() {
+    hideHelperModal();
+    hideEnvironmentModal();
+    hideImportModal();
+    hideCurlExport();
+    hideRequestContextMenu();
+    hideHeaderContextMenu();
+    pluginModalTrigger =
+        document.activeElement instanceof HTMLElement ? document.activeElement : openPluginModalBtn;
+    pluginOverlay.hidden = false;
+    pluginOverlay.setAttribute("aria-hidden", "false");
+    openPluginModalBtn.setAttribute("aria-expanded", "true");
+}
+function hidePluginModal(restoreFocus = false) {
+    pluginOverlay.hidden = true;
+    pluginOverlay.setAttribute("aria-hidden", "true");
+    openPluginModalBtn.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+        (pluginModalTrigger ?? openPluginModalBtn).focus();
+    }
+    pluginModalTrigger = null;
 }
 async function deleteCollection(collectionId) {
     const collection = findCollection(collectionId);
@@ -2788,7 +2797,6 @@ function setLoading(isLoading) {
     requestIsLoading = isLoading;
     sendBtn.disabled = isLoading;
     openImportModalBtn.disabled = isLoading;
-    openImportModalFromSidebarBtn.disabled = isLoading;
     openEnvironmentModalBtn.disabled = isLoading;
     importCurlBtn.disabled = isLoading;
     importPluginBtn.disabled = isLoading;
@@ -2920,6 +2928,9 @@ function getCurrentRequestDraft() {
     };
 }
 function showCurlExport(command) {
+    hideHelperModal();
+    hidePluginModal();
+    hideEnvironmentModal();
     hideImportModal();
     curlExportOutput.value = command;
     curlExportOverlay.hidden = false;
@@ -3201,8 +3212,6 @@ setRawResponseMode("plain");
 clearSseInspector();
 const initialState = loadState();
 applyPaneLayoutState(loadPaneLayoutState());
-utilitySectionsController = setupUtilitySections(document, handleUtilitySectionToggle);
-setUtilitySidebarCollapsed(initialState.sidebarCollapsed, initialState.activeUtilityPanelId);
 setupPaneResizeHandles();
 setupTabs();
 wireEvents();

@@ -1,42 +1,9 @@
 <!doctype html>
-<html lang="en" data-utilities-collapsed="true" data-active-utility="environmentUtility">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>APIShark</title>
-    <script>
-      (() => {
-        const storageKey = "apishark.state.v2";
-        const validPanels = new Set([
-          "environmentUtility",
-          "helperUtility",
-          "importUtility",
-          "pluginUtility",
-        ]);
-        let collapsed = true;
-        let activeUtilityPanelId = "environmentUtility";
-        try {
-          const raw = window.localStorage.getItem(storageKey);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (typeof parsed?.sidebarCollapsed === "boolean") {
-              collapsed = parsed.sidebarCollapsed;
-            }
-            if (
-              typeof parsed?.activeUtilityPanelId === "string" &&
-              validPanels.has(parsed.activeUtilityPanelId)
-            ) {
-              activeUtilityPanelId = parsed.activeUtilityPanelId;
-            }
-          }
-        } catch {}
-        document.documentElement.setAttribute(
-          "data-utilities-collapsed",
-          collapsed ? "true" : "false",
-        );
-        document.documentElement.setAttribute("data-active-utility", activeUtilityPanelId);
-      })();
-    </script>
     <link rel="stylesheet" href="/assets/main.css" />
   </head>
   <body>
@@ -53,176 +20,32 @@
 
           <nav class="pm-rail-nav" aria-label="Workspace utilities">
             <button
-              id="environmentRailBtn"
+              id="openHelperModalBtn"
               type="button"
               class="rail-btn"
-              aria-controls="environmentUtility"
+              aria-controls="helperOverlay"
               aria-expanded="false"
-              title="Environment tools"
-              data-utility-rail
-              data-utility-target="environmentUtility"
-            >
-              <span class="rail-symbol" aria-hidden="true">◫</span>
-              <span class="rail-text">Env</span>
-            </button>
-            <button
-              id="helperRailBtn"
-              type="button"
-              class="rail-btn"
-              aria-controls="helperUtility"
-              aria-expanded="false"
+              aria-haspopup="dialog"
               title="Variable helpers"
-              data-utility-rail
-              data-utility-target="helperUtility"
             >
               <span class="rail-symbol" aria-hidden="true">ƒ</span>
               <span class="rail-text">Vars</span>
             </button>
             <button
-              id="importRailBtn"
+              id="openPluginModalBtn"
               type="button"
               class="rail-btn"
-              aria-controls="importUtility"
+              aria-controls="pluginOverlay"
               aria-expanded="false"
-              title="Import cURL"
-              data-utility-rail
-              data-utility-target="importUtility"
-            >
-              <span class="rail-symbol" aria-hidden="true">↥</span>
-              <span class="rail-text">cURL</span>
-            </button>
-            <button
-              id="pluginRailBtn"
-              type="button"
-              class="rail-btn"
-              aria-controls="pluginUtility"
-              aria-expanded="false"
+              aria-haspopup="dialog"
               title="Aggregation plugins"
-              data-utility-rail
-              data-utility-target="pluginUtility"
             >
               <span class="rail-symbol" aria-hidden="true">◌</span>
               <span class="rail-text">Plugins</span>
             </button>
           </nav>
         </div>
-
-        <div id="appUtilitySidebarBody" class="pm-sidebar-body" hidden>
-          <section
-            id="environmentUtility"
-            class="pm-side-section utility-section"
-            data-utility-panel
-            aria-labelledby="environmentRailBtn"
-            aria-hidden="true"
-            hidden
-          >
-            <div class="utility-section-head">
-              <span class="workspace-kicker">Utilities</span>
-              <span class="utility-section-title">Environments</span>
-            </div>
-            <div class="utility-section-panel drawer-panel">
-              <p id="environmentSummaryText" class="hint compact">
-                Open the environment manager to switch environments and edit variables.
-              </p>
-              <div class="utility-action-row">
-                <button id="openEnvironmentModalBtn" type="button">Open manager</button>
-              </div>
-            </div>
-          </section>
-
-          <section
-            id="helperUtility"
-            class="pm-side-section utility-section"
-            data-utility-panel
-            aria-labelledby="helperRailBtn"
-            aria-hidden="true"
-            hidden
-          >
-            <div class="utility-section-head">
-              <span class="workspace-kicker">Utilities</span>
-              <span class="utility-section-title">Variable helpers</span>
-            </div>
-            <div class="utility-section-panel drawer-panel">
-              <div class="helper-token-grid" aria-label="Variable helper snippets">
-                <code class="helper-token">{{VAR_NAME}}</code>
-                <code class="helper-token">{{$uuid}}</code>
-                <code class="helper-token">{{$now}}</code>
-                <code class="helper-token">{{$isoNow}}</code>
-                <code class="helper-token">{{$randInt(1,10)}}</code>
-                <code class="helper-token">{{$randStr(16)}}</code>
-                <code class="helper-token">{{$base64(text)}}</code>
-                <code class="helper-token">{{$urlencode(text)}}</code>
-              </div>
-              <p class="hint compact helper-note">
-                Use <code>{{VAR_NAME}}</code> for environment lookup. Dynamic placeholders are resolved
-                once per send or cURL export action, and invalid <code>{{$...}}</code> syntax is blocked
-                before sending.
-              </p>
-            </div>
-          </section>
-
-          <section
-            id="importUtility"
-            class="pm-side-section utility-section"
-            data-utility-panel
-            aria-labelledby="importRailBtn"
-            aria-hidden="true"
-            hidden
-          >
-            <div class="utility-section-head">
-              <span class="workspace-kicker">Utilities</span>
-              <span class="utility-section-title">Import with cURL</span>
-            </div>
-            <div class="utility-section-panel drawer-panel">
-              <p class="hint compact">
-                Use the request toolbar to import a cURL command into the current request.
-              </p>
-              <div class="utility-action-row">
-                <button id="openImportModalFromSidebarBtn" type="button">Open importer</button>
-              </div>
-            </div>
-          </section>
-
-          <section
-            id="pluginUtility"
-            class="pm-side-section utility-section"
-            data-utility-panel
-            aria-labelledby="pluginRailBtn"
-            aria-hidden="true"
-            hidden
-          >
-            <div class="utility-section-head">
-              <span class="workspace-kicker">Utilities</span>
-              <span class="utility-section-title">Aggregation plugins</span>
-            </div>
-            <div class="utility-section-panel drawer-panel">
-              <input
-                id="pluginImportInput"
-                type="file"
-                accept=".json,.js,.mjs,application/json,text/javascript"
-                hidden
-              />
-              <div class="utility-action-row">
-                <button id="importPluginBtn" type="button">Add plugin</button>
-              </div>
-              <p id="pluginsStatusText" class="hint compact">
-                Imported plugins are stored in <code>./.apishark/plugins.json</code>.
-              </p>
-              <p id="effectiveAggregationText" class="hint compact utility-status"></p>
-              <div id="pluginsList" class="plugin-list"></div>
-            </div>
-          </section>
-        </div>
       </aside>
-
-      <div
-        id="sidebarResizeHandle"
-        class="pane-divider"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize utilities panel"
-        data-pane-resize-handle="sidebar"
-      ></div>
 
       <main class="pm-main">
         <header class="pm-topbar">
@@ -237,6 +60,16 @@
             />
           </div>
           <div class="pm-topbar-actions">
+            <button
+              id="openEnvironmentModalBtn"
+              type="button"
+              class="secondary"
+              aria-controls="environmentOverlay"
+              aria-expanded="false"
+              aria-haspopup="dialog"
+            >
+              Environment
+            </button>
             <button
               id="clearOutputBtn"
               type="button"
@@ -712,14 +545,45 @@
       </button>
     </div>
 
-    <div
-      id="environmentOverlay"
-      class="utility-modal-overlay"
-      hidden
-      aria-hidden="true"
-    >
+    <div id="helperOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
       <section
-        class="utility-modal-card"
+        class="workspace-modal-card workspace-modal-card-compact"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="helperModalTitle"
+      >
+        <div class="panel-head">
+          <div>
+            <p id="helperModalTitle" class="panel-label">Variable helpers</p>
+            <p class="hint compact">Reusable placeholders for env lookup and dynamic request values.</p>
+          </div>
+          <div class="panel-tools">
+            <button id="closeHelperModalBtn" type="button" class="secondary compact-btn">Close</button>
+          </div>
+        </div>
+        <div class="workspace-modal-stack">
+          <div class="helper-token-grid" aria-label="Variable helper snippets">
+            <code class="helper-token">{{VAR_NAME}}</code>
+            <code class="helper-token">{{$uuid}}</code>
+            <code class="helper-token">{{$now}}</code>
+            <code class="helper-token">{{$isoNow}}</code>
+            <code class="helper-token">{{$randInt(1,10)}}</code>
+            <code class="helper-token">{{$randStr(16)}}</code>
+            <code class="helper-token">{{$base64(text)}}</code>
+            <code class="helper-token">{{$urlencode(text)}}</code>
+          </div>
+          <p class="hint compact helper-note">
+            Use <code>{{VAR_NAME}}</code> for environment lookup. Dynamic placeholders are resolved
+            once per send or cURL export action, and invalid <code>{{$...}}</code> syntax is blocked
+            before sending.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <div id="environmentOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
+      <section
+        class="workspace-modal-card workspace-modal-card-wide"
         role="dialog"
         aria-modal="true"
         aria-labelledby="environmentModalTitle"
@@ -733,7 +597,7 @@
             <button id="closeEnvironmentModalBtn" type="button" class="secondary compact-btn">Close</button>
           </div>
         </div>
-        <div class="utility-modal-stack">
+        <div class="workspace-modal-stack">
           <div class="utility-panel-head">
             <label for="environmentSelect" class="panel-label compact-label">Active environment</label>
             <div class="environment-actions side-card-tools">
@@ -786,14 +650,44 @@
       </section>
     </div>
 
-    <div
-      id="importCurlOverlay"
-      class="utility-modal-overlay"
-      hidden
-      aria-hidden="true"
-    >
+    <div id="pluginOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
       <section
-        class="utility-modal-card"
+        class="workspace-modal-card workspace-modal-card-wide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pluginModalTitle"
+      >
+        <div class="panel-head">
+          <div>
+            <p id="pluginModalTitle" class="panel-label">Aggregation plugins</p>
+            <p class="hint compact">Manage imported plugins and inspect the effective aggregation mode.</p>
+          </div>
+          <div class="panel-tools">
+            <button id="closePluginModalBtn" type="button" class="secondary compact-btn">Close</button>
+          </div>
+        </div>
+        <div class="workspace-modal-stack">
+          <input
+            id="pluginImportInput"
+            type="file"
+            accept=".json,.js,.mjs,application/json,text/javascript"
+            hidden
+          />
+          <div class="utility-action-row">
+            <button id="importPluginBtn" type="button">Add plugin</button>
+          </div>
+          <p id="pluginsStatusText" class="hint compact">
+            Imported plugins are stored in <code>./.apishark/plugins.json</code>.
+          </p>
+          <p id="effectiveAggregationText" class="hint compact utility-status"></p>
+          <div id="pluginsList" class="plugin-list"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="importCurlOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
+      <section
+        class="workspace-modal-card workspace-modal-card-compact"
         role="dialog"
         aria-modal="true"
         aria-labelledby="importCurlTitle"
@@ -807,7 +701,7 @@
             <button id="closeImportModalBtn" type="button" class="secondary compact-btn">Close</button>
           </div>
         </div>
-        <div class="utility-modal-stack">
+        <div class="workspace-modal-stack">
           <textarea
             id="curlInput"
             rows="8"
@@ -820,16 +714,11 @@
       </section>
     </div>
 
-    <div
-      id="curlExportOverlay"
-      class="curl-export-overlay"
-      hidden
-      aria-hidden="true"
-    >
+    <div id="curlExportOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
       <section
-        class="curl-export-card"
+        class="workspace-modal-card workspace-modal-card-compact"
         role="dialog"
-        aria-modal="false"
+        aria-modal="true"
         aria-labelledby="curlExportTitle"
       >
         <div class="panel-head">
@@ -850,14 +739,16 @@
             </button>
           </div>
         </div>
-        <textarea
-          id="curlExportOutput"
-          class="curl-export-output"
-          rows="6"
-          readonly
-          spellcheck="false"
-          aria-label="Generated cURL command"
-        ></textarea>
+        <div class="workspace-modal-stack">
+          <textarea
+            id="curlExportOutput"
+            class="curl-export-output"
+            rows="6"
+            readonly
+            spellcheck="false"
+            aria-label="Generated cURL command"
+          ></textarea>
+        </div>
       </section>
     </div>
 
@@ -870,48 +761,6 @@
           "w3c-keyname": "/assets/vendor/w3c-keyname.js"
         }
       }
-    </script>
-    <script>
-      (() => {
-        const collapsed =
-          document.documentElement.getAttribute("data-utilities-collapsed") === "true";
-        const activeUtilityPanelId = document.documentElement.getAttribute("data-active-utility");
-        const sidebar = document.getElementById("appUtilitySidebarBody");
-        const railButtons = document.querySelectorAll("[data-utility-rail]");
-        const panels = document.querySelectorAll("[data-utility-panel]");
-        if (!(sidebar instanceof HTMLElement)) {
-          return;
-        }
-
-        sidebar.hidden = collapsed;
-        if (collapsed) {
-          sidebar.setAttribute("aria-hidden", "true");
-        } else {
-          sidebar.removeAttribute("aria-hidden");
-        }
-        for (const button of railButtons) {
-          if (!(button instanceof HTMLButtonElement)) {
-            continue;
-          }
-          const active =
-            !collapsed && button.getAttribute("data-utility-target") === activeUtilityPanelId;
-          button.setAttribute("aria-expanded", active ? "true" : "false");
-          button.classList.toggle("is-active", active);
-        }
-        for (const panel of panels) {
-          if (!(panel instanceof HTMLElement)) {
-            continue;
-          }
-          const active = !collapsed && panel.id === activeUtilityPanelId;
-          panel.hidden = !active;
-          panel.classList.toggle("is-active", active);
-          if (active) {
-            panel.removeAttribute("aria-hidden");
-          } else {
-            panel.setAttribute("aria-hidden", "true");
-          }
-        }
-      })();
     </script>
     <script type="module" src="/assets/main.js"></script>
   </body>

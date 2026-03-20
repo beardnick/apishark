@@ -51,14 +51,6 @@ import {
   type RequestLibraryDraft,
 } from "./request-library.js";
 import { PlainRawResponseBuffer } from "./raw-response-buffer.js";
-import {
-  applyUtilitySidebarCollapsedState,
-  normalizeUtilitySidebarCollapsed,
-} from "./utility-sidebar.js";
-import {
-  setupUtilitySections,
-  type UtilitySectionController,
-} from "./utility-sections.js";
 
 type HeaderKV = {
   key: string;
@@ -83,8 +75,6 @@ type EnvironmentEntry = {
 };
 
 type PersistedState = {
-  sidebarCollapsed: boolean;
-  activeUtilityPanelId: string | null;
   requestName: string;
   environments: EnvironmentEntry[];
   activeEnvironmentId: string | null;
@@ -185,14 +175,7 @@ const OUTPUT_FLUSH_INTERVAL_MS = 50;
 const SSE_MAX_LINES = 1_200;
 const DRAFT_AUTOSAVE_DELAY_MS = 350;
 const COLLECTION_STATE_SAVE_DELAY_MS = 500;
-const DEFAULT_UTILITY_PANEL_ID = "environmentUtility";
 const PANE_LAYOUT_STORAGE_KEY = "apishark.pane-layout.v1";
-const VALID_UTILITY_PANEL_IDS = new Set([
-  "environmentUtility",
-  "helperUtility",
-  "importUtility",
-  "pluginUtility",
-]);
 const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/;
 const DYNAMIC_TEMPLATE_PATTERN = /\{\{\s*\$[^{}]+\}\}/;
 
@@ -201,9 +184,9 @@ const pmShell =
   (() => {
     throw new Error("Missing root shell");
   })();
-const utilitySidebarBody = byId<HTMLElement>("appUtilitySidebarBody");
-const sidebarResizeHandle = byId<HTMLElement>("sidebarResizeHandle");
-const environmentSummaryText = byId<HTMLElement>("environmentSummaryText");
+const openHelperModalBtn = byId<HTMLButtonElement>("openHelperModalBtn");
+const closeHelperModalBtn = byId<HTMLButtonElement>("closeHelperModalBtn");
+const helperOverlay = byId<HTMLElement>("helperOverlay");
 const openEnvironmentModalBtn = byId<HTMLButtonElement>("openEnvironmentModalBtn");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const addEnvironmentRowBtn = byId<HTMLButtonElement>("addEnvironmentRowBtn");
@@ -216,9 +199,11 @@ const environmentOverlay = byId<HTMLElement>("environmentOverlay");
 const curlInput = byId<HTMLTextAreaElement>("curlInput");
 const importCurlBtn = byId<HTMLButtonElement>("importCurlBtn");
 const openImportModalBtn = byId<HTMLButtonElement>("openImportModalBtn");
-const openImportModalFromSidebarBtn = byId<HTMLButtonElement>("openImportModalFromSidebarBtn");
 const closeImportModalBtn = byId<HTMLButtonElement>("closeImportModalBtn");
 const importCurlOverlay = byId<HTMLElement>("importCurlOverlay");
+const openPluginModalBtn = byId<HTMLButtonElement>("openPluginModalBtn");
+const closePluginModalBtn = byId<HTMLButtonElement>("closePluginModalBtn");
+const pluginOverlay = byId<HTMLElement>("pluginOverlay");
 const importPluginBtn = byId<HTMLButtonElement>("importPluginBtn");
 const pluginImportInput = byId<HTMLInputElement>("pluginImportInput");
 const pluginsStatusText = byId<HTMLElement>("pluginsStatusText");
@@ -335,15 +320,10 @@ let ssePayloadJsonController: JsonViewController | null = null;
 let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
 let sseLineCounter = 0;
-let utilitySidebarCollapsed = normalizeUtilitySidebarCollapsed(
-  document.documentElement.getAttribute("data-utilities-collapsed") === "true",
-);
-let utilitySidebarLastPanelId =
-  normalizeActiveUtilityPanelId(document.documentElement.getAttribute("data-active-utility")) ??
-  DEFAULT_UTILITY_PANEL_ID;
-let utilitySectionsController: UtilitySectionController;
+let helperModalTrigger: HTMLElement | null = null;
 let environmentModalTrigger: HTMLElement | null = null;
 let importModalTrigger: HTMLElement | null = null;
+let pluginModalTrigger: HTMLElement | null = null;
 
 const bodyEditorController = createBodyEditor({
   parent: bodyEditor,
@@ -368,6 +348,12 @@ function wireEvents(): void {
     scheduleCollectionStateSave();
   });
 
+  openHelperModalBtn.addEventListener("click", () => {
+    showHelperModal();
+  });
+  closeHelperModalBtn.addEventListener("click", () => {
+    hideHelperModal(true);
+  });
   openEnvironmentModalBtn.addEventListener("click", () => {
     showEnvironmentModal();
   });
@@ -397,11 +383,14 @@ function wireEvents(): void {
   openImportModalBtn.addEventListener("click", () => {
     showImportModal();
   });
-  openImportModalFromSidebarBtn.addEventListener("click", () => {
-    showImportModal();
-  });
   closeImportModalBtn.addEventListener("click", () => {
     hideImportModal(true);
+  });
+  openPluginModalBtn.addEventListener("click", () => {
+    showPluginModal();
+  });
+  closePluginModalBtn.addEventListener("click", () => {
+    hidePluginModal(true);
   });
   importPluginBtn.addEventListener("click", () => {
     pluginImportInput.click();
@@ -429,11 +418,17 @@ function wireEvents(): void {
     if (!curlExportOverlay.hidden) {
       hideCurlExport(true);
     }
+    if (!helperOverlay.hidden) {
+      hideHelperModal(true);
+    }
     if (!environmentOverlay.hidden) {
       hideEnvironmentModal(true);
     }
     if (!importCurlOverlay.hidden) {
       hideImportModal(true);
+    }
+    if (!pluginOverlay.hidden) {
+      hidePluginModal(true);
     }
   });
 
@@ -539,6 +534,15 @@ function wireEvents(): void {
     if (event.target === importCurlOverlay) {
       hideImportModal();
     }
+    if (event.target === curlExportOverlay) {
+      hideCurlExport();
+    }
+    if (event.target === helperOverlay) {
+      hideHelperModal();
+    }
+    if (event.target === pluginOverlay) {
+      hidePluginModal();
+    }
   });
   window.addEventListener("blur", () => {
     hideRequestContextMenu();
@@ -609,8 +613,6 @@ function defaultState(): PersistedState {
     "OPENAI_API_KEY=\nBASE_URL=https://api.openai.com",
   );
   return {
-    sidebarCollapsed: true,
-    activeUtilityPanelId: DEFAULT_UTILITY_PANEL_ID,
     requestName: "Streaming Chat Request",
     environments: [defaultEnvironment],
     activeEnvironmentId: defaultEnvironment.id,
@@ -642,7 +644,6 @@ function defaultState(): PersistedState {
 }
 
 function applyInitialState(state: PersistedState): void {
-  setUtilitySidebarCollapsed(state.sidebarCollapsed, state.activeUtilityPanelId);
   requestNameInput.value = state.requestName;
   environments = normalizeEnvironments(state.environments);
   activeEnvironmentId = resolveActiveEnvironmentId(environments, state.activeEnvironmentId);
@@ -695,9 +696,6 @@ function loadState(): PersistedState {
         : fallback.environments;
 
     return {
-      sidebarCollapsed: normalizeUtilitySidebarCollapsed(parsed.sidebarCollapsed),
-      activeUtilityPanelId:
-        normalizeActiveUtilityPanelId(parsed.activeUtilityPanelId) ?? fallback.activeUtilityPanelId,
       requestName:
         typeof parsed.requestName === "string" && parsed.requestName.trim()
           ? parsed.requestName
@@ -739,8 +737,6 @@ function loadState(): PersistedState {
 
 function persistState(): void {
   const state: PersistedState = {
-    sidebarCollapsed: utilitySidebarCollapsed,
-    activeUtilityPanelId: utilitySidebarLastPanelId,
     requestName: requestNameInput.value.trim() || "Untitled Request",
     environments: environments.map((environment) => ({ ...environment })),
     activeEnvironmentId,
@@ -798,33 +794,6 @@ async function saveCollectionStateToServer(): Promise<void> {
   }
 }
 
-function setUtilitySidebarCollapsed(collapsed: boolean, panelId?: string | null): void {
-  const normalizedPanelId = normalizeActiveUtilityPanelId(panelId) ?? DEFAULT_UTILITY_PANEL_ID;
-  utilitySidebarCollapsed = collapsed;
-  utilitySidebarLastPanelId = normalizedPanelId;
-  utilitySectionsController.setActivePanel(collapsed ? null : normalizedPanelId);
-  document.documentElement.setAttribute("data-active-utility", utilitySidebarLastPanelId);
-  applyUtilitySidebarCollapsedState(
-    document.documentElement,
-    utilitySidebarBody,
-    utilitySidebarCollapsed,
-  );
-  syncPaneResizeHandleState();
-}
-
-function handleUtilitySectionToggle(panelId: string | null): void {
-  if (panelId) {
-    setUtilitySidebarCollapsed(false, panelId);
-  } else {
-    setUtilitySidebarCollapsed(true, utilitySidebarLastPanelId);
-  }
-  persistState();
-}
-
-function normalizeActiveUtilityPanelId(value: unknown): string | null {
-  return typeof value === "string" && VALID_UTILITY_PANEL_IDS.has(value) ? value : null;
-}
-
 function loadPaneLayoutState(): PaneLayoutState {
   const fallback: PaneLayoutState = {};
   const raw = localStorage.getItem(PANE_LAYOUT_STORAGE_KEY);
@@ -835,14 +804,6 @@ function loadPaneLayoutState(): PaneLayoutState {
   try {
     const parsed = JSON.parse(raw) as PaneLayoutState;
     return {
-      sidebarWidth:
-        typeof parsed.sidebarWidth === "number" && Number.isFinite(parsed.sidebarWidth)
-          ? parsed.sidebarWidth
-          : undefined,
-      sidebarRailWidth:
-        typeof parsed.sidebarRailWidth === "number" && Number.isFinite(parsed.sidebarRailWidth)
-          ? parsed.sidebarRailWidth
-          : undefined,
       libraryWidth:
         typeof parsed.libraryWidth === "number" && Number.isFinite(parsed.libraryWidth)
           ? parsed.libraryWidth
@@ -854,12 +815,6 @@ function loadPaneLayoutState(): PaneLayoutState {
 }
 
 function applyPaneLayoutState(state: PaneLayoutState): void {
-  if (typeof state.sidebarWidth === "number") {
-    document.documentElement.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
-  }
-  if (typeof state.sidebarRailWidth === "number") {
-    document.documentElement.style.setProperty("--sidebar-rail-width", `${state.sidebarRailWidth}px`);
-  }
   if (typeof state.libraryWidth === "number") {
     document.documentElement.style.setProperty("--library-width", `${state.libraryWidth}px`);
   }
@@ -868,8 +823,6 @@ function applyPaneLayoutState(state: PaneLayoutState): void {
 function persistPaneLayoutState(): void {
   const rootStyle = getComputedStyle(document.documentElement);
   const state: PaneLayoutState = {
-    sidebarWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-width")),
-    sidebarRailWidth: parseFloat(rootStyle.getPropertyValue("--sidebar-rail-width")),
     libraryWidth: parseFloat(rootStyle.getPropertyValue("--library-width")),
   };
   localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(state));
@@ -877,71 +830,40 @@ function persistPaneLayoutState(): void {
 
 function syncPaneResizeHandleState(): void {
   const isCompact = window.innerWidth <= 1120;
-  const sidebarDisabled = isCompact;
-  const libraryDisabled = isCompact;
-
-  sidebarResizeHandle.classList.toggle("is-disabled", sidebarDisabled);
-  libraryResizeHandle.classList.toggle("is-disabled", libraryDisabled);
-  sidebarResizeHandle.setAttribute("aria-disabled", sidebarDisabled ? "true" : "false");
-  libraryResizeHandle.setAttribute("aria-disabled", libraryDisabled ? "true" : "false");
+  libraryResizeHandle.classList.toggle("is-disabled", isCompact);
+  libraryResizeHandle.setAttribute("aria-disabled", isCompact ? "true" : "false");
 }
 
 function setupPaneResizeHandles(): void {
-  const setup = (
-    handle: HTMLElement,
-    type: "sidebar" | "library",
-  ) => {
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || window.innerWidth <= 1120) {
-        return;
-      }
+  libraryResizeHandle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || window.innerWidth <= 1120) {
+      return;
+    }
 
-      event.preventDefault();
-      handle.classList.add("is-dragging");
-      document.body.classList.add("is-resizing");
-      handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    libraryResizeHandle.classList.add("is-dragging");
+    document.body.classList.add("is-resizing");
+    libraryResizeHandle.setPointerCapture(event.pointerId);
 
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        const shellBounds = pmShell.getBoundingClientRect();
-        if (type === "sidebar") {
-          const visibleWidth = moveEvent.clientX - shellBounds.left;
-          if (utilitySidebarCollapsed) {
-            document.documentElement.style.setProperty(
-              "--sidebar-rail-width",
-              `${clamp(visibleWidth, 64, 118)}px`,
-            );
-          } else {
-            document.documentElement.style.setProperty(
-              "--sidebar-width",
-              `${clamp(visibleWidth, 248, 520)}px`,
-            );
-          }
-        } else {
-          const width = shellBounds.right - moveEvent.clientX;
-          document.documentElement.style.setProperty(
-            "--library-width",
-            `${clamp(width, 240, 540)}px`,
-          );
-        }
-      };
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const shellBounds = pmShell.getBoundingClientRect();
+      const width = shellBounds.right - moveEvent.clientX;
+      document.documentElement.style.setProperty("--library-width", `${clamp(width, 240, 540)}px`);
+    };
 
-      const finish = () => {
-        handle.classList.remove("is-dragging");
-        document.body.classList.remove("is-resizing");
-        handle.removeEventListener("pointermove", onPointerMove);
-        handle.removeEventListener("pointerup", finish);
-        handle.removeEventListener("pointercancel", finish);
-        persistPaneLayoutState();
-      };
+    const finish = () => {
+      libraryResizeHandle.classList.remove("is-dragging");
+      document.body.classList.remove("is-resizing");
+      libraryResizeHandle.removeEventListener("pointermove", onPointerMove);
+      libraryResizeHandle.removeEventListener("pointerup", finish);
+      libraryResizeHandle.removeEventListener("pointercancel", finish);
+      persistPaneLayoutState();
+    };
 
-      handle.addEventListener("pointermove", onPointerMove);
-      handle.addEventListener("pointerup", finish);
-      handle.addEventListener("pointercancel", finish);
-    });
-  };
-
-  setup(sidebarResizeHandle, "sidebar");
-  setup(libraryResizeHandle, "library");
+    libraryResizeHandle.addEventListener("pointermove", onPointerMove);
+    libraryResizeHandle.addEventListener("pointerup", finish);
+    libraryResizeHandle.addEventListener("pointercancel", finish);
+  });
   syncPaneResizeHandleState();
   window.addEventListener("resize", syncPaneResizeHandleState);
 }
@@ -1096,14 +1018,16 @@ function syncEnvironmentEditor(): void {
 function renderEnvironmentSummary(): void {
   const activeEnvironment = getActiveEnvironment();
   if (!activeEnvironment) {
-    environmentSummaryText.textContent = "No active environment.";
+    openEnvironmentModalBtn.textContent = "Environment";
+    openEnvironmentModalBtn.title = "No active environment";
     return;
   }
 
   const variableCount = parseEnvironmentRows(activeEnvironment.text).filter(
     (row) => row.key.trim() !== "" || row.value.trim() !== "",
   ).length;
-  environmentSummaryText.textContent = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
+  openEnvironmentModalBtn.textContent = activeEnvironment.name;
+  openEnvironmentModalBtn.title = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
 }
 
 function getActiveEnvironment(): EnvironmentEntry | null {
@@ -2921,13 +2845,42 @@ function handleHeaderContextDelete(): void {
   removeHeader(target.headerId);
 }
 
+function showHelperModal(): void {
+  hidePluginModal();
+  hideEnvironmentModal();
+  hideImportModal();
+  hideCurlExport();
+  hideRequestContextMenu();
+  hideHeaderContextMenu();
+  helperModalTrigger =
+    document.activeElement instanceof HTMLElement ? document.activeElement : openHelperModalBtn;
+  helperOverlay.hidden = false;
+  helperOverlay.setAttribute("aria-hidden", "false");
+  openHelperModalBtn.setAttribute("aria-expanded", "true");
+}
+
+function hideHelperModal(restoreFocus = false): void {
+  helperOverlay.hidden = true;
+  helperOverlay.setAttribute("aria-hidden", "true");
+  openHelperModalBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    (helperModalTrigger ?? openHelperModalBtn).focus();
+  }
+  helperModalTrigger = null;
+}
+
 function showEnvironmentModal(): void {
+  hideHelperModal();
+  hidePluginModal();
+  hideImportModal();
+  hideCurlExport();
   hideRequestContextMenu();
   hideHeaderContextMenu();
   environmentModalTrigger =
     document.activeElement instanceof HTMLElement ? document.activeElement : openEnvironmentModalBtn;
   environmentOverlay.hidden = false;
   environmentOverlay.setAttribute("aria-hidden", "false");
+  openEnvironmentModalBtn.setAttribute("aria-expanded", "true");
   window.requestAnimationFrame(() => {
     environmentSelect.focus();
   });
@@ -2936,6 +2889,7 @@ function showEnvironmentModal(): void {
 function hideEnvironmentModal(restoreFocus = false): void {
   environmentOverlay.hidden = true;
   environmentOverlay.setAttribute("aria-hidden", "true");
+  openEnvironmentModalBtn.setAttribute("aria-expanded", "false");
   if (restoreFocus) {
     (environmentModalTrigger ?? openEnvironmentModalBtn).focus();
   }
@@ -2943,6 +2897,9 @@ function hideEnvironmentModal(restoreFocus = false): void {
 }
 
 function showImportModal(): void {
+  hideHelperModal();
+  hidePluginModal();
+  hideEnvironmentModal();
   hideCurlExport();
   hideRequestContextMenu();
   hideHeaderContextMenu();
@@ -2965,6 +2922,30 @@ function hideImportModal(restoreFocus = false): void {
     (importModalTrigger ?? openImportModalBtn).focus();
   }
   importModalTrigger = null;
+}
+
+function showPluginModal(): void {
+  hideHelperModal();
+  hideEnvironmentModal();
+  hideImportModal();
+  hideCurlExport();
+  hideRequestContextMenu();
+  hideHeaderContextMenu();
+  pluginModalTrigger =
+    document.activeElement instanceof HTMLElement ? document.activeElement : openPluginModalBtn;
+  pluginOverlay.hidden = false;
+  pluginOverlay.setAttribute("aria-hidden", "false");
+  openPluginModalBtn.setAttribute("aria-expanded", "true");
+}
+
+function hidePluginModal(restoreFocus = false): void {
+  pluginOverlay.hidden = true;
+  pluginOverlay.setAttribute("aria-hidden", "true");
+  openPluginModalBtn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) {
+    (pluginModalTrigger ?? openPluginModalBtn).focus();
+  }
+  pluginModalTrigger = null;
 }
 
 async function deleteCollection(collectionId: string): Promise<void> {
@@ -3497,7 +3478,6 @@ function setLoading(isLoading: boolean): void {
   requestIsLoading = isLoading;
   sendBtn.disabled = isLoading;
   openImportModalBtn.disabled = isLoading;
-  openImportModalFromSidebarBtn.disabled = isLoading;
   openEnvironmentModalBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
   importPluginBtn.disabled = isLoading;
@@ -3656,6 +3636,9 @@ function getCurrentRequestDraft(): {
 }
 
 function showCurlExport(command: string): void {
+  hideHelperModal();
+  hidePluginModal();
+  hideEnvironmentModal();
   hideImportModal();
   curlExportOutput.value = command;
   curlExportOverlay.hidden = false;
@@ -3986,8 +3969,6 @@ setRawResponseMode("plain");
 clearSseInspector();
 const initialState = loadState();
 applyPaneLayoutState(loadPaneLayoutState());
-utilitySectionsController = setupUtilitySections(document, handleUtilitySectionToggle);
-setUtilitySidebarCollapsed(initialState.sidebarCollapsed, initialState.activeUtilityPanelId);
 setupPaneResizeHandles();
 setupTabs();
 wireEvents();
