@@ -188,11 +188,7 @@ const openHelperModalBtn = byId<HTMLButtonElement>("openHelperModalBtn");
 const closeHelperModalBtn = byId<HTMLButtonElement>("closeHelperModalBtn");
 const helperOverlay = byId<HTMLElement>("helperOverlay");
 const openEnvironmentModalBtn = byId<HTMLButtonElement>("openEnvironmentModalBtn");
-const openEnvironmentSwitchBtn = byId<HTMLButtonElement>("openEnvironmentSwitchBtn");
-const closeEnvironmentSwitchBtn = byId<HTMLButtonElement>("closeEnvironmentSwitchBtn");
-const openEnvironmentEditorFromSwitchBtn = byId<HTMLButtonElement>("openEnvironmentEditorFromSwitchBtn");
 const environmentSwitchSelect = byId<HTMLSelectElement>("environmentSwitchSelect");
-const environmentSwitchOverlay = byId<HTMLElement>("environmentSwitchOverlay");
 const environmentSelect = byId<HTMLSelectElement>("environmentSelect");
 const addEnvironmentRowBtn = byId<HTMLButtonElement>("addEnvironmentRowBtn");
 const createEnvironmentBtn = byId<HTMLButtonElement>("createEnvironmentBtn");
@@ -327,7 +323,6 @@ let sseLineEntries: SseLineEntry[] = [];
 let selectedSseLine: SseLineEntry | null = null;
 let sseLineCounter = 0;
 let helperModalTrigger: HTMLElement | null = null;
-let environmentSwitchTrigger: HTMLElement | null = null;
 let environmentModalTrigger: HTMLElement | null = null;
 let importModalTrigger: HTMLElement | null = null;
 let pluginModalTrigger: HTMLElement | null = null;
@@ -352,7 +347,6 @@ function wireEvents(): void {
     renderEnvironmentControls();
     persistState();
     scheduleCollectionStateSave();
-    hideEnvironmentSwitchModal(true);
   });
   environmentSelect.addEventListener("change", () => {
     activeEnvironmentId = environmentSelect.value || null;
@@ -372,16 +366,6 @@ function wireEvents(): void {
   });
   closeEnvironmentModalBtn.addEventListener("click", () => {
     hideEnvironmentModal(true);
-  });
-  openEnvironmentSwitchBtn.addEventListener("click", () => {
-    showEnvironmentSwitchModal();
-  });
-  closeEnvironmentSwitchBtn.addEventListener("click", () => {
-    hideEnvironmentSwitchModal(true);
-  });
-  openEnvironmentEditorFromSwitchBtn.addEventListener("click", () => {
-    hideEnvironmentSwitchModal();
-    showEnvironmentModal();
   });
 
   createEnvironmentBtn.addEventListener("click", () => {
@@ -443,9 +427,6 @@ function wireEvents(): void {
     }
     if (!helperOverlay.hidden) {
       hideHelperModal(true);
-    }
-    if (!environmentSwitchOverlay.hidden) {
-      hideEnvironmentSwitchModal(true);
     }
     if (!environmentOverlay.hidden) {
       hideEnvironmentModal(true);
@@ -556,9 +537,6 @@ function wireEvents(): void {
     }
     if (event.target === environmentOverlay) {
       hideEnvironmentModal();
-    }
-    if (event.target === environmentSwitchOverlay) {
-      hideEnvironmentSwitchModal();
     }
     if (event.target === importCurlOverlay) {
       hideImportModal();
@@ -695,7 +673,6 @@ function applyInitialState(state: PersistedState): void {
   activeSavedRequestId = state.activeSavedRequestId;
   collapsedCollectionIds = new Set(state.collapsedCollectionIds ?? []);
   renderEnvironmentControls();
-  renderEnvironmentSummary();
   renderHeaderRows();
   syncBodyEditor();
   renderDraftStatus();
@@ -1029,7 +1006,6 @@ function renderEnvironmentControls(): void {
   environmentSwitchSelect.value = activeEnvironmentId ?? "";
 
   syncEnvironmentEditor();
-  renderEnvironmentSummary();
 }
 
 function syncEnvironmentEditor(): void {
@@ -1048,21 +1024,6 @@ function syncEnvironmentEditor(): void {
   createEnvironmentBtn.disabled = requestIsLoading;
   renameEnvironmentBtn.disabled = requestIsLoading || !activeEnvironment;
   deleteEnvironmentBtn.disabled = requestIsLoading || environments.length <= 1 || !activeEnvironment;
-}
-
-function renderEnvironmentSummary(): void {
-  const activeEnvironment = getActiveEnvironment();
-  if (!activeEnvironment) {
-    openEnvironmentSwitchBtn.textContent = "Environment";
-    openEnvironmentSwitchBtn.title = "No active environment";
-    return;
-  }
-
-  const variableCount = parseEnvironmentRows(activeEnvironment.text).filter(
-    (row) => row.key.trim() !== "" || row.value.trim() !== "",
-  ).length;
-  openEnvironmentSwitchBtn.textContent = activeEnvironment.name;
-  openEnvironmentSwitchBtn.title = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
 }
 
 function getActiveEnvironment(): EnvironmentEntry | null {
@@ -1089,7 +1050,7 @@ function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
     }
     return next;
   });
-  renderEnvironmentSummary();
+  renderEnvironmentControls();
   persistState();
   scheduleCollectionStateSave();
 }
@@ -2863,7 +2824,6 @@ function handleHeaderContextDelete(): void {
 }
 
 function showHelperModal(): void {
-  hideEnvironmentSwitchModal();
   hidePluginModal();
   hideEnvironmentModal();
   hideImportModal();
@@ -2887,36 +2847,7 @@ function hideHelperModal(restoreFocus = false): void {
   helperModalTrigger = null;
 }
 
-function showEnvironmentSwitchModal(): void {
-  hideHelperModal();
-  hidePluginModal();
-  hideImportModal();
-  hideCurlExport();
-  hideEnvironmentModal();
-  hideRequestContextMenu();
-  hideHeaderContextMenu();
-  environmentSwitchTrigger =
-    document.activeElement instanceof HTMLElement ? document.activeElement : openEnvironmentSwitchBtn;
-  environmentSwitchOverlay.hidden = false;
-  environmentSwitchOverlay.setAttribute("aria-hidden", "false");
-  openEnvironmentSwitchBtn.setAttribute("aria-expanded", "true");
-  window.requestAnimationFrame(() => {
-    environmentSwitchSelect.focus();
-  });
-}
-
-function hideEnvironmentSwitchModal(restoreFocus = false): void {
-  environmentSwitchOverlay.hidden = true;
-  environmentSwitchOverlay.setAttribute("aria-hidden", "true");
-  openEnvironmentSwitchBtn.setAttribute("aria-expanded", "false");
-  if (restoreFocus) {
-    (environmentSwitchTrigger ?? openEnvironmentSwitchBtn).focus();
-  }
-  environmentSwitchTrigger = null;
-}
-
 function showEnvironmentModal(): void {
-  hideEnvironmentSwitchModal();
   hideHelperModal();
   hidePluginModal();
   hideImportModal();
@@ -2944,7 +2875,6 @@ function hideEnvironmentModal(restoreFocus = false): void {
 }
 
 function showImportModal(): void {
-  hideEnvironmentSwitchModal();
   hideHelperModal();
   hidePluginModal();
   hideEnvironmentModal();
@@ -2973,7 +2903,6 @@ function hideImportModal(restoreFocus = false): void {
 }
 
 function showPluginModal(): void {
-  hideEnvironmentSwitchModal();
   hideHelperModal();
   hideEnvironmentModal();
   hideImportModal();
@@ -3528,7 +3457,6 @@ function setLoading(isLoading: boolean): void {
   sendBtn.disabled = isLoading;
   openImportModalBtn.disabled = isLoading;
   openEnvironmentModalBtn.disabled = isLoading;
-  openEnvironmentSwitchBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
   importPluginBtn.disabled = isLoading;
   pluginImportInput.disabled = isLoading;
@@ -3686,7 +3614,6 @@ function getCurrentRequestDraft(): {
 }
 
 function showCurlExport(command: string): void {
-  hideEnvironmentSwitchModal();
   hideHelperModal();
   hidePluginModal();
   hideEnvironmentModal();

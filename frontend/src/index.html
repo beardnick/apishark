@@ -72,16 +72,11 @@
             />
           </div>
           <div class="pm-topbar-actions">
-            <button
-              id="openEnvironmentSwitchBtn"
-              type="button"
-              class="secondary"
-              aria-controls="environmentSwitchOverlay"
-              aria-expanded="false"
-              aria-haspopup="dialog"
-            >
-              Environment
-            </button>
+            <select
+              id="environmentSwitchSelect"
+              class="topbar-environment-select"
+              aria-label="Switch active environment"
+            ></select>
             <button
               id="clearOutputBtn"
               type="button"
@@ -561,30 +556,6 @@
             <code class="helper-token">{{$randStr(16)}}</code>
             <code class="helper-token">{{$base64(text)}}</code>
             <code class="helper-token">{{$urlencode(text)}}</code>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <div id="environmentSwitchOverlay" class="workspace-modal-overlay" hidden aria-hidden="true">
-      <section
-        class="workspace-modal-card workspace-modal-card-compact"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="environmentSwitchTitle"
-      >
-        <div class="panel-head">
-          <div>
-            <p id="environmentSwitchTitle" class="panel-label">Environment</p>
-          </div>
-          <div class="panel-tools">
-            <button id="closeEnvironmentSwitchBtn" type="button" class="secondary compact-btn">Close</button>
-          </div>
-        </div>
-        <div class="workspace-modal-stack">
-          <select id="environmentSwitchSelect" aria-label="Switch active environment"></select>
-          <div class="utility-action-row">
-            <button id="openEnvironmentEditorFromSwitchBtn" type="button" class="secondary">Edit</button>
           </div>
         </div>
       </section>

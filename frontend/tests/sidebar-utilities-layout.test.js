@@ -23,17 +23,10 @@ test("left workspace rail keeps only popup launchers", async () => {
   assert.doesNotMatch(html, /id="importRailBtn"/);
 });
 
-test("helper, plugin, environment, import, and export all use the same modal shell", async () => {
+test("helper, plugin, environment editor, import, and export all use the same modal shell", async () => {
   const html = await readFile(new URL("../dist/index.html", import.meta.url), "utf8");
 
-  for (const overlayId of [
-    "helperOverlay",
-    "environmentSwitchOverlay",
-    "pluginOverlay",
-    "environmentOverlay",
-    "importCurlOverlay",
-    "curlExportOverlay",
-  ]) {
+  for (const overlayId of ["helperOverlay", "pluginOverlay", "environmentOverlay", "importCurlOverlay", "curlExportOverlay"]) {
     const pattern = new RegExp(
       `id="${overlayId}"[\\s\\S]*?class="workspace-modal-overlay"[\\s\\S]*?class="workspace-modal-card`,
     );
@@ -43,7 +36,7 @@ test("helper, plugin, environment, import, and export all use the same modal she
   assert.match(html, /id="effectiveAggregationText"/);
   assert.match(html, /class="helper-token-grid"/);
   assert.match(html, /class="helper-token">\{\{VAR_NAME\}\}<\/code>/);
-  assert.match(html, /id="environmentSwitchOverlay"/);
+  assert.doesNotMatch(html, /id="environmentSwitchOverlay"/);
 });
 
 test("request topbar keeps the environment switch next to the request controls", async () => {
@@ -54,10 +47,7 @@ test("request topbar keeps the environment switch next to the request controls",
   assert.match(topbarMatch[0], /class="workspace-kicker">HTTP workspace<\/span>/);
   assert.match(topbarMatch[0], /class="topbar-label">Request<\/label>/);
   assert.match(topbarMatch[0], /id="requestNameInput"/);
-  assert.match(
-    topbarMatch[0],
-    /id="openEnvironmentSwitchBtn"[\s\S]*?aria-controls="environmentSwitchOverlay"/,
-  );
+  assert.match(topbarMatch[0], /id="environmentSwitchSelect"[\s\S]*?aria-label="Switch active environment"/);
 });
 
 test("request workspace keeps import and export next to request actions", async () => {
