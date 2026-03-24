@@ -279,7 +279,7 @@ func (s *server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store, err := s.pluginStore.Load()
+	plugins, err := s.pluginStore.LoadEmbeddedPlugins()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to load plugins: %v", err), http.StatusInternalServerError)
 		return
@@ -288,9 +288,9 @@ func (s *server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 	response := struct {
 		Plugins []ImportedAggregationPluginResponse `json:"plugins"`
 	}{
-		Plugins: make([]ImportedAggregationPluginResponse, 0, len(store.Plugins)),
+		Plugins: make([]ImportedAggregationPluginResponse, 0, len(plugins)),
 	}
-	for _, plugin := range store.Plugins {
+	for _, plugin := range plugins {
 		response.Plugins = append(response.Plugins, ImportedAggregationPluginResponse{
 			ID:          plugin.ID,
 			Label:       plugin.Label,
@@ -298,6 +298,7 @@ func (s *server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 			ImportedAt:  plugin.ImportedAt,
 			Format:      plugin.Format,
 			ModuleURL:   fmt.Sprintf("/api/plugins/assets/%s.mjs?v=%s", plugin.ID, urlQueryEscape(plugin.ImportedAt)),
+			Source:      plugin.Source,
 		})
 	}
 

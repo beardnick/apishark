@@ -63,6 +63,8 @@ export function setImportedAggregationPluginManifests(manifests) {
             id,
             label: manifest.label.trim(),
             description: manifest.description.trim(),
+            module_url: manifest.module_url?.trim() || undefined,
+            source: manifest.source?.trim() || undefined,
         });
     }
 }
@@ -331,9 +333,13 @@ async function validateAggregationPluginSource(source, metadata) {
     return validated;
 }
 async function loadImportedAggregationPlugin(manifest) {
+    const moduleURL = manifest.module_url?.trim() || (manifest.source ? toJavaScriptDataURL(manifest.source) : "");
+    if (!moduleURL) {
+        throw new Error(`Failed to load aggregation plugin "${manifest.label}": missing module source.`);
+    }
     let loadedModule;
     try {
-        loadedModule = await import(/* @vite-ignore */ manifest.module_url);
+        loadedModule = await import(/* @vite-ignore */ moduleURL);
     }
     catch (error) {
         throw new Error(`Failed to load aggregation plugin "${manifest.label}": ${error instanceof Error && error.message ? error.message : "unknown module error"}`);

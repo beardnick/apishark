@@ -94,6 +94,9 @@ func TestHandleImportPluginAndServeAsset(t *testing.T) {
 	if !strings.Contains(listRecorder.Body.String(), "/api/plugins/assets/vendor.asset.mjs") {
 		t.Fatalf("handlePlugins() body = %q, want module URL", listRecorder.Body.String())
 	}
+	if !strings.Contains(listRecorder.Body.String(), "\"source\":\"export function create() { return {}; }\\n\"") {
+		t.Fatalf("handlePlugins() body = %q, want embedded source", listRecorder.Body.String())
+	}
 
 	assetRecorder := httptest.NewRecorder()
 	assetRequest := httptest.NewRequest(http.MethodGet, "/api/plugins/assets/vendor.asset.mjs", nil)

@@ -125,6 +125,7 @@ let environmentRowsSourceText = "";
 let headerRows = [];
 let collectionStore = {
     collections: [],
+    plugins: [],
     environments: [],
     active_environment_id: null,
     request_drafts: {},
@@ -527,10 +528,23 @@ function persistState() {
 function buildCollectionStorePayload() {
     return {
         collections: cloneCollectionStore(collectionStore).collections,
+        plugins: serializeImportedPluginsForCollection(),
         environments: environments.map((environment) => ({ ...environment })),
         active_environment_id: activeEnvironmentId,
         request_drafts: serializePersistedRequestDraftStore(requestDrafts),
     };
+}
+function serializeImportedPluginsForCollection() {
+    return getImportedAggregationPluginManifests()
+        .map((plugin) => ({
+        id: plugin.id,
+        label: plugin.label,
+        description: plugin.description,
+        imported_at: plugin.imported_at,
+        format: plugin.format,
+        source: plugin.source?.trim() ?? "",
+    }))
+        .filter((plugin) => plugin.source !== "");
 }
 function scheduleCollectionStateSave() {
     if (collectionStateSaveTimer !== null) {
@@ -553,6 +567,11 @@ async function saveCollectionStateToServer() {
             throw new Error(responseText || `Save failed (${response.status})`);
         }
         collectionStore = normalizeCollectionStore(JSON.parse(responseText));
+        if (collectionStore.plugins.length > 0) {
+            setImportedAggregationPluginManifests(collectionStore.plugins);
+            renderImportedPlugins();
+            renderAggregationPluginControls();
+        }
     }
     catch (error) {
         setCollectionsStatus(errorMessage(error, "Failed to save collections."), true);
@@ -1233,6 +1252,7 @@ async function importPlugin() {
         await loadPlugins({
             successMessage: `Imported plugin "${parsed.label}".`,
         });
+        await saveCollectionStateToServer();
     }
     catch (error) {
         setPluginsStatus(errorMessage(error, "Failed to import plugin."), true);
@@ -1250,14 +1270,18 @@ async function loadPlugins(options) {
         }
         const parsed = JSON.parse(responseText);
         const manifests = Array.isArray(parsed.plugins) ? parsed.plugins : [];
-        setImportedAggregationPluginManifests(manifests.map((plugin) => ({
-            id: resolveAggregationPluginId(plugin.id),
-            label: typeof plugin.label === "string" ? plugin.label : resolveAggregationPluginId(plugin.id),
-            description: typeof plugin.description === "string" ? plugin.description : "",
-            module_url: typeof plugin.module_url === "string" ? plugin.module_url : "",
-            imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
-            format: plugin.format === "json" ? "json" : "js",
-        })));
+        setImportedAggregationPluginManifests(manifests.map((plugin) => {
+            const format = plugin.format === "json" ? "json" : "js";
+            return {
+                id: resolveAggregationPluginId(plugin.id),
+                label: typeof plugin.label === "string" ? plugin.label : resolveAggregationPluginId(plugin.id),
+                description: typeof plugin.description === "string" ? plugin.description : "",
+                module_url: typeof plugin.module_url === "string" ? plugin.module_url : "",
+                imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
+                format,
+                source: typeof plugin.source === "string" ? plugin.source : "",
+            };
+        }));
         renderImportedPlugins();
         renderAggregationPluginControls();
         renderCollections();
@@ -1951,8 +1975,12 @@ async function loadCollections() {
         }
         const parsed = normalizeCollectionStore(JSON.parse(responseText));
         collectionStore = parsed;
+        const hadServerPlugins = parsed.plugins.length > 0;
         const hadServerEnvironments = parsed.environments.length > 0;
         const hadServerRequestDrafts = Object.keys(parsed.request_drafts).length > 0;
+        if (hadServerPlugins) {
+            setImportedAggregationPluginManifests(parsed.plugins);
+        }
         environments = normalizeEnvironments(hadServerEnvironments ? parsed.environments : environments);
         activeEnvironmentId = resolveActiveEnvironmentId(environments, hadServerEnvironments ? parsed.active_environment_id : activeEnvironmentId);
         requestDrafts = hadServerRequestDrafts ? parsed.request_drafts : requestDrafts;
@@ -1968,11 +1996,16 @@ async function loadCollections() {
         }
         const activeSavedRequest = findSavedRequest(activeCollectionId, activeSavedRequestId);
         restoreDraftForCurrentSelection(activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined);
+        renderImportedPlugins();
+        renderAggregationPluginControls();
         renderEnvironmentControls();
         renderCollections();
         renderEffectiveAggregationPlugin();
         persistState();
-        if (!hadServerEnvironments || !hadServerRequestDrafts || prunedDrafts) {
+        if (!hadServerPlugins ||
+            !hadServerEnvironments ||
+            !hadServerRequestDrafts ||
+            prunedDrafts) {
             scheduleCollectionStateSave();
         }
         setCollectionsStatus(parsed.collections.length === 0
@@ -2421,6 +2454,11 @@ async function saveCollectionsToServer(previous) {
             throw new Error(responseText || `Save failed (${response.status})`);
         }
         collectionStore = normalizeCollectionStore(JSON.parse(responseText));
+        if (collectionStore.plugins.length > 0) {
+            setImportedAggregationPluginManifests(collectionStore.plugins);
+            renderImportedPlugins();
+            renderAggregationPluginControls();
+        }
         const prunedDrafts = prunePersistedDrafts();
         if (activeCollectionId && !findCollection(activeCollectionId)) {
             activeCollectionId = collectionStore.collections[0]?.id ?? null;
@@ -2683,6 +2721,21 @@ function toggleCollectionCollapsed(collectionId) {
 }
 function normalizeCollectionStore(input) {
     const rawCollections = Array.isArray(input.collections) ? input.collections : [];
+    const plugins = Array.isArray(input.plugins)
+        ? input.plugins
+            .map((plugin) => {
+            const format = plugin.format === "json" ? "json" : "js";
+            return {
+                id: resolveAggregationPluginId(plugin.id),
+                label: typeof plugin.label === "string" ? plugin.label.trim() : "",
+                description: typeof plugin.description === "string" ? plugin.description.trim() : "",
+                imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
+                format,
+                source: typeof plugin.source === "string" ? plugin.source.trim() : "",
+            };
+        })
+            .filter((plugin) => plugin.id !== AGGREGATION_PLUGIN_NONE && plugin.label !== "" && plugin.source !== "")
+        : [];
     const environments = Array.isArray(input.environments)
         ? input.environments
             .map((environment) => ({
@@ -2727,6 +2780,7 @@ function normalizeCollectionStore(input) {
                 : [],
         }))
             .filter((collection) => collection.name.trim() !== ""),
+        plugins,
         environments,
         active_environment_id: typeof input.active_environment_id === "string" &&
             environments.some((environment) => environment.id === input.active_environment_id)

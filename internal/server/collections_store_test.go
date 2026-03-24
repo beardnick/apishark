@@ -46,6 +46,16 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 
 	input := CollectionStore{
+		Plugins: []EmbeddedAggregationPlugin{
+			{
+				ID:          "vendor.example",
+				Label:       "Vendor Example",
+				Description: "Embeds plugin source in collections.json",
+				ImportedAt:  "2026-03-11T11:59:00Z",
+				Format:      "js",
+				Source:      "export function create() { return {}; }",
+			},
+		},
 		Environments: []EnvironmentEntry{
 			{
 				ID:   "env_default",
@@ -111,6 +121,12 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	if saved.ActiveEnvironmentID != "env_default" {
 		t.Fatalf("Save() active environment = %q, want %q", saved.ActiveEnvironmentID, "env_default")
 	}
+	if len(saved.Plugins) != 1 {
+		t.Fatalf("Save() plugins = %d, want 1", len(saved.Plugins))
+	}
+	if saved.Plugins[0].Source != "export function create() { return {}; }" {
+		t.Fatalf("Save() plugin source = %q, want plugin source", saved.Plugins[0].Source)
+	}
 	if len(saved.RequestDrafts) != 1 {
 		t.Fatalf("Save() request drafts = %d, want 1", len(saved.RequestDrafts))
 	}
@@ -152,6 +168,12 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 	if reloaded.ActiveEnvironmentID != "env_default" {
 		t.Fatalf("reloaded active environment = %q, want %q", reloaded.ActiveEnvironmentID, "env_default")
+	}
+	if len(reloaded.Plugins) != 1 {
+		t.Fatalf("reloaded plugins = %d, want 1", len(reloaded.Plugins))
+	}
+	if reloaded.Plugins[0].ID != "vendor.example" {
+		t.Fatalf("reloaded plugin id = %q, want %q", reloaded.Plugins[0].ID, "vendor.example")
 	}
 	if len(reloaded.Environments) != 1 {
 		t.Fatalf("reloaded environments = %d, want 1", len(reloaded.Environments))
@@ -217,5 +239,47 @@ func TestCollectionFileStoreAllowsLargeCollections(t *testing.T) {
 	}
 	if got := reloaded.Collections[0].Requests[0].Body; got != largeBody {
 		t.Fatalf("reloaded body length = %d, want %d", len(got), len(largeBody))
+	}
+}
+
+func TestCollectionFileStoreKeepsPluginsWithoutCollections(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store, err := newCollectionFileStore(dir)
+	if err != nil {
+		t.Fatalf("newCollectionFileStore() error = %v", err)
+	}
+
+	saved, err := store.Save(CollectionStore{
+		Plugins: []EmbeddedAggregationPlugin{
+			{
+				ID:     "vendor.embedded",
+				Label:  "Vendor Embedded",
+				Format: "js",
+				Source: "export function create() { return {}; }",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if len(saved.Collections) != 0 {
+		t.Fatalf("Save() collections = %d, want 0", len(saved.Collections))
+	}
+	if len(saved.Plugins) != 1 {
+		t.Fatalf("Save() plugins = %d, want 1", len(saved.Plugins))
+	}
+
+	reloaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(reloaded.Plugins) != 1 {
+		t.Fatalf("Load() plugins = %d, want 1", len(reloaded.Plugins))
+	}
+	if reloaded.Plugins[0].ID != "vendor.embedded" {
+		t.Fatalf("Load() plugin id = %q, want %q", reloaded.Plugins[0].ID, "vendor.embedded")
 	}
 }

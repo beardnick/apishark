@@ -44,6 +44,7 @@ type ImportedAggregationPluginResponse struct {
 	ImportedAt  string `json:"imported_at"`
 	Format      string `json:"format"`
 	ModuleURL   string `json:"module_url"`
+	Source      string `json:"source,omitempty"`
 }
 
 type PluginImportPayload struct {
@@ -170,6 +171,36 @@ func (s *pluginFileStore) Delete(pluginID string) (ImportedAggregationPlugin, er
 	}
 
 	return deleted, nil
+}
+
+func (s *pluginFileStore) LoadEmbeddedPlugins() ([]EmbeddedAggregationPlugin, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store, err := loadPluginStoreFromFile(s.manifestPath)
+	if err != nil {
+		return nil, err
+	}
+
+	plugins := make([]EmbeddedAggregationPlugin, 0, len(store.Plugins))
+	for _, plugin := range store.Plugins {
+		modulePath := filepath.Join(s.modulesDir, plugin.SourceFile)
+		rawSource, err := os.ReadFile(modulePath)
+		if err != nil {
+			return nil, fmt.Errorf("read plugin module %q: %w", plugin.ID, err)
+		}
+
+		plugins = append(plugins, EmbeddedAggregationPlugin{
+			ID:          plugin.ID,
+			Label:       plugin.Label,
+			Description: plugin.Description,
+			ImportedAt:  plugin.ImportedAt,
+			Format:      plugin.Format,
+			Source:      strings.TrimSpace(string(rawSource)),
+		})
+	}
+
+	return normalizeEmbeddedAggregationPlugins(plugins), nil
 }
 
 func loadPluginStoreFromFile(filePath string) (PluginStore, error) {

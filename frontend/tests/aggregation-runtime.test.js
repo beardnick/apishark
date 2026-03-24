@@ -269,3 +269,29 @@ test("ensureAggregationPluginLoaded registers imported plugin manifests", async 
   const plugin = listAggregationPlugins().find((item) => item.id === "vendor.loaded");
   assert.equal(plugin?.loaded, true);
 });
+
+test("ensureAggregationPluginLoaded accepts embedded plugin source from collections", async () => {
+  setImportedAggregationPluginManifests([
+    {
+      id: "vendor.embedded",
+      label: "Vendor Embedded",
+      description: "Loads from collection source",
+      imported_at: "2026-03-24T00:00:00Z",
+      format: "js",
+      source: `
+        export function create() {
+          return {
+            onRawEvent() {
+              return { append: [{ kind: "content", text: "embedded" }] };
+            },
+          };
+        }
+      `,
+    },
+  ]);
+
+  await ensureAggregationPluginLoaded("vendor.embedded");
+
+  const plugin = listAggregationPlugins().find((item) => item.id === "vendor.embedded");
+  assert.equal(plugin?.loaded, true);
+});

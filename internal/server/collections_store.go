@@ -68,11 +68,21 @@ type PersistedRequestDraft struct {
 	Draft        RequestDraft `json:"draft"`
 }
 
+type EmbeddedAggregationPlugin struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	ImportedAt  string `json:"imported_at,omitempty"`
+	Format      string `json:"format"`
+	Source      string `json:"source"`
+}
+
 type CollectionStore struct {
-	Collections         []RequestCollection     `json:"collections"`
-	Environments        []EnvironmentEntry      `json:"environments"`
-	ActiveEnvironmentID string                  `json:"active_environment_id,omitempty"`
-	RequestDrafts       []PersistedRequestDraft `json:"request_drafts"`
+	Collections         []RequestCollection       `json:"collections"`
+	Plugins             []EmbeddedAggregationPlugin `json:"plugins,omitempty"`
+	Environments        []EnvironmentEntry        `json:"environments"`
+	ActiveEnvironmentID string                    `json:"active_environment_id,omitempty"`
+	RequestDrafts       []PersistedRequestDraft   `json:"request_drafts"`
 }
 
 type collectionFileStore struct {
@@ -149,12 +159,9 @@ func saveCollectionStoreToFile(filePath string, store CollectionStore) error {
 }
 
 func normalizeCollectionStore(store CollectionStore) CollectionStore {
-	if len(store.Collections) == 0 {
-		return emptyCollectionStore()
-	}
-
 	normalized := CollectionStore{
 		Collections:   make([]RequestCollection, 0, len(store.Collections)),
+		Plugins:       normalizeEmbeddedAggregationPlugins(store.Plugins),
 		Environments:  normalizeEnvironmentEntries(store.Environments),
 		RequestDrafts: normalizePersistedRequestDrafts(store.RequestDrafts),
 	}
@@ -215,10 +222,54 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 	if len(normalized.Collections) == 0 {
 		return CollectionStore{
 			Collections:         []RequestCollection{},
+			Plugins:             normalized.Plugins,
 			Environments:        normalized.Environments,
 			ActiveEnvironmentID: normalized.ActiveEnvironmentID,
 			RequestDrafts:       normalized.RequestDrafts,
 		}
+	}
+
+	return normalized
+}
+
+func normalizeEmbeddedAggregationPlugins(entries []EmbeddedAggregationPlugin) []EmbeddedAggregationPlugin {
+	if len(entries) == 0 {
+		return []EmbeddedAggregationPlugin{}
+	}
+
+	normalized := make([]EmbeddedAggregationPlugin, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		id := normalizeImportedAggregationPluginID(entry.ID)
+		if id == "" || id == "none" || id == "openai" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+
+		label := strings.TrimSpace(entry.Label)
+		format := strings.ToLower(strings.TrimSpace(entry.Format))
+		source := strings.TrimSpace(entry.Source)
+		if label == "" || source == "" {
+			continue
+		}
+		if format != "json" && format != "js" {
+			continue
+		}
+		if len(source) > maxPluginSourceSize {
+			continue
+		}
+
+		normalized = append(normalized, EmbeddedAggregationPlugin{
+			ID:          id,
+			Label:       label,
+			Description: strings.TrimSpace(entry.Description),
+			ImportedAt:  strings.TrimSpace(entry.ImportedAt),
+			Format:      format,
+			Source:      source,
+		})
+		seen[id] = struct{}{}
 	}
 
 	return normalized
@@ -353,6 +404,7 @@ func normalizeSavedHeaders(headers []SavedHeader) []SavedHeader {
 func emptyCollectionStore() CollectionStore {
 	return CollectionStore{
 		Collections:   []RequestCollection{},
+		Plugins:       []EmbeddedAggregationPlugin{},
 		Environments:  []EnvironmentEntry{},
 		RequestDrafts: []PersistedRequestDraft{},
 	}
