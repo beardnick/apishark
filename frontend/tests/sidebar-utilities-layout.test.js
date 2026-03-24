@@ -8,6 +8,10 @@ test("left workspace rail keeps only popup launchers", async () => {
   assert.match(html, /id="appUtilitySidebar"/);
   assert.match(
     html,
+    /id="openEnvironmentModalBtn"[\s\S]*?aria-controls="environmentOverlay"[\s\S]*?aria-expanded="false"/,
+  );
+  assert.match(
+    html,
     /id="openHelperModalBtn"[\s\S]*?aria-controls="helperOverlay"[\s\S]*?aria-expanded="false"/,
   );
   assert.match(
@@ -24,6 +28,7 @@ test("helper, plugin, environment, import, and export all use the same modal she
 
   for (const overlayId of [
     "helperOverlay",
+    "environmentSwitchOverlay",
     "pluginOverlay",
     "environmentOverlay",
     "importCurlOverlay",
@@ -38,6 +43,7 @@ test("helper, plugin, environment, import, and export all use the same modal she
   assert.match(html, /id="effectiveAggregationText"/);
   assert.match(html, /class="helper-token-grid"/);
   assert.match(html, /class="helper-token">\{\{VAR_NAME\}\}<\/code>/);
+  assert.match(html, /id="environmentSwitchOverlay"/);
 });
 
 test("request topbar keeps the environment switch next to the request controls", async () => {
@@ -50,7 +56,7 @@ test("request topbar keeps the environment switch next to the request controls",
   assert.match(topbarMatch[0], /id="requestNameInput"/);
   assert.match(
     topbarMatch[0],
-    /id="openEnvironmentModalBtn"[\s\S]*?aria-controls="environmentOverlay"/,
+    /id="openEnvironmentSwitchBtn"[\s\S]*?aria-controls="environmentSwitchOverlay"/,
   );
 });
 

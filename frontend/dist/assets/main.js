@@ -25,6 +25,11 @@ const openHelperModalBtn = byId("openHelperModalBtn");
 const closeHelperModalBtn = byId("closeHelperModalBtn");
 const helperOverlay = byId("helperOverlay");
 const openEnvironmentModalBtn = byId("openEnvironmentModalBtn");
+const openEnvironmentSwitchBtn = byId("openEnvironmentSwitchBtn");
+const closeEnvironmentSwitchBtn = byId("closeEnvironmentSwitchBtn");
+const openEnvironmentEditorFromSwitchBtn = byId("openEnvironmentEditorFromSwitchBtn");
+const environmentSwitchSelect = byId("environmentSwitchSelect");
+const environmentSwitchOverlay = byId("environmentSwitchOverlay");
 const environmentSelect = byId("environmentSelect");
 const addEnvironmentRowBtn = byId("addEnvironmentRowBtn");
 const createEnvironmentBtn = byId("createEnvironmentBtn");
@@ -146,6 +151,7 @@ let sseLineEntries = [];
 let selectedSseLine = null;
 let sseLineCounter = 0;
 let helperModalTrigger = null;
+let environmentSwitchTrigger = null;
 let environmentModalTrigger = null;
 let importModalTrigger = null;
 let pluginModalTrigger = null;
@@ -163,10 +169,16 @@ const bodyEditorController = createBodyEditor({
     },
 });
 function wireEvents() {
+    environmentSwitchSelect.addEventListener("change", () => {
+        activeEnvironmentId = environmentSwitchSelect.value || null;
+        renderEnvironmentControls();
+        persistState();
+        scheduleCollectionStateSave();
+        hideEnvironmentSwitchModal(true);
+    });
     environmentSelect.addEventListener("change", () => {
         activeEnvironmentId = environmentSelect.value || null;
-        syncEnvironmentEditor();
-        renderEnvironmentSummary();
+        renderEnvironmentControls();
         persistState();
         scheduleCollectionStateSave();
     });
@@ -181,6 +193,16 @@ function wireEvents() {
     });
     closeEnvironmentModalBtn.addEventListener("click", () => {
         hideEnvironmentModal(true);
+    });
+    openEnvironmentSwitchBtn.addEventListener("click", () => {
+        showEnvironmentSwitchModal();
+    });
+    closeEnvironmentSwitchBtn.addEventListener("click", () => {
+        hideEnvironmentSwitchModal(true);
+    });
+    openEnvironmentEditorFromSwitchBtn.addEventListener("click", () => {
+        hideEnvironmentSwitchModal();
+        showEnvironmentModal();
     });
     createEnvironmentBtn.addEventListener("click", () => {
         createEnvironment();
@@ -233,6 +255,9 @@ function wireEvents() {
         }
         if (!helperOverlay.hidden) {
             hideHelperModal(true);
+        }
+        if (!environmentSwitchOverlay.hidden) {
+            hideEnvironmentSwitchModal(true);
         }
         if (!environmentOverlay.hidden) {
             hideEnvironmentModal(true);
@@ -331,6 +356,9 @@ function wireEvents() {
         }
         if (event.target === environmentOverlay) {
             hideEnvironmentModal();
+        }
+        if (event.target === environmentSwitchOverlay) {
+            hideEnvironmentSwitchModal();
         }
         if (event.target === importCurlOverlay) {
             hideImportModal();
@@ -712,16 +740,21 @@ function prunePersistedDrafts() {
 function renderEnvironmentControls() {
     environments = normalizeEnvironments(environments);
     activeEnvironmentId = resolveActiveEnvironmentId(environments, activeEnvironmentId);
-    const fragment = document.createDocumentFragment();
+    const editorOptions = document.createDocumentFragment();
+    const switchOptions = document.createDocumentFragment();
     for (const environment of environments) {
         const option = document.createElement("option");
         option.value = environment.id;
         option.textContent = environment.name;
-        fragment.appendChild(option);
+        editorOptions.appendChild(option);
+        switchOptions.appendChild(option.cloneNode(true));
     }
     environmentSelect.textContent = "";
-    environmentSelect.appendChild(fragment);
+    environmentSwitchSelect.textContent = "";
+    environmentSelect.appendChild(editorOptions);
+    environmentSwitchSelect.appendChild(switchOptions);
     environmentSelect.value = activeEnvironmentId ?? "";
+    environmentSwitchSelect.value = activeEnvironmentId ?? "";
     syncEnvironmentEditor();
     renderEnvironmentSummary();
 }
@@ -735,6 +768,7 @@ function syncEnvironmentEditor() {
     }
     renderEnvironmentRows();
     environmentSelect.disabled = requestIsLoading || environments.length === 0;
+    environmentSwitchSelect.disabled = requestIsLoading || environments.length === 0;
     addEnvironmentRowBtn.disabled = requestIsLoading || !activeEnvironment;
     createEnvironmentBtn.disabled = requestIsLoading;
     renameEnvironmentBtn.disabled = requestIsLoading || !activeEnvironment;
@@ -743,13 +777,13 @@ function syncEnvironmentEditor() {
 function renderEnvironmentSummary() {
     const activeEnvironment = getActiveEnvironment();
     if (!activeEnvironment) {
-        openEnvironmentModalBtn.textContent = "Environment";
-        openEnvironmentModalBtn.title = "No active environment";
+        openEnvironmentSwitchBtn.textContent = "Environment";
+        openEnvironmentSwitchBtn.title = "No active environment";
         return;
     }
     const variableCount = parseEnvironmentRows(activeEnvironment.text).filter((row) => row.key.trim() !== "" || row.value.trim() !== "").length;
-    openEnvironmentModalBtn.textContent = activeEnvironment.name;
-    openEnvironmentModalBtn.title = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
+    openEnvironmentSwitchBtn.textContent = activeEnvironment.name;
+    openEnvironmentSwitchBtn.title = `${activeEnvironment.name} • ${variableCount} variable${variableCount === 1 ? "" : "s"}`;
 }
 function getActiveEnvironment() {
     if (!activeEnvironmentId) {
@@ -2246,6 +2280,7 @@ function handleHeaderContextDelete() {
     removeHeader(target.headerId);
 }
 function showHelperModal() {
+    hideEnvironmentSwitchModal();
     hidePluginModal();
     hideEnvironmentModal();
     hideImportModal();
@@ -2267,7 +2302,34 @@ function hideHelperModal(restoreFocus = false) {
     }
     helperModalTrigger = null;
 }
+function showEnvironmentSwitchModal() {
+    hideHelperModal();
+    hidePluginModal();
+    hideImportModal();
+    hideCurlExport();
+    hideEnvironmentModal();
+    hideRequestContextMenu();
+    hideHeaderContextMenu();
+    environmentSwitchTrigger =
+        document.activeElement instanceof HTMLElement ? document.activeElement : openEnvironmentSwitchBtn;
+    environmentSwitchOverlay.hidden = false;
+    environmentSwitchOverlay.setAttribute("aria-hidden", "false");
+    openEnvironmentSwitchBtn.setAttribute("aria-expanded", "true");
+    window.requestAnimationFrame(() => {
+        environmentSwitchSelect.focus();
+    });
+}
+function hideEnvironmentSwitchModal(restoreFocus = false) {
+    environmentSwitchOverlay.hidden = true;
+    environmentSwitchOverlay.setAttribute("aria-hidden", "true");
+    openEnvironmentSwitchBtn.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+        (environmentSwitchTrigger ?? openEnvironmentSwitchBtn).focus();
+    }
+    environmentSwitchTrigger = null;
+}
 function showEnvironmentModal() {
+    hideEnvironmentSwitchModal();
     hideHelperModal();
     hidePluginModal();
     hideImportModal();
@@ -2293,6 +2355,7 @@ function hideEnvironmentModal(restoreFocus = false) {
     environmentModalTrigger = null;
 }
 function showImportModal() {
+    hideEnvironmentSwitchModal();
     hideHelperModal();
     hidePluginModal();
     hideEnvironmentModal();
@@ -2319,6 +2382,7 @@ function hideImportModal(restoreFocus = false) {
     importModalTrigger = null;
 }
 function showPluginModal() {
+    hideEnvironmentSwitchModal();
     hideHelperModal();
     hideEnvironmentModal();
     hideImportModal();
@@ -2783,6 +2847,7 @@ function setLoading(isLoading) {
     sendBtn.disabled = isLoading;
     openImportModalBtn.disabled = isLoading;
     openEnvironmentModalBtn.disabled = isLoading;
+    openEnvironmentSwitchBtn.disabled = isLoading;
     importCurlBtn.disabled = isLoading;
     importPluginBtn.disabled = isLoading;
     pluginImportInput.disabled = isLoading;
@@ -2913,6 +2978,7 @@ function getCurrentRequestDraft() {
     };
 }
 function showCurlExport(command) {
+    hideEnvironmentSwitchModal();
     hideHelperModal();
     hidePluginModal();
     hideEnvironmentModal();
