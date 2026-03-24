@@ -1081,7 +1081,9 @@ function patchActiveEnvironment(patch: Partial<EnvironmentEntry>): void {
     }
     return next;
   });
-  renderEnvironmentControls();
+  if (typeof patch.name === "string" || typeof patch.id === "string") {
+    renderEnvironmentControls();
+  }
   persistState();
   scheduleCollectionStateSave();
 }
@@ -1113,7 +1115,6 @@ function renameActiveEnvironment(): void {
   }
 
   patchActiveEnvironment({ name });
-  renderEnvironmentControls();
 }
 
 function deleteActiveEnvironment(): void {

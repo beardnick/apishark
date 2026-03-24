@@ -791,7 +791,9 @@ function patchActiveEnvironment(patch) {
         }
         return next;
     });
-    renderEnvironmentControls();
+    if (typeof patch.name === "string" || typeof patch.id === "string") {
+        renderEnvironmentControls();
+    }
     persistState();
     scheduleCollectionStateSave();
 }
@@ -818,7 +820,6 @@ function renameActiveEnvironment() {
         return;
     }
     patchActiveEnvironment({ name });
-    renderEnvironmentControls();
 }
 function deleteActiveEnvironment() {
     const activeEnvironment = getActiveEnvironment();
