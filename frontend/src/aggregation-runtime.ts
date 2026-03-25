@@ -5,6 +5,7 @@ import {
   type AggregateTextFragmentKind,
   type AggregateFragment,
 } from "./aggregate-fragments.js";
+import type { RequestBodyField, RequestBodyMode } from "./request-resolution.js";
 
 export const AGGREGATION_PLUGIN_NONE = "none";
 export const AGGREGATION_PLUGIN_OPENAI = "openai";
@@ -59,6 +60,28 @@ export interface AggregationPlugin {
   finalize?(): AggregationPluginUpdate | void;
 }
 
+export type PreRequestPluginContext = {
+  request: {
+    method: string;
+    url: string;
+    headers: Array<{ key: string; value: string }>;
+    bodyMode: RequestBodyMode;
+    body: string;
+    bodyFields: RequestBodyField[];
+  };
+  environment: Readonly<Record<string, string>>;
+  dynamicEnvironment: Readonly<Record<string, string>>;
+  setDynamicEnvironment(name: string, value: string | number | boolean): void;
+  removeDynamicEnvironment(name: string): void;
+  crypto: Crypto;
+  TextEncoder: typeof TextEncoder;
+  TextDecoder: typeof TextDecoder;
+};
+
+export interface PreRequestPlugin {
+  run(context: PreRequestPluginContext): void | Promise<void>;
+}
+
 export type AggregationPluginDefinition = {
   id: string;
   label: string;
@@ -84,6 +107,8 @@ export type ImportedAggregationPluginManifest = {
   imported_at: string;
   format: ImportedAggregationPluginFormat;
   source?: string;
+  supports_pre_request?: boolean;
+  supports_post_response?: boolean;
 };
 
 export type ImportedAggregationPluginPayload = {
@@ -93,13 +118,16 @@ export type ImportedAggregationPluginPayload = {
   description: string;
   source: string;
   format: ImportedAggregationPluginFormat;
+  supports_pre_request: boolean;
+  supports_post_response: boolean;
 };
 
 type ValidatedPluginModule = {
   id?: string;
   label?: string;
   description?: string;
-  create: () => AggregationPlugin;
+  createAggregationPlugin?: () => AggregationPlugin;
+  createPreRequestPlugin?: () => PreRequestPlugin;
 };
 
 const builtInAggregationPlugins = new Map<string, AggregationPluginDefinition>([
@@ -123,9 +151,40 @@ const builtInAggregationPlugins = new Map<string, AggregationPluginDefinition>([
   ],
 ]);
 
+type PreRequestPluginDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  create(): PreRequestPlugin;
+};
+
+const builtInPreRequestPlugins = new Map<string, PreRequestPluginDefinition>([
+  [
+    AGGREGATION_PLUGIN_NONE,
+    {
+      id: AGGREGATION_PLUGIN_NONE,
+      label: "None",
+      description: "Do not run a pre-request plugin.",
+      create: () => ({
+        run() {
+          return;
+        },
+      }),
+    },
+  ],
+]);
+
 const importedPluginManifests = new Map<string, ImportedAggregationPluginManifest>();
-const importedPluginDefinitions = new Map<string, AggregationPluginDefinition>();
-const importedPluginLoads = new Map<string, Promise<AggregationPluginDefinition>>();
+type ImportedPluginDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  createAggregationPlugin?: () => AggregationPlugin;
+  createPreRequestPlugin?: () => PreRequestPlugin;
+};
+
+const importedPluginDefinitions = new Map<string, ImportedPluginDefinition>();
+const importedPluginLoads = new Map<string, Promise<ImportedPluginDefinition>>();
 
 export function listAggregationPlugins(): readonly AggregationPluginDescriptor[] {
   const descriptors: AggregationPluginDescriptor[] = [];
@@ -144,6 +203,41 @@ export function listAggregationPlugins(): readonly AggregationPluginDescriptor[]
     left.label.localeCompare(right.label),
   );
   for (const manifest of imported) {
+    if (!manifestSupportsPostResponse(manifest)) {
+      continue;
+    }
+    descriptors.push({
+      id: manifest.id,
+      label: manifest.label,
+      description: manifest.description,
+      builtin: false,
+      loaded: importedPluginDefinitions.has(manifest.id),
+    });
+  }
+
+  return descriptors;
+}
+
+export function listPreRequestPlugins(): readonly AggregationPluginDescriptor[] {
+  const descriptors: AggregationPluginDescriptor[] = [];
+
+  for (const definition of builtInPreRequestPlugins.values()) {
+    descriptors.push({
+      id: definition.id,
+      label: definition.label,
+      description: definition.description,
+      builtin: true,
+      loaded: true,
+    });
+  }
+
+  const imported = [...importedPluginManifests.values()].sort((left, right) =>
+    left.label.localeCompare(right.label),
+  );
+  for (const manifest of imported) {
+    if (!manifestSupportsPreRequest(manifest)) {
+      continue;
+    }
     descriptors.push({
       id: manifest.id,
       label: manifest.label,
@@ -175,6 +269,8 @@ export function setImportedAggregationPluginManifests(
       description: manifest.description.trim(),
       module_url: manifest.module_url?.trim() || undefined,
       source: manifest.source?.trim() || undefined,
+      supports_pre_request: manifestSupportsPreRequest(manifest),
+      supports_post_response: manifestSupportsPostResponse(manifest),
     });
   }
 }
@@ -186,6 +282,10 @@ export async function ensureAggregationPluginLoaded(pluginId: string | null | un
   }
 
   if (importedPluginDefinitions.has(resolved)) {
+    const definition = importedPluginDefinitions.get(resolved);
+    if (!definition?.createAggregationPlugin) {
+      throw new Error(`Imported plugin "${definition?.label ?? resolved}" does not export a post-response plugin.`);
+    }
     return;
   }
 
@@ -196,7 +296,10 @@ export async function ensureAggregationPluginLoaded(pluginId: string | null | un
 
   const existing = importedPluginLoads.get(resolved);
   if (existing) {
-    await existing;
+    const definition = await existing;
+    if (!definition.createAggregationPlugin) {
+      throw new Error(`Imported plugin "${manifest.label}" does not export a post-response plugin.`);
+    }
     return;
   }
 
@@ -205,6 +308,51 @@ export async function ensureAggregationPluginLoaded(pluginId: string | null | un
 
   try {
     const definition = await loadPromise;
+    if (!definition.createAggregationPlugin) {
+      throw new Error(`Imported plugin "${manifest.label}" does not export a post-response plugin.`);
+    }
+    importedPluginDefinitions.set(resolved, definition);
+  } finally {
+    importedPluginLoads.delete(resolved);
+  }
+}
+
+export async function ensurePreRequestPluginLoaded(pluginId: string | null | undefined): Promise<void> {
+  const resolved = resolvePreRequestPluginId(pluginId);
+  if (resolved === AGGREGATION_PLUGIN_NONE || builtInPreRequestPlugins.has(resolved)) {
+    return;
+  }
+
+  if (importedPluginDefinitions.has(resolved)) {
+    const definition = importedPluginDefinitions.get(resolved);
+    if (!definition?.createPreRequestPlugin) {
+      throw new Error(`Imported plugin "${definition?.label ?? resolved}" does not export a pre-request plugin.`);
+    }
+    return;
+  }
+
+  const manifest = importedPluginManifests.get(resolved);
+  if (!manifest) {
+    return;
+  }
+
+  const existing = importedPluginLoads.get(resolved);
+  if (existing) {
+    const definition = await existing;
+    if (!definition.createPreRequestPlugin) {
+      throw new Error(`Imported plugin "${manifest.label}" does not export a pre-request plugin.`);
+    }
+    return;
+  }
+
+  const loadPromise = loadImportedAggregationPlugin(manifest);
+  importedPluginLoads.set(resolved, loadPromise);
+
+  try {
+    const definition = await loadPromise;
+    if (!definition.createPreRequestPlugin) {
+      throw new Error(`Imported plugin "${manifest.label}" does not export a pre-request plugin.`);
+    }
     importedPluginDefinitions.set(resolved, definition);
   } finally {
     importedPluginLoads.delete(resolved);
@@ -224,7 +372,12 @@ export function aggregationPluginLabel(pluginId: string | null | undefined): str
 
 export function hasAggregationPlugin(pluginId: string | null | undefined): boolean {
   const resolved = resolveAggregationPluginId(pluginId);
-  return builtInAggregationPlugins.has(resolved) || importedPluginManifests.has(resolved);
+  return builtInAggregationPlugins.has(resolved) || manifestSupportsPostResponse(importedPluginManifests.get(resolved));
+}
+
+export function hasPreRequestPlugin(pluginId: string | null | undefined): boolean {
+  const resolved = resolvePreRequestPluginId(pluginId);
+  return builtInPreRequestPlugins.has(resolved) || manifestSupportsPreRequest(importedPluginManifests.get(resolved));
 }
 
 export function resolveAggregationPluginId(
@@ -242,6 +395,17 @@ export function resolveAggregationPluginId(
     return normalized;
   }
   return legacyOpenAIEnabled ? AGGREGATION_PLUGIN_OPENAI : AGGREGATION_PLUGIN_NONE;
+}
+
+export function resolvePreRequestPluginId(pluginId: string | null | undefined): string {
+  const normalized = pluginId?.trim().toLowerCase() ?? "";
+  if (normalized === AGGREGATION_PLUGIN_NONE) {
+    return AGGREGATION_PLUGIN_NONE;
+  }
+  if (CUSTOM_PLUGIN_ID_PATTERN.test(normalized)) {
+    return normalized;
+  }
+  return AGGREGATION_PLUGIN_NONE;
 }
 
 export async function parseImportedAggregationPluginFile(
@@ -446,7 +610,7 @@ async function parseJSONPluginDefinition(
     throw new Error("Plugin JSON must include a non-empty source field containing ESM code.");
   }
 
-  await validateAggregationPluginSource(moduleSource, {
+  const validated = await validateAggregationPluginSource(moduleSource, {
     id,
     label,
     description,
@@ -459,6 +623,8 @@ async function parseJSONPluginDefinition(
     description,
     source: moduleSource,
     format: "json",
+    supports_pre_request: Boolean(validated.createPreRequestPlugin),
+    supports_post_response: Boolean(validated.createAggregationPlugin),
   };
 }
 
@@ -466,8 +632,8 @@ async function parseJavaScriptPluginDefinition(
   fileName: string,
   source: string,
 ): Promise<ImportedAggregationPluginPayload> {
-  const module = await validateAggregationPluginSource(source);
-  const id = normalizeImportedAggregationPluginId(module.id);
+  const validated = await validateAggregationPluginSource(source);
+  const id = normalizeImportedAggregationPluginId(validated.id);
   if (!id) {
     throw new Error("Plugin JS must export a lowercase id like \"vendor.profile\".");
   }
@@ -475,7 +641,7 @@ async function parseJavaScriptPluginDefinition(
     throw new Error(`Plugin id "${id}" is reserved by a built-in profile.`);
   }
 
-  const label = module.label?.trim() ?? "";
+  const label = validated.label?.trim() ?? "";
   if (!label) {
     throw new Error("Plugin JS must export a non-empty label.");
   }
@@ -484,9 +650,11 @@ async function parseJavaScriptPluginDefinition(
     file_name: fileName,
     id,
     label,
-    description: module.description?.trim() ?? "",
+    description: validated.description?.trim() ?? "",
     source,
     format: "js",
+    supports_pre_request: Boolean(validated.createPreRequestPlugin),
+    supports_post_response: Boolean(validated.createAggregationPlugin),
   };
 }
 
@@ -504,8 +672,14 @@ async function validateAggregationPluginSource(
   }
 
   const validated = validateAggregationPluginModuleExports(loadedModule);
-  const plugin = validated.create();
-  validateAggregationPluginInstance(plugin);
+  if (validated.createAggregationPlugin) {
+    const plugin = validated.createAggregationPlugin();
+    validateAggregationPluginInstance(plugin);
+  }
+  if (validated.createPreRequestPlugin) {
+    const plugin = validated.createPreRequestPlugin();
+    validatePreRequestPluginInstance(plugin);
+  }
 
   if (metadata) {
     if (validated.id && normalizeImportedAggregationPluginId(validated.id) !== metadata.id) {
@@ -525,7 +699,7 @@ async function validateAggregationPluginSource(
 
 async function loadImportedAggregationPlugin(
   manifest: ImportedAggregationPluginManifest,
-): Promise<AggregationPluginDefinition> {
+): Promise<ImportedPluginDefinition> {
   const moduleURL = manifest.module_url?.trim() || (manifest.source ? toJavaScriptDataURL(manifest.source) : "");
   if (!moduleURL) {
     throw new Error(`Failed to load aggregation plugin "${manifest.label}": missing module source.`);
@@ -545,7 +719,8 @@ async function loadImportedAggregationPlugin(
     id: manifest.id,
     label: manifest.label,
     description: manifest.description,
-    create: validated.create,
+    createAggregationPlugin: validated.createAggregationPlugin,
+    createPreRequestPlugin: validated.createPreRequestPlugin,
   };
 }
 
@@ -556,9 +731,14 @@ function validateAggregationPluginModuleExports(moduleValue: unknown): Validated
   }
 
   const preferredRoot = pickPluginExportRoot(moduleRecord);
-  const create = functionValue(preferredRoot.create) ?? functionValue(moduleRecord.create);
-  if (!create) {
-    throw new Error("Plugin module must export a create() factory.");
+  const createAggregationPlugin =
+    typedFunctionValue<() => AggregationPlugin>(preferredRoot.create) ??
+    typedFunctionValue<() => AggregationPlugin>(moduleRecord.create);
+  const createPreRequestPlugin =
+    typedFunctionValue<() => PreRequestPlugin>(preferredRoot.createPreRequestPlugin) ??
+    typedFunctionValue<() => PreRequestPlugin>(moduleRecord.createPreRequestPlugin);
+  if (!createAggregationPlugin && !createPreRequestPlugin) {
+    throw new Error("Plugin module must export create() and/or createPreRequestPlugin().");
   }
 
   return {
@@ -566,7 +746,8 @@ function validateAggregationPluginModuleExports(moduleValue: unknown): Validated
     label: stringValue(preferredRoot.label) ?? stringValue(moduleRecord.label) ?? undefined,
     description:
       stringValue(preferredRoot.description) ?? stringValue(moduleRecord.description) ?? undefined,
-    create,
+    createAggregationPlugin: createAggregationPlugin ?? undefined,
+    createPreRequestPlugin: createPreRequestPlugin ?? undefined,
   };
 }
 
@@ -585,16 +766,55 @@ function validateAggregationPluginInstance(pluginValue: unknown): void {
   }
 }
 
+function validatePreRequestPluginInstance(pluginValue: unknown): void {
+  const plugin = asRecord(pluginValue);
+  if (!plugin) {
+    throw new Error("Pre-request plugin createPreRequestPlugin() must return an object.");
+  }
+
+  if (typeof plugin.run !== "function") {
+    throw new Error('Pre-request plugin must expose a run(context) function.');
+  }
+}
+
 function pickPluginExportRoot(moduleRecord: Record<string, unknown>): Record<string, unknown> {
   const defaultExport = asRecord(moduleRecord.default);
-  if (defaultExport && ("create" in defaultExport || "id" in defaultExport || "label" in defaultExport)) {
+  if (
+    defaultExport &&
+    ("create" in defaultExport ||
+      "createPreRequestPlugin" in defaultExport ||
+      "id" in defaultExport ||
+      "label" in defaultExport)
+  ) {
     return defaultExport;
   }
   return moduleRecord;
 }
 
 function definitionForPlugin(pluginId: string): AggregationPluginDefinition | undefined {
-  return builtInAggregationPlugins.get(pluginId) ?? importedPluginDefinitions.get(pluginId);
+  const imported = importedPluginDefinitions.get(pluginId);
+  if (imported?.createAggregationPlugin) {
+    return {
+      id: imported.id,
+      label: imported.label,
+      description: imported.description,
+      create: imported.createAggregationPlugin,
+    };
+  }
+  return builtInAggregationPlugins.get(pluginId);
+}
+
+function definitionForPreRequestPlugin(pluginId: string): PreRequestPluginDefinition | undefined {
+  const imported = importedPluginDefinitions.get(pluginId);
+  if (imported?.createPreRequestPlugin) {
+    return {
+      id: imported.id,
+      label: imported.label,
+      description: imported.description,
+      create: imported.createPreRequestPlugin,
+    };
+  }
+  return builtInPreRequestPlugins.get(pluginId);
 }
 
 function normalizeImportedAggregationPluginId(pluginId: string | null | undefined): string | null {
@@ -612,6 +832,49 @@ function toJavaScriptDataURL(source: string): string {
     binary += String.fromCharCode(value);
   }
   return `data:text/javascript;base64,${btoa(binary)}`;
+}
+
+function manifestSupportsPreRequest(
+  manifest: ImportedAggregationPluginManifest | undefined,
+): boolean {
+  return manifest?.supports_pre_request === true;
+}
+
+function manifestSupportsPostResponse(
+  manifest: ImportedAggregationPluginManifest | undefined,
+): boolean {
+  if (!manifest) {
+    return false;
+  }
+  if (manifest.supports_post_response === true) {
+    return true;
+  }
+  if (manifest.supports_post_response === false) {
+    return false;
+  }
+  return manifest.supports_pre_request !== true;
+}
+
+export async function executePreRequestPlugin(
+  pluginId: string | null | undefined,
+  context: PreRequestPluginContext,
+): Promise<void> {
+  const resolved = resolvePreRequestPluginId(pluginId);
+  if (resolved === AGGREGATION_PLUGIN_NONE) {
+    return;
+  }
+
+  if (!hasPreRequestPlugin(resolved)) {
+    throw new Error(`Pre-request plugin "${resolved}" is not available.`);
+  }
+
+  await ensurePreRequestPluginLoaded(resolved);
+  const definition = definitionForPreRequestPlugin(resolved);
+  if (!definition) {
+    throw new Error(`Pre-request plugin "${resolved}" is not available.`);
+  }
+
+  await definition.create().run(context);
 }
 
 function mergeRuntimeResults(
@@ -989,8 +1252,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function functionValue(value: unknown): (() => AggregationPlugin) | null {
-  return typeof value === "function" ? (value as () => AggregationPlugin) : null;
+function typedFunctionValue<T extends (...args: never[]) => unknown>(value: unknown): T | null {
+  return typeof value === "function" ? (value as T) : null;
 }
 
 function stringValue(value: unknown): string | null {

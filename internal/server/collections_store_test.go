@@ -54,6 +54,8 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 				ImportedAt:  "2026-03-11T11:59:00Z",
 				Format:      "js",
 				Source:      "export function create() { return {}; }",
+				SupportsPreRequest: false,
+				SupportsPostResponse: true,
 			},
 		},
 		Environments: []EnvironmentEntry{
@@ -73,7 +75,9 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 					Method:                         "post",
 					URL:                            "https://example.com/v1/responses",
 					Headers:                        []SavedHeader{{Key: "Content-Type", Value: "application/json", Enabled: true}},
+					BodyMode:                       "form_urlencoded",
 					Body:                           "{\"input\":\"hello\"}",
+					BodyFields:                     []SavedBodyField{{Key: "token", Value: "{{TOKEN}}", Enabled: true}},
 					AggregationPlugin:              "openai",
 					UseCollectionAggregationPlugin: false,
 					AggregateOpenAISSE:             true,
@@ -98,7 +102,10 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 							{Key: "Content-Type", Value: "application/json", Enabled: true},
 							{Key: "Authorization", Value: "Bearer {{TOKEN}}", Enabled: false},
 						},
+						BodyMode:           "multipart",
 						Body:               "{\"stream\":true}",
+						BodyFields:         []SavedBodyField{{Key: "scope", Value: "images", Enabled: true}},
+						PreRequestPlugin:   "vendor.signer",
 						AggregationPlugin:  "openai",
 						AggregateOpenAISSE: true,
 						UpdatedAt:          "2026-03-11T12:00:00Z",
@@ -126,6 +133,9 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 	if saved.Plugins[0].Source != "export function create() { return {}; }" {
 		t.Fatalf("Save() plugin source = %q, want plugin source", saved.Plugins[0].Source)
+	}
+	if !saved.Plugins[0].SupportsPostResponse {
+		t.Fatal("Save() plugin should preserve post-response capability")
 	}
 	if len(saved.RequestDrafts) != 1 {
 		t.Fatalf("Save() request drafts = %d, want 1", len(saved.RequestDrafts))
@@ -163,8 +173,17 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	if request.AggregationPlugin != "" {
 		t.Fatalf("reloaded aggregation plugin = %q, want empty override", request.AggregationPlugin)
 	}
+	if request.PreRequestPlugin != "vendor.signer" {
+		t.Fatalf("reloaded pre-request plugin = %q, want %q", request.PreRequestPlugin, "vendor.signer")
+	}
 	if request.Headers[1].Enabled {
 		t.Fatal("disabled header was not preserved")
+	}
+	if request.BodyMode != "multipart" {
+		t.Fatalf("reloaded body mode = %q, want multipart", request.BodyMode)
+	}
+	if len(request.BodyFields) != 1 || request.BodyFields[0].Key != "scope" {
+		t.Fatalf("reloaded body fields = %#v, want multipart field", request.BodyFields)
 	}
 	if reloaded.ActiveEnvironmentID != "env_default" {
 		t.Fatalf("reloaded active environment = %q, want %q", reloaded.ActiveEnvironmentID, "env_default")
@@ -183,6 +202,9 @@ func TestCollectionFileStoreSaveAndReload(t *testing.T) {
 	}
 	if reloaded.RequestDrafts[0].Draft.Name != "Unsaved draft" {
 		t.Fatalf("reloaded request draft name = %q, want %q", reloaded.RequestDrafts[0].Draft.Name, "Unsaved draft")
+	}
+	if reloaded.RequestDrafts[0].Draft.BodyMode != "form_urlencoded" {
+		t.Fatalf("reloaded request draft body mode = %q, want form_urlencoded", reloaded.RequestDrafts[0].Draft.BodyMode)
 	}
 }
 

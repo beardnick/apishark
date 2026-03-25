@@ -21,13 +21,22 @@ type SavedHeader struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type SavedBodyField struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+}
+
 type SavedRequest struct {
 	ID                             string        `json:"id"`
 	Name                           string        `json:"name"`
 	Method                         string        `json:"method"`
 	URL                            string        `json:"url"`
 	Headers                        []SavedHeader `json:"headers"`
+	BodyMode                       string        `json:"body_mode,omitempty"`
 	Body                           string        `json:"body"`
+	BodyFields                     []SavedBodyField `json:"body_fields,omitempty"`
+	PreRequestPlugin               string        `json:"pre_request_plugin,omitempty"`
 	AggregationPlugin              string        `json:"aggregation_plugin,omitempty"`
 	UseCollectionAggregationPlugin bool          `json:"use_collection_aggregation_plugin,omitempty"`
 	AggregateOpenAISSE             bool          `json:"aggregate_openai_sse"`
@@ -53,7 +62,10 @@ type RequestDraft struct {
 	Method                         string        `json:"method"`
 	URL                            string        `json:"url"`
 	Headers                        []SavedHeader `json:"headers"`
+	BodyMode                       string        `json:"body_mode,omitempty"`
 	Body                           string        `json:"body"`
+	BodyFields                     []SavedBodyField `json:"body_fields,omitempty"`
+	PreRequestPlugin               string        `json:"pre_request_plugin,omitempty"`
 	AggregationPlugin              string        `json:"aggregation_plugin,omitempty"`
 	UseCollectionAggregationPlugin bool          `json:"use_collection_aggregation_plugin"`
 	AggregateOpenAISSE             bool          `json:"aggregate_openai_sse"`
@@ -75,6 +87,8 @@ type EmbeddedAggregationPlugin struct {
 	ImportedAt  string `json:"imported_at,omitempty"`
 	Format      string `json:"format"`
 	Source      string `json:"source"`
+	SupportsPreRequest  bool `json:"supports_pre_request,omitempty"`
+	SupportsPostResponse bool `json:"supports_post_response,omitempty"`
 }
 
 type CollectionStore struct {
@@ -196,7 +210,10 @@ func normalizeCollectionStore(store CollectionStore) CollectionStore {
 				Method:                         strings.ToUpper(strings.TrimSpace(request.Method)),
 				URL:                            request.URL,
 				Headers:                        normalizeSavedHeaders(request.Headers),
+				BodyMode:                       normalizeRequestBodyMode(request.BodyMode),
 				Body:                           request.Body,
+				BodyFields:                     normalizeSavedBodyFields(request.BodyFields),
+				PreRequestPlugin:               normalizePreRequestPluginID(request.PreRequestPlugin),
 				AggregationPlugin:              aggregationPlugin,
 				UseCollectionAggregationPlugin: useCollectionAggregationPlugin,
 				AggregateOpenAISSE:             aggregationPlugin == "openai",
@@ -268,6 +285,8 @@ func normalizeEmbeddedAggregationPlugins(entries []EmbeddedAggregationPlugin) []
 			ImportedAt:  strings.TrimSpace(entry.ImportedAt),
 			Format:      format,
 			Source:      source,
+			SupportsPreRequest: entry.SupportsPreRequest,
+			SupportsPostResponse: entry.SupportsPostResponse || !entry.SupportsPreRequest,
 		})
 		seen[id] = struct{}{}
 	}
@@ -353,7 +372,10 @@ func normalizeRequestDraft(draft RequestDraft) RequestDraft {
 		Method:                         strings.ToUpper(strings.TrimSpace(draft.Method)),
 		URL:                            draft.URL,
 		Headers:                        normalizeSavedHeaders(draft.Headers),
+		BodyMode:                       normalizeRequestBodyMode(draft.BodyMode),
 		Body:                           draft.Body,
+		BodyFields:                     normalizeSavedBodyFields(draft.BodyFields),
+		PreRequestPlugin:               normalizePreRequestPluginID(draft.PreRequestPlugin),
 		AggregationPlugin:              aggregationPlugin,
 		UseCollectionAggregationPlugin: useCollectionAggregationPlugin,
 		AggregateOpenAISSE:             aggregationPlugin == "openai",
@@ -385,6 +407,17 @@ func requestDraftKey(collectionID string, requestID string) string {
 	return "workspace:unsaved"
 }
 
+func normalizePreRequestPluginID(pluginID string) string {
+	normalized := strings.ToLower(strings.TrimSpace(pluginID))
+	if normalized == "" || normalized == "none" {
+		return "none"
+	}
+	if normalizeImportedAggregationPluginID(normalized) != "" {
+		return normalized
+	}
+	return "none"
+}
+
 func normalizeSavedHeaders(headers []SavedHeader) []SavedHeader {
 	if len(headers) == 0 {
 		return []SavedHeader{}
@@ -399,6 +432,31 @@ func normalizeSavedHeaders(headers []SavedHeader) []SavedHeader {
 		})
 	}
 	return normalized
+}
+
+func normalizeSavedBodyFields(fields []SavedBodyField) []SavedBodyField {
+	if len(fields) == 0 {
+		return []SavedBodyField{}
+	}
+
+	normalized := make([]SavedBodyField, 0, len(fields))
+	for _, field := range fields {
+		normalized = append(normalized, SavedBodyField{
+			Key:     field.Key,
+			Value:   field.Value,
+			Enabled: field.Enabled,
+		})
+	}
+	return normalized
+}
+
+func normalizeRequestBodyMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "form_urlencoded", "multipart":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "raw"
+	}
 }
 
 func emptyCollectionStore() CollectionStore {

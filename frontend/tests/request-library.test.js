@@ -44,7 +44,9 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
     method: "POST",
     url: "https://api.example.test/v1/chat/completions",
     headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
+    body_mode: "multipart",
     body: "{\"stream\":true}",
+    body_fields: [{ key: "scope", value: "images", enabled: true }],
     aggregation_plugin: "openai",
     use_collection_aggregation_plugin: false,
     aggregate_openai_sse: true,
@@ -53,10 +55,12 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
 
   const duplicate = createDuplicateRequestDraft(source, ["Streaming chat"]);
   duplicate.headers[0].key = "X-Test";
+  duplicate.body_fields[0].key = "X-Scope";
 
   assert.equal(duplicate.name, "Streaming chat copy");
   assert.equal(duplicate.method, source.method);
   assert.equal(duplicate.url, source.url);
+  assert.equal(duplicate.body_mode, source.body_mode);
   assert.equal(duplicate.body, source.body);
   assert.equal(duplicate.aggregation_plugin, source.aggregation_plugin);
   assert.equal(
@@ -66,6 +70,7 @@ test("createDuplicateRequestDraft clones request fields without reusing header r
   assert.equal(duplicate.aggregate_openai_sse, source.aggregate_openai_sse);
   assert.equal(duplicate.timeout_seconds, source.timeout_seconds);
   assert.equal(source.headers[0].key, "Authorization");
+  assert.equal(source.body_fields[0].key, "scope");
 });
 
 test("request draft keys include the collection when a saved request is selected", () => {
@@ -192,7 +197,9 @@ test("requestLibraryDraftsEqual compares draft payloads deeply", () => {
     method: "POST",
     url: "https://api.example.test/v1/chat/completions",
     headers: [{ key: "Authorization", value: "Bearer {{TOKEN}}", enabled: true }],
+    body_mode: "form_urlencoded",
     body: "{\"stream\":true}",
+    body_fields: [{ key: "token", value: "{{TOKEN}}", enabled: true }],
     aggregation_plugin: "openai",
     aggregate_openai_sse: true,
     timeout_seconds: 45,
@@ -208,6 +215,13 @@ test("requestLibraryDraftsEqual compares draft payloads deeply", () => {
     requestLibraryDraftsEqual(left, {
       ...right,
       headers: [{ key: "Authorization", value: "Bearer changed", enabled: true }],
+    }),
+    false,
+  );
+  assert.equal(
+    requestLibraryDraftsEqual(left, {
+      ...right,
+      body_fields: [{ key: "token", value: "changed", enabled: true }],
     }),
     false,
   );

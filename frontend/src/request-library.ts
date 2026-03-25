@@ -3,6 +3,12 @@ import {
   aggregationPluginLabel,
   resolveAggregationPluginId,
 } from "./aggregation-runtime.js";
+import {
+  normalizeRequestBodyFields,
+  normalizeRequestBodyMode,
+  type RequestBodyField,
+  type RequestBodyMode,
+} from "./request-resolution.js";
 
 export type RequestLibraryHeader = {
   key: string;
@@ -15,7 +21,10 @@ export type RequestLibraryDraft = {
   method: string;
   url: string;
   headers: RequestLibraryHeader[];
+  body_mode?: RequestBodyMode;
   body: string;
+  body_fields?: RequestBodyField[];
+  pre_request_plugin?: string;
   aggregation_plugin: string;
   use_collection_aggregation_plugin: boolean;
   aggregate_openai_sse: boolean;
@@ -88,6 +97,7 @@ export function createDuplicateRequestDraft(
     ...draft,
     name: nextDuplicateRequestName(draft.name, existingNames),
     headers: draft.headers.map((header) => ({ ...header })),
+    body_fields: normalizeRequestBodyFields(draft.body_fields).map((field) => ({ ...field })),
   };
 }
 
@@ -203,12 +213,21 @@ export function requestLibraryDraftsEqual(
     left.name !== right.name ||
     left.method !== right.method ||
     left.url !== right.url ||
+    normalizeRequestBodyMode(left.body_mode) !== normalizeRequestBodyMode(right.body_mode) ||
     left.body !== right.body ||
+    (left.pre_request_plugin ?? AGGREGATION_PLUGIN_NONE) !==
+      (right.pre_request_plugin ?? AGGREGATION_PLUGIN_NONE) ||
     left.aggregation_plugin !== right.aggregation_plugin ||
     left.aggregate_openai_sse !== right.aggregate_openai_sse ||
     left.timeout_seconds !== right.timeout_seconds ||
     left.headers.length !== right.headers.length
   ) {
+    return false;
+  }
+
+  const leftBodyFields = normalizeRequestBodyFields(left.body_fields);
+  const rightBodyFields = normalizeRequestBodyFields(right.body_fields);
+  if (leftBodyFields.length !== rightBodyFields.length) {
     return false;
   }
 
@@ -218,6 +237,13 @@ export function requestLibraryDraftsEqual(
       header.key === other.key &&
       header.value === other.value &&
       header.enabled === other.enabled
+    );
+  }) && leftBodyFields.every((field, index) => {
+    const other = rightBodyFields[index];
+    return (
+      field.key === other.key &&
+      field.value === other.value &&
+      field.enabled === other.enabled
     );
   });
 }
@@ -331,7 +357,11 @@ function normalizeRequestLibraryDraft(input: Partial<RequestLibraryDraft> | unde
           enabled: typeof header?.enabled === "boolean" ? header.enabled : true,
         }))
       : [],
+    body_mode: normalizeRequestBodyMode(input.body_mode),
     body: typeof input.body === "string" ? input.body : "",
+    body_fields: normalizeRequestBodyFields(input.body_fields),
+    pre_request_plugin:
+      typeof input.pre_request_plugin === "string" ? input.pre_request_plugin : AGGREGATION_PLUGIN_NONE,
     aggregation_plugin: typeof input.aggregation_plugin === "string" ? input.aggregation_plugin : "none",
     use_collection_aggregation_plugin: input.use_collection_aggregation_plugin !== false,
     aggregate_openai_sse: input.aggregate_openai_sse === true,
@@ -346,5 +376,6 @@ function cloneRequestLibraryDraft(draft: RequestLibraryDraft): RequestLibraryDra
   return {
     ...draft,
     headers: draft.headers.map((header) => ({ ...header })),
+    body_fields: normalizeRequestBodyFields(draft.body_fields).map((field) => ({ ...field })),
   };
 }

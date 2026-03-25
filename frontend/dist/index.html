@@ -133,6 +133,12 @@
             </div>
 
             <div class="workspace-row workspace-row-meta">
+              <label for="preRequestPluginInput" class="timeout-label request-meta-field">
+                <span class="request-meta-label">Pre-request</span>
+                <select id="preRequestPluginInput">
+                  <option value="none">None</option>
+                </select>
+              </label>
               <label for="aggregationPluginInput" class="timeout-label request-meta-field">
                 <span class="request-meta-label">Aggregation</span>
                 <select id="aggregationPluginInput">
@@ -199,6 +205,25 @@
               <div class="panel-head">
                 <span id="bodyEditorLabel" class="panel-label">Body</span>
                 <div class="inline-actions panel-tools">
+                  <label class="body-mode-select">
+                    <span class="request-meta-label">Type</span>
+                    <select id="bodyModeInput" aria-label="Request body type">
+                      <option value="raw">Raw</option>
+                      <option value="form_urlencoded">Form URL Encoded</option>
+                      <option value="multipart">Multipart</option>
+                    </select>
+                  </label>
+                  <button
+                    id="addBodyFieldBtn"
+                    type="button"
+                    class="ghost body-toolbar-btn"
+                    aria-label="Add body field"
+                    title="Add form field"
+                    hidden
+                  >
+                    <span class="action-symbol" aria-hidden="true">+</span>
+                    <span>Add field</span>
+                  </button>
                   <button
                     id="bodyCollapseBtn"
                     type="button"
@@ -274,6 +299,16 @@
                     tabindex="-1"
                   ></textarea>
                 </div>
+              </div>
+
+              <div id="bodyFieldsPanel" class="body-fields-panel" hidden>
+                <div class="editor-grid-head body-field-grid-head" aria-hidden="true">
+                  <span>Active</span>
+                  <span>Field</span>
+                  <span>Value</span>
+                  <span>Actions</span>
+                </div>
+                <div id="bodyFieldsEditor" class="body-fields-editor"></div>
               </div>
             </section>
           </div>

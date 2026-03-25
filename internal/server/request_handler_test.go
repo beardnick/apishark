@@ -208,6 +208,152 @@ func TestHandleSendRequestStreamsSSERawEventsWithParsedJSON(t *testing.T) {
 	}
 }
 
+func TestHandleSendRequestBuildsFormURLEncodedBodyAndContentType(t *testing.T) {
+	t.Parallel()
+
+	type upstreamRequest struct {
+		body        string
+		contentType string
+	}
+
+	upstreamSeen := make(chan upstreamRequest, 1)
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(r.Body)
+
+			upstreamSeen <- upstreamRequest{
+				body:        string(body),
+				contentType: r.Header.Get("Content-Type"),
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"ok":true}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	payload := SendRequestPayload{
+		Method:   "POST",
+		URL:      "https://upstream.example.test/login",
+		BodyMode: "form_urlencoded",
+		BodyFields: []BodyFieldKV{
+			{Key: "username", Value: "{{USER}}", Enabled: true},
+			{Key: "token", Value: "Bearer {{TOKEN}}", Enabled: true},
+			{Key: "disabled", Value: "skip", Enabled: false},
+		},
+		Env: map[string]string{
+			"USER":  "alice@example.com",
+			"TOKEN": "secret token",
+		},
+	}
+
+	requestBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/request", bytes.NewReader(requestBody))
+	(&server{httpClient: client}).handleSendRequest(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleSendRequest() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	select {
+	case seen := <-upstreamSeen:
+		if seen.body != "username=alice%40example.com&token=Bearer+secret+token" {
+			t.Fatalf("upstream body = %q, want form-urlencoded payload", seen.body)
+		}
+		if seen.contentType != "application/x-www-form-urlencoded" {
+			t.Fatalf("upstream Content-Type = %q, want application/x-www-form-urlencoded", seen.contentType)
+		}
+	default:
+		t.Fatal("upstream request was not observed")
+	}
+}
+
+func TestHandleSendRequestBuildsMultipartBodyAndRespectsExplicitContentType(t *testing.T) {
+	t.Parallel()
+
+	type upstreamRequest struct {
+		body        string
+		contentType string
+	}
+
+	upstreamSeen := make(chan upstreamRequest, 1)
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(r.Body)
+
+			upstreamSeen <- upstreamRequest{
+				body:        string(body),
+				contentType: r.Header.Get("Content-Type"),
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body:    io.NopCloser(strings.NewReader(`{"ok":true}`)),
+				Request: r,
+			}, nil
+		}),
+	}
+
+	payload := SendRequestPayload{
+		Method:   "POST",
+		URL:      "https://upstream.example.test/upload",
+		BodyMode: "multipart",
+		Headers: []HeaderKV{
+			{Key: "Content-Type", Value: "multipart/custom"},
+		},
+		BodyFields: []BodyFieldKV{
+			{Key: "scope", Value: "images", Enabled: true},
+			{Key: "note", Value: "{{NOTE}}", Enabled: true},
+		},
+		Env: map[string]string{
+			"NOTE": "hello world",
+		},
+	}
+
+	requestBody, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/request", bytes.NewReader(requestBody))
+	(&server{httpClient: client}).handleSendRequest(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleSendRequest() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	select {
+	case seen := <-upstreamSeen:
+		if seen.contentType != "multipart/custom" {
+			t.Fatalf("upstream Content-Type = %q, want explicit header", seen.contentType)
+		}
+		if !strings.Contains(seen.body, `name="scope"`) || !strings.Contains(seen.body, "images") {
+			t.Fatalf("upstream multipart body missing scope field: %q", seen.body)
+		}
+		if !strings.Contains(seen.body, `name="note"`) || !strings.Contains(seen.body, "hello world") {
+			t.Fatalf("upstream multipart body missing note field: %q", seen.body)
+		}
+	default:
+		t.Fatal("upstream request was not observed")
+	}
+}
+
 func TestHandleCollectionsAcceptsLargePayload(t *testing.T) {
 	t.Parallel()
 

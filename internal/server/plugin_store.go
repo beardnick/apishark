@@ -31,6 +31,8 @@ type ImportedAggregationPlugin struct {
 	ImportedAt  string `json:"imported_at"`
 	Format      string `json:"format"`
 	SourceFile  string `json:"source_file"`
+	SupportsPreRequest  bool `json:"supports_pre_request,omitempty"`
+	SupportsPostResponse bool `json:"supports_post_response,omitempty"`
 }
 
 type PluginStore struct {
@@ -45,6 +47,8 @@ type ImportedAggregationPluginResponse struct {
 	Format      string `json:"format"`
 	ModuleURL   string `json:"module_url"`
 	Source      string `json:"source,omitempty"`
+	SupportsPreRequest  bool `json:"supports_pre_request,omitempty"`
+	SupportsPostResponse bool `json:"supports_post_response,omitempty"`
 }
 
 type PluginImportPayload struct {
@@ -54,6 +58,8 @@ type PluginImportPayload struct {
 	Description string `json:"description"`
 	Source      string `json:"source"`
 	Format      string `json:"format"`
+	SupportsPreRequest  bool `json:"supports_pre_request,omitempty"`
+	SupportsPostResponse bool `json:"supports_post_response,omitempty"`
 }
 
 type pluginFileStore struct {
@@ -197,6 +203,8 @@ func (s *pluginFileStore) LoadEmbeddedPlugins() ([]EmbeddedAggregationPlugin, er
 			ImportedAt:  plugin.ImportedAt,
 			Format:      plugin.Format,
 			Source:      strings.TrimSpace(string(rawSource)),
+			SupportsPreRequest: plugin.SupportsPreRequest,
+			SupportsPostResponse: plugin.SupportsPostResponse,
 		})
 	}
 
@@ -307,6 +315,11 @@ func normalizeImportedPlugin(payload PluginImportPayload) (ImportedAggregationPl
 	}
 
 	importedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	supportsPreRequest := payload.SupportsPreRequest
+	supportsPostResponse := payload.SupportsPostResponse
+	if !supportsPreRequest && !supportsPostResponse {
+		supportsPostResponse = true
+	}
 	return ImportedAggregationPlugin{
 		ID:          id,
 		Label:       label,
@@ -314,6 +327,8 @@ func normalizeImportedPlugin(payload PluginImportPayload) (ImportedAggregationPl
 		ImportedAt:  importedAt,
 		Format:      format,
 		SourceFile:  id + ".mjs",
+		SupportsPreRequest: supportsPreRequest,
+		SupportsPostResponse: supportsPostResponse,
 	}, moduleSource + "\n", nil
 }
 
@@ -350,6 +365,8 @@ func normalizePluginEntries(entries []ImportedAggregationPlugin) []ImportedAggre
 			ImportedAt:  strings.TrimSpace(entry.ImportedAt),
 			Format:      format,
 			SourceFile:  id + ".mjs",
+			SupportsPreRequest: entry.SupportsPreRequest,
+			SupportsPostResponse: entry.SupportsPostResponse || !entry.SupportsPreRequest,
 		})
 		seen[id] = struct{}{}
 	}

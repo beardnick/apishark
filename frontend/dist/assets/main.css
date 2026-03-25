@@ -528,7 +528,7 @@ body.is-resizing * {
 
 .workspace-row-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 180px;
   gap: 0;
   align-items: stretch;
   border-top: 1px solid var(--grid-line);
@@ -681,6 +681,12 @@ body.is-resizing * {
   font-size: 0.68rem;
   font-weight: 700;
   color: var(--text-muted);
+}
+
+.body-mode-select {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
 }
 
 .request-timeout-field input {
@@ -930,6 +936,41 @@ textarea.has-env-template.has-dynamic-template {
 .body-code-editor .cm-gutterElement {
   padding-top: 0;
   padding-bottom: 0;
+}
+
+.body-fields-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.body-field-grid-head {
+  grid-template-columns: 80px minmax(0, 0.8fr) minmax(0, 1fr) 92px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-bottom-color: var(--grid-line);
+}
+
+.body-fields-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.body-fields-editor .header-row {
+  grid-template-columns: 80px minmax(0, 0.8fr) minmax(0, 1fr) 92px;
+}
+
+.body-field-cell {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+}
+
+.body-field-actions {
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 .body-code-editor .cm-foldGutter,

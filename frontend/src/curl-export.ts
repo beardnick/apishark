@@ -4,11 +4,21 @@ export type CurlExportHeader = {
   enabled?: boolean;
 };
 
+export type CurlExportBodyMode = "raw" | "form_urlencoded" | "multipart";
+
+export type CurlExportBodyField = {
+  key: string;
+  value: string;
+  enabled?: boolean;
+};
+
 export type CurlExportRequest = {
   method: string;
   url: string;
   headers: CurlExportHeader[];
+  body_mode?: CurlExportBodyMode;
   body: string;
+  body_fields?: CurlExportBodyField[];
 };
 
 export function shellEscapeForPOSIX(value: string): string {
@@ -18,13 +28,18 @@ export function shellEscapeForPOSIX(value: string): string {
 export function buildCurlCommand(request: CurlExportRequest): string {
   const method = normalizeMethod(request.method);
   const url = request.url.trim();
+  const bodyMode = normalizeBodyMode(request.body_mode);
+  const bodyFields = normalizeBodyFields(request.body_fields);
 
   if (!url) {
     throw new Error("Request URL is required.");
   }
 
   const args: string[] = [];
-  const hasBody = request.body !== "";
+  const hasBody =
+    bodyMode === "raw"
+      ? request.body !== ""
+      : bodyFields.some((field) => field.enabled !== false && field.key.trim() !== "");
 
   if (method !== "GET" || hasBody) {
     args.push(`-X ${method}`);
@@ -40,7 +55,27 @@ export function buildCurlCommand(request: CurlExportRequest): string {
   }
 
   if (hasBody) {
-    args.push(`--data-raw ${shellEscapeForPOSIX(request.body)}`);
+    switch (bodyMode) {
+      case "form_urlencoded":
+        for (const field of bodyFields) {
+          if (field.enabled === false || !field.key.trim()) {
+            continue;
+          }
+          args.push(`--data-urlencode ${shellEscapeForPOSIX(`${field.key}=${field.value}`)}`);
+        }
+        break;
+      case "multipart":
+        for (const field of bodyFields) {
+          if (field.enabled === false || !field.key.trim()) {
+            continue;
+          }
+          args.push(`-F ${shellEscapeForPOSIX(`${field.key}=${field.value}`)}`);
+        }
+        break;
+      default:
+        args.push(`--data-raw ${shellEscapeForPOSIX(request.body)}`);
+        break;
+    }
   }
 
   if (request.body.includes("\n") || args.length > 2) {
@@ -53,4 +88,26 @@ export function buildCurlCommand(request: CurlExportRequest): string {
 function normalizeMethod(value: string): string {
   const method = value.trim().toUpperCase();
   return method || "GET";
+}
+
+function normalizeBodyMode(value: CurlExportBodyMode | undefined): CurlExportBodyMode {
+  switch (value) {
+    case "form_urlencoded":
+    case "multipart":
+      return value;
+    default:
+      return "raw";
+  }
+}
+
+function normalizeBodyFields(fields: CurlExportBodyField[] | undefined): CurlExportBodyField[] {
+  if (!Array.isArray(fields)) {
+    return [];
+  }
+
+  return fields.map((field) => ({
+    key: typeof field?.key === "string" ? field.key : "",
+    value: typeof field?.value === "string" ? field.value : "",
+    enabled: typeof field?.enabled === "boolean" ? field.enabled : true,
+  }));
 }

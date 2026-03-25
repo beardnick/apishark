@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   AGGREGATION_PLUGIN_OPENAI,
   ResponseAggregationRuntime,
+  executePreRequestPlugin,
   ensureAggregationPluginLoaded,
   listAggregationPlugins,
+  listPreRequestPlugins,
   parseImportedAggregationPluginFile,
   setImportedAggregationPluginManifests,
 } from "../dist/assets/aggregation-runtime.js";
@@ -242,6 +244,36 @@ test("parseImportedAggregationPluginFile accepts JSON-wrapped plugin modules", a
   assert.equal(plugin.id, "vendor.example");
   assert.equal(plugin.label, "Vendor Example");
   assert.equal(plugin.format, "json");
+  assert.equal(plugin.supports_pre_request, false);
+  assert.equal(plugin.supports_post_response, true);
+});
+
+test("parseImportedAggregationPluginFile accepts pre-request plugin modules", async () => {
+  const plugin = await parseImportedAggregationPluginFile(
+    "vendor-pre-plugin.js",
+    `
+      export const id = "vendor.pre";
+      export const label = "Vendor Pre";
+      export function createPreRequestPlugin() {
+        return {
+          async run(context) {
+            const digest = await context.crypto.subtle.digest(
+              "SHA-256",
+              new context.TextEncoder().encode(context.request.body),
+            );
+            const hex = [...new Uint8Array(digest)].slice(0, 4).map((value) =>
+              value.toString(16).padStart(2, "0"),
+            ).join("");
+            context.setDynamicEnvironment("PRE_SIG", hex);
+          },
+        };
+      }
+    `,
+  );
+
+  assert.equal(plugin.id, "vendor.pre");
+  assert.equal(plugin.supports_pre_request, true);
+  assert.equal(plugin.supports_post_response, false);
 });
 
 test("ensureAggregationPluginLoaded registers imported plugin manifests", async () => {
@@ -294,4 +326,59 @@ test("ensureAggregationPluginLoaded accepts embedded plugin source from collecti
 
   const plugin = listAggregationPlugins().find((item) => item.id === "vendor.embedded");
   assert.equal(plugin?.loaded, true);
+});
+
+test("executePreRequestPlugin runs imported pre-request plugins with crypto access", async () => {
+  setImportedAggregationPluginManifests([
+    {
+      id: "vendor.pre",
+      label: "Vendor Pre",
+      description: "Signs requests before send",
+      imported_at: "2026-03-25T00:00:00Z",
+      format: "js",
+      supports_pre_request: true,
+      supports_post_response: false,
+      source: `
+        export function createPreRequestPlugin() {
+          return {
+            async run(context) {
+              const digest = await context.crypto.subtle.digest(
+                "SHA-256",
+                new context.TextEncoder().encode(context.request.body),
+              );
+              const hex = [...new Uint8Array(digest)].slice(0, 4).map((value) =>
+                value.toString(16).padStart(2, "0"),
+              ).join("");
+              context.setDynamicEnvironment("AUTH_HASH", hex);
+            },
+          };
+        }
+      `,
+    },
+  ]);
+
+  const dynamicEnvironment = {};
+  await executePreRequestPlugin("vendor.pre", {
+    request: {
+      method: "POST",
+      url: "https://api.example.test/sign",
+      headers: [],
+      body: "{\"hello\":\"world\"}",
+    },
+    environment: Object.freeze({ API_KEY: "secret" }),
+    dynamicEnvironment,
+    setDynamicEnvironment(name, value) {
+      dynamicEnvironment[name] = value;
+    },
+    removeDynamicEnvironment(name) {
+      delete dynamicEnvironment[name];
+    },
+    crypto: globalThis.crypto,
+    TextEncoder,
+    TextDecoder,
+  });
+
+  const plugin = listPreRequestPlugins().find((item) => item.id === "vendor.pre");
+  assert.equal(plugin?.loaded, true);
+  assert.match(dynamicEnvironment.AUTH_HASH, /^[a-f0-9]{8}$/);
 });

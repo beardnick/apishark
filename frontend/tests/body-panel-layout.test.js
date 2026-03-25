@@ -10,6 +10,10 @@ test("built body panel keeps a single editor shell with visible body editor cont
   const bodyPanel = bodyPanelMatch[0];
 
   assert.match(bodyPanel, /<div id="bodyEditorShell" class="body-editor-shell">/);
+  assert.match(bodyPanel, /id="bodyModeInput"/);
+  assert.match(bodyPanel, /id="addBodyFieldBtn"/);
+  assert.match(bodyPanel, /id="bodyFieldsPanel"/);
+  assert.match(bodyPanel, /id="bodyFieldsEditor"/);
   assert.match(bodyPanel, /id="bodyEditorBanner"/);
   assert.match(bodyPanel, /id="bodyEditorModeBadge"/);
   assert.match(bodyPanel, /id="bodyEditorHint"/);

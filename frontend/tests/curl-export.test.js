@@ -70,6 +70,54 @@ test("buildCurlCommand keeps explicit GET when a body is present", () => {
   );
 });
 
+test("buildCurlCommand renders form-urlencoded fields with data-urlencode", () => {
+  const command = buildCurlCommand({
+    method: "POST",
+    url: "https://api.example.com/login",
+    headers: [{ key: "Accept", value: "application/json" }],
+    body_mode: "form_urlencoded",
+    body: "",
+    body_fields: [
+      { key: "username", value: "alice@example.com" },
+      { key: "token", value: "a b+c" },
+      { key: "ignored", value: "skip", enabled: false },
+    ],
+  });
+
+  assert.equal(
+    command,
+    `curl \\
+  -X POST \\
+  'https://api.example.com/login' \\
+  -H 'Accept: application/json' \\
+  --data-urlencode 'username=alice@example.com' \\
+  --data-urlencode 'token=a b+c'`,
+  );
+});
+
+test("buildCurlCommand renders multipart fields with -F", () => {
+  const command = buildCurlCommand({
+    method: "POST",
+    url: "https://api.example.com/upload",
+    headers: [],
+    body_mode: "multipart",
+    body: "",
+    body_fields: [
+      { key: "scope", value: "images" },
+      { key: "note", value: "hello world" },
+    ],
+  });
+
+  assert.equal(
+    command,
+    `curl \\
+  -X POST \\
+  'https://api.example.com/upload' \\
+  -F 'scope=images' \\
+  -F 'note=hello world'`,
+  );
+});
+
 test("buildCurlCommand rejects an empty URL", () => {
   assert.throws(
     () =>
@@ -107,5 +155,36 @@ test("buildCurlCommand uses resolved dynamic placeholders for export", () => {
   'https://api.example.com/items/123e4567-e89b-42d3-a456-426614174000?q=shark%20teeth' \\
   -H 'X-At: 2026-03-12T01:02:03.456Z' \\
   --data-raw '{"trace":"123e4567-e89b-42d3-a456-426614174000","stamp":"1773277323"}'`,
+  );
+});
+
+test("buildCurlCommand uses resolved placeholders for structured body fields", () => {
+  const resolved = resolveRequestDraft(
+    {
+      method: "POST",
+      url: "https://api.example.com/forms/{{$uuid}}",
+      headers: [],
+      body_mode: "form_urlencoded",
+      body: "",
+      body_fields: [
+        { key: "trace", value: "{{$uuid}}", enabled: true },
+        { key: "token", value: "{{TOKEN}}", enabled: true },
+      ],
+    },
+    { TOKEN: "secret" },
+    {
+      uuid: () => "123e4567-e89b-42d3-a456-426614174000",
+    },
+  );
+
+  const command = buildCurlCommand(resolved);
+
+  assert.equal(
+    command,
+    `curl \\
+  -X POST \\
+  'https://api.example.com/forms/123e4567-e89b-42d3-a456-426614174000' \\
+  --data-urlencode 'trace=123e4567-e89b-42d3-a456-426614174000' \\
+  --data-urlencode 'token=secret'`,
   );
 });

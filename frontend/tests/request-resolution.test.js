@@ -64,6 +64,34 @@ test("resolveRequestDraft resolves dynamic placeholders with shared per-action v
   );
 });
 
+test("resolveRequestDraft resolves structured body fields", () => {
+  const resolved = resolveRequestDraft(
+    {
+      method: "POST",
+      url: "https://api.example.test/forms/{{$uuid}}",
+      headers: [],
+      body_mode: "form_urlencoded",
+      body: "",
+      body_fields: [
+        { key: "token", value: "{{TOKEN}}", enabled: true },
+        { key: "trace", value: "{{$uuid}}", enabled: true },
+        { key: "disabled", value: "{{TOKEN}}", enabled: false },
+      ],
+    },
+    { TOKEN: "secret-token" },
+    {
+      uuid: () => "123e4567-e89b-42d3-a456-426614174000",
+    },
+  );
+
+  assert.equal(resolved.body_mode, "form_urlencoded");
+  assert.deepEqual(resolved.body_fields, [
+    { key: "token", value: "secret-token", enabled: true },
+    { key: "trace", value: "123e4567-e89b-42d3-a456-426614174000", enabled: true },
+    { key: "disabled", value: "secret-token", enabled: false },
+  ]);
+});
+
 test("resolveTemplate supports base64 and urlencode helpers", () => {
   const output = resolveTemplate("{{$base64(shark)}} {{$urlencode(a b+c/?)}}", {});
   assert.equal(output, "c2hhcms= a%20b%2Bc%2F%3F");

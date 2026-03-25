@@ -20,6 +20,12 @@ type HeaderKV struct {
 	Value string `json:"value"`
 }
 
+type BodyFieldKV struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled,omitempty"`
+}
+
 type CurlImportRequest struct {
 	Curl string `json:"curl"`
 }
@@ -35,7 +41,9 @@ type SendRequestPayload struct {
 	Method             string            `json:"method"`
 	URL                string            `json:"url"`
 	Headers            []HeaderKV        `json:"headers"`
+	BodyMode           string            `json:"body_mode,omitempty"`
 	Body               string            `json:"body"`
+	BodyFields         []BodyFieldKV     `json:"body_fields,omitempty"`
 	Env                map[string]string `json:"env"`
 	AggregationPlugin  string            `json:"aggregation_plugin"`
 	AggregateOpenAISSE bool              `json:"aggregate_openai_sse"`
@@ -131,9 +139,12 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bodyText := applyEnv(payload.Body, payload.Env)
-	var reqBody io.Reader
-	if bodyText != "" {
-		reqBody = strings.NewReader(bodyText)
+	bodyMode := normalizeRequestBodyMode(payload.BodyMode)
+	bodyFields := resolveBodyFields(payload.BodyFields, payload.Env)
+	reqBody, autoContentType, err := buildRequestBody(bodyMode, bodyText, bodyFields)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to build request body: %v", err), http.StatusBadRequest)
+		return
 	}
 
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), method, targetURL, reqBody)
@@ -142,12 +153,19 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hasContentType := false
 	for _, h := range payload.Headers {
 		key := strings.TrimSpace(applyEnv(h.Key, payload.Env))
 		if key == "" {
 			continue
 		}
+		if strings.EqualFold(key, "Content-Type") {
+			hasContentType = true
+		}
 		upstreamReq.Header.Add(key, applyEnv(h.Value, payload.Env))
+	}
+	if !hasContentType && autoContentType != "" {
+		upstreamReq.Header.Set("Content-Type", autoContentType)
 	}
 
 	timeout := 120 * time.Second
@@ -299,6 +317,8 @@ func (s *server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 			Format:      plugin.Format,
 			ModuleURL:   fmt.Sprintf("/api/plugins/assets/%s.mjs?v=%s", plugin.ID, urlQueryEscape(plugin.ImportedAt)),
 			Source:      plugin.Source,
+			SupportsPreRequest: plugin.SupportsPreRequest,
+			SupportsPostResponse: plugin.SupportsPostResponse,
 		})
 	}
 
@@ -332,6 +352,8 @@ func (s *server) handleImportPlugin(w http.ResponseWriter, r *http.Request) {
 		ImportedAt:  plugin.ImportedAt,
 		Format:      plugin.Format,
 		ModuleURL:   fmt.Sprintf("/api/plugins/assets/%s.mjs?v=%s", plugin.ID, urlQueryEscape(plugin.ImportedAt)),
+		SupportsPreRequest: plugin.SupportsPreRequest,
+		SupportsPostResponse: plugin.SupportsPostResponse,
 	})
 }
 

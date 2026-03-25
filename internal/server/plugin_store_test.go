@@ -27,6 +27,7 @@ func TestPluginFileStoreImportAndReload(t *testing.T) {
 		Description: "Fixture plugin",
 		Source:      "export function create() { return {}; }",
 		Format:      "js",
+		SupportsPostResponse: true,
 	})
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
@@ -54,6 +55,9 @@ func TestPluginFileStoreImportAndReload(t *testing.T) {
 	if reloaded.Plugins[0].Format != "js" {
 		t.Fatalf("Load() format = %q, want js", reloaded.Plugins[0].Format)
 	}
+	if !reloaded.Plugins[0].SupportsPostResponse {
+		t.Fatal("Load() should preserve post-response capability")
+	}
 }
 
 func TestHandleImportPluginAndServeAsset(t *testing.T) {
@@ -73,6 +77,7 @@ func TestHandleImportPluginAndServeAsset(t *testing.T) {
 		Description: "Imported from test",
 		Source:      "export function create() { return {}; }",
 		Format:      "json",
+		SupportsPostResponse: true,
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -96,6 +101,9 @@ func TestHandleImportPluginAndServeAsset(t *testing.T) {
 	}
 	if !strings.Contains(listRecorder.Body.String(), "\"source\":\"export function create() { return {}; }\\n\"") {
 		t.Fatalf("handlePlugins() body = %q, want embedded source", listRecorder.Body.String())
+	}
+	if !strings.Contains(listRecorder.Body.String(), "\"supports_post_response\":true") {
+		t.Fatalf("handlePlugins() body = %q, want post-response capability", listRecorder.Body.String())
 	}
 
 	assetRecorder := httptest.NewRecorder()

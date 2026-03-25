@@ -22,18 +22,28 @@ import {
   AGGREGATION_PLUGIN_OPENAI,
   ResponseAggregationRuntime,
   aggregationPluginLabel,
+  executePreRequestPlugin,
   ensureAggregationPluginLoaded,
   getImportedAggregationPluginManifests,
   hasAggregationPlugin,
+  hasPreRequestPlugin,
   listAggregationPlugins,
+  listPreRequestPlugins,
   parseImportedAggregationPluginFile,
   resolveAggregationPluginId,
+  resolvePreRequestPluginId,
   setImportedAggregationPluginManifests,
   type ImportedAggregationPluginManifest,
   type RawEvent,
 } from "./aggregation-runtime.js";
 import { buildCurlCommand } from "./curl-export.js";
-import { resolveRequestDraft } from "./request-resolution.js";
+import {
+  normalizeRequestBodyFields,
+  normalizeRequestBodyMode,
+  resolveRequestDraft,
+  type RequestBodyField,
+  type RequestBodyMode,
+} from "./request-resolution.js";
 import {
   createDuplicateRequestDraft,
   deletePersistedRequestDraft,
@@ -62,6 +72,10 @@ type EditableHeader = HeaderKV & {
   enabled: boolean;
 };
 
+type EditableBodyField = RequestBodyField & {
+  id: string;
+};
+
 type EditableEnvironmentVariable = {
   id: string;
   key: string;
@@ -82,8 +96,11 @@ type PersistedState = {
   method: string;
   url: string;
   headers: EditableHeader[];
+  bodyMode: RequestBodyMode;
   headersText?: string;
   bodyText: string;
+  bodyFields: RequestBodyField[];
+  preRequestPlugin: string;
   aggregationPlugin: string;
   useCollectionAggregationPlugin: boolean;
   aggregateOpenAISse: boolean;
@@ -104,7 +121,10 @@ type SavedRequest = {
   method: string;
   url: string;
   headers: SavedHeader[];
+  body_mode?: RequestBodyMode;
   body: string;
+  body_fields?: RequestBodyField[];
+  pre_request_plugin?: string;
   aggregation_plugin?: string;
   use_collection_aggregation_plugin?: boolean;
   aggregate_openai_sse: boolean;
@@ -126,6 +146,8 @@ type SerializedCollectionPlugin = {
   imported_at?: string;
   format: "json" | "js";
   source: string;
+  supports_pre_request?: boolean;
+  supports_post_response?: boolean;
 };
 
 type CollectionStore = {
@@ -229,13 +251,19 @@ const bodyEditorShell = byId<HTMLElement>("bodyEditorShell");
 const bodyEditorBanner = byId<HTMLElement>("bodyEditorBanner");
 const bodyEditorModeBadge = byId<HTMLElement>("bodyEditorModeBadge");
 const bodyEditorHint = byId<HTMLElement>("bodyEditorHint");
+const bodyEditorLabel = byId<HTMLElement>("bodyEditorLabel");
+const bodyModeInput = byId<HTMLSelectElement>("bodyModeInput");
 const bodyInput = byId<HTMLTextAreaElement>("bodyInput");
 const bodyEditor = byId<HTMLElement>("bodyEditor");
+const bodyFieldsPanel = byId<HTMLElement>("bodyFieldsPanel");
+const bodyFieldsEditor = byId<HTMLElement>("bodyFieldsEditor");
+const addBodyFieldBtn = byId<HTMLButtonElement>("addBodyFieldBtn");
 const copyBodyBtn = byId<HTMLButtonElement>("copyBodyBtn");
 const bodyUndoBtn = byId<HTMLButtonElement>("bodyUndoBtn");
 const bodyPrettifyBtn = byId<HTMLButtonElement>("bodyPrettifyBtn");
 const bodyCollapseBtn = byId<HTMLButtonElement>("bodyCollapseBtn");
 const bodyExpandBtn = byId<HTMLButtonElement>("bodyExpandBtn");
+const preRequestPluginInput = byId<HTMLSelectElement>("preRequestPluginInput");
 const aggregationPluginInput = byId<HTMLSelectElement>("aggregationPluginInput");
 const draftStatusText = byId<HTMLElement>("draftStatusText");
 const effectiveAggregationText = byId<HTMLElement>("effectiveAggregationText");
@@ -300,6 +328,7 @@ let environmentRows: EditableEnvironmentVariable[] = [];
 let environmentRowsSourceId: string | null = null;
 let environmentRowsSourceText = "";
 let headerRows: EditableHeader[] = [];
+let bodyFieldRows: EditableBodyField[] = [];
 let collectionStore: CollectionStore = {
   collections: [],
   plugins: [],
@@ -477,6 +506,13 @@ function wireEvents(): void {
   copyBodyBtn.addEventListener("click", () => {
     void copyRequestBody();
   });
+  bodyModeInput.addEventListener("change", () => {
+    renderBodyEditorControls();
+    markRequestEditorChanged();
+  });
+  addBodyFieldBtn.addEventListener("click", () => {
+    insertBodyFieldAfter(bodyFieldRows[bodyFieldRows.length - 1]?.id ?? null);
+  });
   bodyUndoBtn.addEventListener("click", () => {
     undoBodyEdit();
   });
@@ -528,8 +564,12 @@ function wireEvents(): void {
   headerContextDeleteBtn.addEventListener("click", () => {
     handleHeaderContextDelete();
   });
+  preRequestPluginInput.addEventListener("change", () => {
+    markRequestEditorChanged();
+  });
   aggregationPluginInput.addEventListener("change", () => {
     renderEffectiveAggregationPlugin();
+    markRequestEditorChanged();
   });
 
   document.addEventListener("click", (event) => {
@@ -642,6 +682,7 @@ function defaultState(): PersistedState {
       createHeaderRow("Content-Type", "application/json", true),
       createHeaderRow("Authorization", "Bearer {{OPENAI_API_KEY}}", true),
     ],
+    bodyMode: "raw",
     bodyText: JSON.stringify(
       {
         model: "gpt-4o-mini",
@@ -651,7 +692,9 @@ function defaultState(): PersistedState {
       null,
       2,
     ),
+    bodyFields: [],
     aggregationPlugin: AGGREGATION_PLUGIN_OPENAI,
+    preRequestPlugin: AGGREGATION_PLUGIN_NONE,
     useCollectionAggregationPlugin: false,
     aggregateOpenAISse: true,
     timeoutSeconds: 120,
@@ -671,7 +714,13 @@ function applyInitialState(state: PersistedState): void {
   urlInput.value = state.url;
   applyTemplateTone(urlInput, state.url);
   headerRows = normalizeHeaderRows(state.headers);
+  bodyModeInput.value = normalizeRequestBodyMode(state.bodyMode);
+  bodyFieldRows = normalizeEditableBodyFields(state.bodyFields);
   setBodyEditorText(state.bodyText);
+  renderPreRequestPluginOptionsIntoSelect(
+    preRequestPluginInput,
+    resolvePreRequestPluginId(state.preRequestPlugin),
+  );
   renderPluginOptionsIntoSelect(
     aggregationPluginInput,
     state.useCollectionAggregationPlugin
@@ -686,7 +735,7 @@ function applyInitialState(state: PersistedState): void {
   collapsedCollectionIds = new Set(state.collapsedCollectionIds ?? []);
   renderEnvironmentControls();
   renderHeaderRows();
-  syncBodyEditor();
+  renderBodyEditorControls();
   renderDraftStatus();
   renderEffectiveAggregationPlugin();
 }
@@ -727,7 +776,13 @@ function loadState(): PersistedState {
       method: typeof parsed.method === "string" ? parsed.method : fallback.method,
       url: typeof parsed.url === "string" ? parsed.url : fallback.url,
       headers: parsedHeaders,
+      bodyMode: normalizeRequestBodyMode(parsed.bodyMode),
       bodyText: typeof parsed.bodyText === "string" ? parsed.bodyText : fallback.bodyText,
+      bodyFields: normalizeRequestBodyFields(parsed.bodyFields),
+      preRequestPlugin:
+        typeof parsed.preRequestPlugin === "string"
+          ? resolvePreRequestPluginId(parsed.preRequestPlugin)
+          : fallback.preRequestPlugin,
       aggregationPlugin:
         typeof parsed.aggregationPlugin === "string"
           ? resolveAggregationPluginId(parsed.aggregationPlugin)
@@ -762,7 +817,14 @@ function persistState(): void {
     method: methodInput.value,
     url: urlInput.value,
     headers: headerRows.map((header) => ({ ...header })),
+    bodyMode: selectedRequestBodyMode(),
     bodyText: bodyInput.value,
+    bodyFields: bodyFieldRows.map((field) => ({
+      key: field.key,
+      value: field.value,
+      enabled: field.enabled,
+    })),
+    preRequestPlugin: selectedPreRequestPluginId(),
     aggregationPlugin: selectedRequestAggregationPluginOverride(),
     useCollectionAggregationPlugin: selectedRequestUsesCollectionPlugin(),
     aggregateOpenAISse: selectedEffectiveAggregationPlugin().pluginId === AGGREGATION_PLUGIN_OPENAI,
@@ -794,6 +856,8 @@ function serializeImportedPluginsForCollection(): SerializedCollectionPlugin[] {
       imported_at: plugin.imported_at,
       format: plugin.format,
       source: plugin.source?.trim() ?? "",
+      supports_pre_request: plugin.supports_pre_request === true,
+      supports_post_response: plugin.supports_post_response !== false,
     }))
     .filter((plugin) => plugin.source !== "");
 }
@@ -824,6 +888,7 @@ async function saveCollectionStateToServer(): Promise<void> {
     if (collectionStore.plugins.length > 0) {
       setImportedAggregationPluginManifests(collectionStore.plugins);
       renderImportedPlugins();
+      renderPreRequestPluginControls();
       renderAggregationPluginControls();
     }
   } catch (error) {
@@ -985,7 +1050,10 @@ function applyEditorDraft(draft: RequestLibraryDraft): void {
   methodInput.value = draft.method || "GET";
   urlInput.value = draft.url;
   applyTemplateTone(urlInput, draft.url);
+  bodyModeInput.value = normalizeRequestBodyMode(draft.body_mode);
+  bodyFieldRows = normalizeEditableBodyFields(draft.body_fields);
   setBodyEditorText(draft.body);
+  preRequestPluginInput.value = resolvePreRequestPluginId(draft.pre_request_plugin);
   aggregationPluginInput.value = resolveAggregationPluginId(
     draft.aggregation_plugin,
     draft.aggregate_openai_sse,
@@ -993,7 +1061,7 @@ function applyEditorDraft(draft: RequestLibraryDraft): void {
   timeoutInput.value = String(draft.timeout_seconds || 120);
   headerRows = normalizeHeaderRows(draft.headers);
   renderHeaderRows();
-  syncBodyEditor();
+  renderBodyEditorControls();
 }
 
 function renderDraftStatus(): void {
@@ -1485,7 +1553,212 @@ function removeHeader(id: string): void {
   markRequestEditorChanged();
 }
 
+function createBodyFieldRow(key: string, value: string, enabled = true): EditableBodyField {
+  return {
+    id: makeId("bodyfield"),
+    key,
+    value,
+    enabled,
+  };
+}
+
+function createEmptyBodyFieldRow(): EditableBodyField {
+  return createBodyFieldRow("", "", true);
+}
+
+function normalizeEditableBodyFields(fields: readonly RequestBodyField[] | undefined): EditableBodyField[] {
+  const normalized = normalizeRequestBodyFields(fields);
+  return normalized.length > 0
+    ? normalized.map((field) => createBodyFieldRow(field.key, field.value, field.enabled))
+    : [createEmptyBodyFieldRow()];
+}
+
+function selectedRequestBodyMode(): RequestBodyMode {
+  return normalizeRequestBodyMode(bodyModeInput.value);
+}
+
+function renderBodyEditorControls(): void {
+  const bodyMode = selectedRequestBodyMode();
+  const isRawBody = bodyMode === "raw";
+
+  if (bodyFieldRows.length === 0) {
+    bodyFieldRows = [createEmptyBodyFieldRow()];
+  }
+
+  bodyEditorShell.hidden = !isRawBody;
+  bodyFieldsPanel.hidden = isRawBody;
+  addBodyFieldBtn.hidden = isRawBody;
+  addBodyFieldBtn.disabled = requestIsLoading || isRawBody;
+  copyBodyBtn.disabled = requestIsLoading;
+  bodyUndoBtn.disabled = requestIsLoading || !isRawBody || !bodyEditorController.canUndo();
+  bodyPrettifyBtn.disabled = requestIsLoading || !isRawBody;
+  bodyCollapseBtn.disabled = requestIsLoading || !isRawBody;
+  bodyExpandBtn.disabled = requestIsLoading || !isRawBody;
+  bodyEditorLabel.textContent =
+    bodyMode === "raw"
+      ? "Body"
+      : bodyMode === "form_urlencoded"
+        ? "Form URL Encoded"
+        : "Multipart Form Data";
+
+  if (isRawBody) {
+    syncBodyEditor();
+    return;
+  }
+
+  renderBodyFieldRows();
+  bodyEditorBanner.classList.remove("is-empty");
+  bodyEditorShell.dataset.mode = bodyMode;
+  bodyEditorModeBadge.hidden = false;
+  bodyEditorModeBadge.textContent =
+    bodyMode === "form_urlencoded" ? "Form Encoded" : "Multipart";
+  bodyEditorHint.textContent =
+    bodyMode === "form_urlencoded"
+      ? "Fields will be encoded as application/x-www-form-urlencoded before the request is sent."
+      : "Fields will be sent as multipart/form-data. Text fields are supported in this editor.";
+}
+
+function renderBodyFieldRows(): void {
+  if (bodyFieldRows.length === 0) {
+    bodyFieldRows = [createEmptyBodyFieldRow()];
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const field of bodyFieldRows) {
+    const row = document.createElement("div");
+    row.className = `header-row${field.enabled ? "" : " is-disabled"}`;
+
+    const toggleLabel = document.createElement("label");
+    toggleLabel.className = "header-toggle header-cell";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = field.enabled;
+    toggle.disabled = requestIsLoading;
+    toggle.addEventListener("change", () => {
+      updateBodyFieldRow(field.id, { enabled: toggle.checked });
+    });
+    const toggleText = document.createElement("span");
+    toggleText.textContent = field.enabled ? "On" : "Off";
+    toggleLabel.append(toggle, toggleText);
+
+    const keyInput = document.createElement("input");
+    keyInput.className = "header-key-input";
+    keyInput.type = "text";
+    keyInput.placeholder = "Field name";
+    keyInput.value = field.key;
+    keyInput.disabled = requestIsLoading;
+    applyTemplateTone(keyInput, field.key);
+    keyInput.addEventListener("input", () => {
+      patchBodyFieldRow(field.id, { key: keyInput.value });
+      applyTemplateTone(keyInput, keyInput.value);
+    });
+    const keyCell = document.createElement("div");
+    keyCell.className = "header-input-cell header-cell";
+    keyCell.appendChild(keyInput);
+
+    const valueInput = document.createElement("input");
+    valueInput.className = "header-value-input";
+    valueInput.type = "text";
+    valueInput.placeholder = "Field value";
+    valueInput.value = field.value;
+    valueInput.disabled = requestIsLoading;
+    applyTemplateTone(valueInput, field.value);
+    valueInput.addEventListener("input", () => {
+      patchBodyFieldRow(field.id, { value: valueInput.value });
+      applyTemplateTone(valueInput, valueInput.value);
+    });
+    const valueCell = document.createElement("div");
+    valueCell.className = "header-input-cell header-cell";
+    valueCell.appendChild(valueInput);
+
+    const actions = document.createElement("div");
+    actions.className = "body-field-actions body-field-cell";
+    actions.append(
+      createHeaderActionButton(
+        "＋",
+        "Insert field below",
+        () => insertBodyFieldAfter(field.id),
+        requestIsLoading,
+      ),
+      createHeaderActionButton(
+        "⎘",
+        "Duplicate field",
+        () => duplicateBodyField(field.id),
+        requestIsLoading,
+      ),
+      createHeaderActionButton(
+        "✕",
+        "Delete field",
+        () => removeBodyField(field.id),
+        requestIsLoading,
+        true,
+      ),
+    );
+
+    row.append(toggleLabel, keyCell, valueCell, actions);
+    fragment.appendChild(row);
+  }
+
+  bodyFieldsEditor.textContent = "";
+  bodyFieldsEditor.appendChild(fragment);
+}
+
+function updateBodyFieldRow(id: string, patch: Partial<EditableBodyField>): void {
+  bodyFieldRows = bodyFieldRows.map((field) => (field.id === id ? { ...field, ...patch } : field));
+  renderBodyFieldRows();
+  markRequestEditorChanged();
+}
+
+function patchBodyFieldRow(id: string, patch: Partial<EditableBodyField>): void {
+  bodyFieldRows = bodyFieldRows.map((field) => (field.id === id ? { ...field, ...patch } : field));
+  markRequestEditorChanged();
+}
+
+function insertBodyFieldAfter(id: string | null): void {
+  if (id === null) {
+    bodyFieldRows = [...bodyFieldRows, createEmptyBodyFieldRow()];
+  } else {
+    const index = bodyFieldRows.findIndex((field) => field.id === id);
+    if (index < 0) {
+      bodyFieldRows = [...bodyFieldRows, createEmptyBodyFieldRow()];
+    } else {
+      const next = [...bodyFieldRows];
+      next.splice(index + 1, 0, createEmptyBodyFieldRow());
+      bodyFieldRows = next;
+    }
+  }
+  renderBodyFieldRows();
+  markRequestEditorChanged();
+}
+
+function duplicateBodyField(id: string): void {
+  const index = bodyFieldRows.findIndex((field) => field.id === id);
+  if (index < 0) {
+    return;
+  }
+  const source = bodyFieldRows[index];
+  const next = [...bodyFieldRows];
+  next.splice(index + 1, 0, createBodyFieldRow(source.key, source.value, source.enabled));
+  bodyFieldRows = next;
+  renderBodyFieldRows();
+  markRequestEditorChanged();
+}
+
+function removeBodyField(id: string): void {
+  bodyFieldRows =
+    bodyFieldRows.length === 1
+      ? [createEmptyBodyFieldRow()]
+      : bodyFieldRows.filter((field) => field.id !== id);
+  renderBodyFieldRows();
+  markRequestEditorChanged();
+}
+
 function syncBodyEditor(): void {
+  if (selectedRequestBodyMode() !== "raw") {
+    bodyEditorBanner.classList.remove("is-empty");
+    return;
+  }
+
   const result = bodyEditorController.getSnapshot();
 
   bodyEditorHasJSON = result.hasJSON;
@@ -1597,10 +1870,12 @@ async function importCurl(): Promise<void> {
     headerRows = normalizeHeaderRows(
       (parsed.headers || []).map((header) => ({ ...header, enabled: true })),
     );
+    bodyModeInput.value = "raw";
+    bodyFieldRows = [createEmptyBodyFieldRow()];
     setBodyEditorText(parsed.body || "");
     activeSavedRequestId = null;
     renderHeaderRows();
-    syncBodyEditor();
+    renderBodyEditorControls();
     persistState();
     persistCurrentRequestDraft();
     renderCollections();
@@ -1675,11 +1950,14 @@ async function loadPlugins(options?: { successMessage?: string }): Promise<void>
           imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
           format,
           source: typeof plugin.source === "string" ? plugin.source : "",
+          supports_pre_request: plugin.supports_pre_request === true,
+          supports_post_response: plugin.supports_post_response !== false,
         };
       }),
     );
 
     renderImportedPlugins();
+    renderPreRequestPluginControls();
     renderAggregationPluginControls();
     renderCollections();
     renderEffectiveAggregationPlugin();
@@ -1691,6 +1969,7 @@ async function loadPlugins(options?: { successMessage?: string }): Promise<void>
     );
   } catch (error) {
     renderImportedPlugins();
+    renderPreRequestPluginControls();
     renderAggregationPluginControls();
     renderCollections();
     renderEffectiveAggregationPlugin();
@@ -1720,7 +1999,11 @@ function renderImportedPlugins(): void {
 
     const meta = document.createElement("p");
     meta.className = "hint compact plugin-meta";
-    meta.textContent = `${plugin.id} • ${plugin.format.toUpperCase()}`;
+    const capabilities = [
+      plugin.supports_pre_request ? "PRE" : "",
+      plugin.supports_post_response !== false ? "POST" : "",
+    ].filter(Boolean);
+    meta.textContent = `${plugin.id} • ${plugin.format.toUpperCase()}${capabilities.length > 0 ? ` • ${capabilities.join("/")}` : ""}`;
 
     item.append(title, meta);
     if (plugin.description) {
@@ -1736,9 +2019,35 @@ function renderImportedPlugins(): void {
   pluginsList.appendChild(fragment);
 }
 
+function renderPreRequestPluginControls(): void {
+  const currentValue = preRequestPluginInput.value || AGGREGATION_PLUGIN_NONE;
+  renderPreRequestPluginOptionsIntoSelect(preRequestPluginInput, currentValue);
+}
+
 function renderAggregationPluginControls(): void {
   const currentValue = aggregationPluginInput.value || AGGREGATION_PLUGIN_OPENAI;
   renderPluginOptionsIntoSelect(aggregationPluginInput, currentValue, true);
+}
+
+function renderPreRequestPluginOptionsIntoSelect(
+  select: HTMLSelectElement,
+  selectedValue: string,
+): void {
+  select.textContent = "";
+
+  for (const plugin of listPreRequestPlugins()) {
+    const option = document.createElement("option");
+    option.value = plugin.id;
+    option.textContent = plugin.label;
+    select.appendChild(option);
+  }
+
+  const normalizedSelected = resolvePreRequestPluginId(selectedValue);
+  const fallback =
+    normalizedSelected !== AGGREGATION_PLUGIN_NONE && !hasPreRequestPlugin(normalizedSelected)
+      ? AGGREGATION_PLUGIN_NONE
+      : normalizedSelected;
+  select.value = fallback;
 }
 
 function renderPluginOptionsIntoSelect(
@@ -1790,6 +2099,10 @@ function selectedRequestUsesCollectionPlugin(): boolean {
   return aggregationPluginInput.value === REQUEST_AGGREGATION_USE_COLLECTION;
 }
 
+function selectedPreRequestPluginId(): string {
+  return resolvePreRequestPluginId(preRequestPluginInput.value);
+}
+
 function selectedRequestAggregationPluginOverride(): string {
   return selectedRequestUsesCollectionPlugin()
     ? AGGREGATION_PLUGIN_NONE
@@ -1833,6 +2146,31 @@ function renderEffectiveAggregationPlugin(): void {
   effectiveAggregationText.textContent = `Effective: ${effective.label} via request override.${suffix}`;
 }
 
+function normalizeResolvedRequestDraft(draft: {
+  method: string;
+  url: string;
+  headers: HeaderKV[];
+  body_mode?: RequestBodyMode;
+  body: string;
+  body_fields?: RequestBodyField[];
+}): {
+  method: string;
+  url: string;
+  headers: HeaderKV[];
+  body_mode: RequestBodyMode;
+  body: string;
+  body_fields: RequestBodyField[];
+} {
+  return {
+    method: draft.method,
+    url: draft.url,
+    headers: draft.headers.map((header) => ({ ...header })),
+    body_mode: normalizeRequestBodyMode(draft.body_mode),
+    body: draft.body,
+    body_fields: normalizeRequestBodyFields(draft.body_fields),
+  };
+}
+
 async function prepareAggregationRuntime(): Promise<{
   pluginId: string;
   runtime: ResponseAggregationRuntime;
@@ -1871,6 +2209,84 @@ async function prepareAggregationRuntime(): Promise<{
 function setPluginsStatus(message: string, isError = false): void {
   pluginsStatusText.textContent = message;
   pluginsStatusText.classList.toggle("error", isError);
+}
+
+async function resolveRequestForSendWithDynamicEnvironment(draft: {
+  method: string;
+  url: string;
+  headers: HeaderKV[];
+  body_mode: RequestBodyMode;
+  body: string;
+  body_fields: RequestBodyField[];
+}): Promise<{
+  env: Record<string, string>;
+  dynamicEnv: Record<string, string>;
+  resolvedDraft: {
+    method: string;
+    url: string;
+    headers: HeaderKV[];
+    body_mode: RequestBodyMode;
+    body: string;
+    body_fields: RequestBodyField[];
+  };
+}> {
+  const staticEnv = parseEnvVars(getActiveEnvironment()?.text ?? "");
+  const preRequestPluginId = selectedPreRequestPluginId();
+  const initiallyResolvedDraft = normalizeResolvedRequestDraft(resolveRequestDraft(draft, staticEnv));
+  if (preRequestPluginId === AGGREGATION_PLUGIN_NONE) {
+    return {
+      env: staticEnv,
+      dynamicEnv: {},
+      resolvedDraft: initiallyResolvedDraft,
+    };
+  }
+
+  if (!hasPreRequestPlugin(preRequestPluginId)) {
+    throw new Error(`Pre-request plugin "${preRequestPluginId}" is not available.`);
+  }
+  if (!globalThis.crypto) {
+    throw new Error("Web Crypto is unavailable in this browser.");
+  }
+
+  const dynamicEnv: Record<string, string> = {};
+  await executePreRequestPlugin(preRequestPluginId, {
+    request: {
+      method: initiallyResolvedDraft.method,
+      url: initiallyResolvedDraft.url,
+      headers: initiallyResolvedDraft.headers.map((header) => ({ ...header })),
+      bodyMode: initiallyResolvedDraft.body_mode ?? "raw",
+      body: initiallyResolvedDraft.body,
+      bodyFields: normalizeRequestBodyFields(initiallyResolvedDraft.body_fields).map((field) => ({
+        ...field,
+      })),
+    },
+    environment: Object.freeze({ ...staticEnv }),
+    dynamicEnvironment: dynamicEnv,
+    setDynamicEnvironment(name, value) {
+      const key = name.trim();
+      if (!key) {
+        throw new Error("Dynamic environment variable name is required.");
+      }
+      dynamicEnv[key] = String(value);
+    },
+    removeDynamicEnvironment(name) {
+      const key = name.trim();
+      if (!key) {
+        return;
+      }
+      delete dynamicEnv[key];
+    },
+    crypto: globalThis.crypto,
+    TextEncoder,
+    TextDecoder,
+  });
+
+  const mergedEnv = { ...staticEnv, ...dynamicEnv };
+  return {
+    env: mergedEnv,
+    dynamicEnv,
+    resolvedDraft: normalizeResolvedRequestDraft(resolveRequestDraft(draft, mergedEnv)),
+  };
 }
 
 async function exportCurl(): Promise<void> {
@@ -1912,7 +2328,13 @@ async function copyExportedCurl(): Promise<void> {
 }
 
 async function copyRequestBody(): Promise<void> {
-  const body = bodyInput.value;
+  const bodyMode = selectedRequestBodyMode();
+  const body =
+    bodyMode === "raw"
+      ? bodyInput.value
+      : currentEnabledBodyFields()
+          .map((field) => `${field.key}=${field.value}`)
+          .join("\n");
   if (!body) {
     setError("Request body is empty.");
     return;
@@ -1923,7 +2345,9 @@ async function copyRequestBody(): Promise<void> {
     return;
   }
 
-  focusBodyEditor(true);
+  if (bodyMode === "raw") {
+    focusBodyEditor(true);
+  }
   setError("Clipboard copy failed. Select the body text and copy it manually.");
 }
 
@@ -2004,20 +2428,21 @@ async function sendRequest(): Promise<void> {
   activeAbortController = new AbortController();
 
   try {
-    const preparedAggregation = await prepareAggregationRuntime();
-    aggregationRuntime = preparedAggregation.runtime;
-
-    const env = parseEnvVars(getActiveEnvironment()?.text ?? "");
-    const resolvedDraft = resolveRequestDraft(draft, env);
+    const { env, resolvedDraft } = await resolveRequestForSendWithDynamicEnvironment(draft);
     if (!resolvedDraft.url) {
       throw new Error("Request URL is required.");
     }
+
+    const preparedAggregation = await prepareAggregationRuntime();
+    aggregationRuntime = preparedAggregation.runtime;
 
     const payload = {
       method: resolvedDraft.method,
       url: resolvedDraft.url,
       headers: resolvedDraft.headers,
+      body_mode: resolvedDraft.body_mode,
       body: resolvedDraft.body,
+      body_fields: resolvedDraft.body_fields,
       env,
       aggregation_plugin: preparedAggregation.pluginId,
       aggregate_openai_sse: preparedAggregation.pluginId === AGGREGATION_PLUGIN_OPENAI,
@@ -2531,6 +2956,7 @@ async function loadCollections(): Promise<void> {
       activeSavedRequest ? savedRequestToDraft(activeSavedRequest) : undefined,
     );
     renderImportedPlugins();
+    renderPreRequestPluginControls();
     renderAggregationPluginControls();
     renderEnvironmentControls();
     renderCollections();
@@ -3072,6 +3498,7 @@ async function saveCollectionsToServer(previous: CollectionStore): Promise<boole
     if (collectionStore.plugins.length > 0) {
       setImportedAggregationPluginManifests(collectionStore.plugins);
       renderImportedPlugins();
+      renderPreRequestPluginControls();
       renderAggregationPluginControls();
     }
     const prunedDrafts = prunePersistedDrafts();
@@ -3402,6 +3829,8 @@ function normalizeCollectionStore(input: Partial<SerializedCollectionStore>): Co
             imported_at: typeof plugin.imported_at === "string" ? plugin.imported_at : "",
             format,
             source: typeof plugin.source === "string" ? plugin.source.trim() : "",
+            supports_pre_request: plugin.supports_pre_request === true,
+            supports_post_response: plugin.supports_post_response !== false,
           };
         })
         .filter((plugin) => plugin.id !== AGGREGATION_PLUGIN_NONE && plugin.label !== "" && plugin.source !== "")
@@ -3431,7 +3860,13 @@ function normalizeCollectionStore(input: Partial<SerializedCollectionStore>): Co
               method: typeof request.method === "string" ? request.method : "GET",
               url: typeof request.url === "string" ? request.url : "",
               headers: normalizeSavedHeaders(request.headers),
+              body_mode: normalizeRequestBodyMode(request.body_mode),
               body: typeof request.body === "string" ? request.body : "",
+              body_fields: normalizeSavedBodyFields(request.body_fields),
+              pre_request_plugin:
+                typeof request.pre_request_plugin === "string"
+                  ? resolvePreRequestPluginId(request.pre_request_plugin)
+                  : AGGREGATION_PLUGIN_NONE,
               aggregation_plugin:
                 request.use_collection_aggregation_plugin === true
                   ? undefined
@@ -3483,6 +3918,10 @@ function normalizeSavedHeaders(headers: unknown): SavedHeader[] {
       enabled: typeof typed.enabled === "boolean" ? typed.enabled : true,
     };
   });
+}
+
+function normalizeSavedBodyFields(fields: unknown): RequestBodyField[] {
+  return normalizeRequestBodyFields(fields);
 }
 
 function findCollection(id: string | null): RequestCollection | undefined {
@@ -3539,16 +3978,16 @@ function setLoading(isLoading: boolean): void {
   bodyInput.disabled = isLoading;
   bodyEditorController.setEditable(!isLoading);
   bodyEditor.setAttribute("aria-disabled", isLoading ? "true" : "false");
+  bodyModeInput.disabled = isLoading;
   timeoutInput.disabled = isLoading;
+  preRequestPluginInput.disabled = isLoading;
   aggregationPluginInput.disabled = isLoading;
   addHeaderBtn.disabled = isLoading;
-  copyBodyBtn.disabled = isLoading;
-  bodyPrettifyBtn.disabled = isLoading;
   abortBtn.disabled = !isLoading;
   sendBtn.textContent = isLoading ? "Sending..." : "Send";
   syncEnvironmentEditor();
   renderHeaderRows();
-  syncBodyEditor();
+  renderBodyEditorControls();
   renderCollections();
   renderEffectiveAggregationPlugin();
 }
@@ -3591,6 +4030,18 @@ function cloneCollectionStore(store: CollectionStore): CollectionStore {
   return JSON.parse(JSON.stringify(store)) as CollectionStore;
 }
 
+function currentSavedBodyFields(): RequestBodyField[] {
+  return bodyFieldRows.map((field) => ({
+    key: field.key,
+    value: field.value,
+    enabled: field.enabled,
+  }));
+}
+
+function currentEnabledBodyFields(): RequestBodyField[] {
+  return currentSavedBodyFields().filter((field) => field.enabled && field.key.trim() !== "");
+}
+
 function getCurrentSavedRequestDraft(): RequestLibraryDraft {
   const aggregationPlugin = selectedRequestAggregationPluginOverride();
   const useCollectionAggregationPlugin = selectedRequestUsesCollectionPlugin();
@@ -3603,7 +4054,10 @@ function getCurrentSavedRequestDraft(): RequestLibraryDraft {
       value: header.value,
       enabled: header.enabled,
     })),
+    body_mode: selectedRequestBodyMode(),
     body: bodyInput.value,
+    body_fields: currentSavedBodyFields(),
+    pre_request_plugin: selectedPreRequestPluginId(),
     aggregation_plugin: aggregationPlugin,
     use_collection_aggregation_plugin: useCollectionAggregationPlugin,
     aggregate_openai_sse:
@@ -3622,7 +4076,10 @@ function savedRequestToDraft(savedRequest: SavedRequest): RequestLibraryDraft {
     method: savedRequest.method || "GET",
     url: savedRequest.url,
     headers: savedRequest.headers.map((header) => ({ ...header })),
+    body_mode: normalizeRequestBodyMode(savedRequest.body_mode),
     body: savedRequest.body,
+    body_fields: normalizeRequestBodyFields(savedRequest.body_fields),
+    pre_request_plugin: resolvePreRequestPluginId(savedRequest.pre_request_plugin),
     aggregation_plugin: aggregationPlugin,
     use_collection_aggregation_plugin: savedRequest.use_collection_aggregation_plugin !== false,
     aggregate_openai_sse: aggregationPlugin === AGGREGATION_PLUGIN_OPENAI,
@@ -3637,7 +4094,10 @@ function createSavedRequest(input: { id: string; draft: RequestLibraryDraft }): 
     method: input.draft.method,
     url: input.draft.url,
     headers: input.draft.headers.map((header) => ({ ...header })),
+    body_mode: normalizeRequestBodyMode(input.draft.body_mode),
     body: input.draft.body,
+    body_fields: normalizeRequestBodyFields(input.draft.body_fields),
+    pre_request_plugin: resolvePreRequestPluginId(input.draft.pre_request_plugin),
     aggregation_plugin: input.draft.use_collection_aggregation_plugin
       ? undefined
       : input.draft.aggregation_plugin,
@@ -3673,7 +4133,9 @@ function getCurrentRequestDraft(): {
   method: string;
   url: string;
   headers: HeaderKV[];
+  body_mode: RequestBodyMode;
   body: string;
+  body_fields: RequestBodyField[];
 } {
   return {
     method: methodInput.value.trim().toUpperCase() || "GET",
@@ -3681,7 +4143,9 @@ function getCurrentRequestDraft(): {
     headers: headerRows
       .filter((header) => header.enabled && header.key.trim() !== "")
       .map((header) => ({ key: header.key, value: header.value })),
+    body_mode: selectedRequestBodyMode(),
     body: bodyInput.value,
+    body_fields: currentEnabledBodyFields(),
   };
 }
 
@@ -4025,6 +4489,7 @@ wireEvents();
 void initializeApp(initialState);
 
 async function initializeApp(initialState: PersistedState): Promise<void> {
+  renderPreRequestPluginControls();
   renderAggregationPluginControls();
   await loadPlugins();
   applyInitialState(initialState);

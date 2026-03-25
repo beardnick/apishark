@@ -15,13 +15,38 @@ export function resolveRequestDraft(draft, env, options = {}) {
     const context = createResolutionContext(env, options);
     return {
         ...draft,
+        body_mode: normalizeRequestBodyMode(draft.body_mode),
         url: resolveTemplateWithContext(draft.url, context),
         headers: draft.headers.map((header) => ({
             key: resolveTemplateWithContext(header.key, context),
             value: resolveTemplateWithContext(header.value, context),
         })),
         body: resolveTemplateWithContext(draft.body, context),
+        body_fields: normalizeRequestBodyFields(draft.body_fields).map((field) => ({
+            enabled: field.enabled,
+            key: resolveTemplateWithContext(field.key, context),
+            value: resolveTemplateWithContext(field.value, context),
+        })),
     };
+}
+export function normalizeRequestBodyMode(value) {
+    switch (value) {
+        case "form_urlencoded":
+        case "multipart":
+            return value;
+        default:
+            return "raw";
+    }
+}
+export function normalizeRequestBodyFields(input) {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+    return input.map((field) => ({
+        key: typeof field?.key === "string" ? field.key : "",
+        value: typeof field?.value === "string" ? field.value : "",
+        enabled: typeof field?.enabled === "boolean" ? field.enabled : true,
+    }));
 }
 function createResolutionContext(env, options) {
     const nowOption = options.now;
