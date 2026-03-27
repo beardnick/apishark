@@ -33,6 +33,8 @@ test("helper, plugin, environment editor, import, and export all use the same mo
     assert.match(html, pattern);
   }
 
+  assert.match(html, /id="importPluginBtn"[\s\S]*?>Add aggregation plugin</);
+  assert.match(html, /id="importPrePluginBtn"[\s\S]*?>Add pre plugin</);
   assert.match(html, /id="effectiveAggregationText"/);
   assert.match(html, /class="helper-token-grid"/);
   assert.match(html, /class="helper-token">\{\{VAR_NAME\}\}<\/code>/);

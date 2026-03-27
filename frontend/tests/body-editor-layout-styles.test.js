@@ -10,3 +10,13 @@ test("body editor styles wrap long lines and keep the editor height bounded", as
   assert.match(css, /\.body-code-editor \.cm-content,\s*\.body-code-editor \.cm-line\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /\.body-code-editor \.cm-scroller\s*\{[^}]*overflow:\s*auto/);
 });
+
+test("response viewer styles wrap long fields instead of collapsing them out of view", async () => {
+  const css = await readFile(new URL("../dist/assets/main.css", import.meta.url), "utf8");
+
+  assert.match(css, /\.json-viewer-shell,\s*\.output,\s*\.sse-lines-pane,\s*\.sse-payload-pane\s*\{[^}]*min-width:\s*0/);
+  assert.match(css, /\.json-viewer\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.output\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /\.response-headers-stack > \*\s*\{[^}]*min-width:\s*0/);
+  assert.match(css, /\.aggregate-output\s*\{[^}]*overflow-wrap:\s*anywhere/);
+});

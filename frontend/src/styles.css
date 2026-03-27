@@ -1496,6 +1496,7 @@ button.ghost:hover:not(:disabled) {
 .output,
 .sse-lines-pane,
 .sse-payload-pane {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--code-bg);
@@ -1514,11 +1515,14 @@ button.ghost:hover:not(:disabled) {
 }
 
 .json-viewer {
+  min-width: 0;
   font-family:
     "IBM Plex Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   font-size: 0.79rem;
   line-height: 1.42;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .json-node {
@@ -1565,6 +1569,8 @@ button.ghost:hover:not(:disabled) {
 .json-key-wrap,
 .json-summary-value {
   display: inline;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .json-key {
@@ -1593,6 +1599,8 @@ button.ghost:hover:not(:disabled) {
   margin: 0;
   padding: 10px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   overflow: auto;
   font-size: 0.8rem;
   line-height: 1.45;
@@ -1633,6 +1641,7 @@ button.ghost:hover:not(:disabled) {
 }
 
 .response-headers-stack > * {
+  min-width: 0;
   padding: 12px 10px 0;
 }
 
@@ -1647,6 +1656,8 @@ button.ghost:hover:not(:disabled) {
 
 .aggregate-output {
   display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .aggregate-media {

@@ -43,6 +43,7 @@ const openPluginModalBtn = byId("openPluginModalBtn");
 const closePluginModalBtn = byId("closePluginModalBtn");
 const pluginOverlay = byId("pluginOverlay");
 const importPluginBtn = byId("importPluginBtn");
+const importPrePluginBtn = byId("importPrePluginBtn");
 const pluginImportInput = byId("pluginImportInput");
 const pluginsStatusText = byId("pluginsStatusText");
 const pluginsList = byId("pluginsList");
@@ -158,6 +159,7 @@ let helperModalTrigger = null;
 let environmentModalTrigger = null;
 let importModalTrigger = null;
 let pluginModalTrigger = null;
+let pendingPluginImportKind = "aggregation";
 const bodyEditorController = createBodyEditor({
     parent: bodyEditor,
     input: bodyInput,
@@ -224,10 +226,15 @@ function wireEvents() {
         hidePluginModal(true);
     });
     importPluginBtn.addEventListener("click", () => {
+        pendingPluginImportKind = "aggregation";
+        pluginImportInput.click();
+    });
+    importPrePluginBtn.addEventListener("click", () => {
+        pendingPluginImportKind = "pre_request";
         pluginImportInput.click();
     });
     pluginImportInput.addEventListener("change", () => {
-        void importPlugin();
+        void importPlugin(pendingPluginImportKind);
     });
     exportCurlBtn.addEventListener("click", () => {
         void exportCurl();
@@ -1439,16 +1446,22 @@ async function importCurl() {
         setLoading(false);
     }
 }
-async function importPlugin() {
+async function importPlugin(kind) {
     const file = pluginImportInput.files?.[0];
     pluginImportInput.value = "";
     if (!file) {
         return;
     }
-    setPluginsStatus(`Importing ${file.name}...`);
+    setPluginsStatus(`Importing ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin ${file.name}...`);
     try {
         const source = await file.text();
         const parsed = await parseImportedAggregationPluginFile(file.name, source);
+        if (kind === "pre_request" && !parsed.supports_pre_request) {
+            throw new Error(`Plugin "${parsed.label}" does not export createPreRequestPlugin().`);
+        }
+        if (kind === "aggregation" && !parsed.supports_post_response) {
+            throw new Error(`Plugin "${parsed.label}" does not export create().`);
+        }
         const response = await fetch("/api/plugins/import", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1459,12 +1472,12 @@ async function importPlugin() {
             throw new Error(responseText || `Import failed (${response.status})`);
         }
         await loadPlugins({
-            successMessage: `Imported plugin "${parsed.label}".`,
+            successMessage: `Imported ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin "${parsed.label}".`,
         });
         await saveCollectionStateToServer();
     }
     catch (error) {
-        setPluginsStatus(errorMessage(error, "Failed to import plugin."), true);
+        setPluginsStatus(errorMessage(error, `Failed to import ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin.`), true);
     }
 }
 async function loadPlugins(options) {
@@ -1518,7 +1531,7 @@ function renderImportedPlugins() {
     if (importedPlugins.length === 0) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
-        empty.textContent = "No imported plugins yet. Import a JSON or JS package to add one.";
+        empty.textContent = "No imported plugins yet. Import a pre-request or aggregation plugin to add one.";
         pluginsList.appendChild(empty);
         return;
     }
@@ -3162,6 +3175,7 @@ function setLoading(isLoading) {
     openEnvironmentModalBtn.disabled = isLoading;
     importCurlBtn.disabled = isLoading;
     importPluginBtn.disabled = isLoading;
+    importPrePluginBtn.disabled = isLoading;
     pluginImportInput.disabled = isLoading;
     exportCurlBtn.disabled = isLoading;
     requestNameInput.disabled = isLoading;

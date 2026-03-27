@@ -200,6 +200,8 @@ type PaneLayoutState = {
   libraryWidth?: number;
 };
 
+type PluginImportKind = "aggregation" | "pre_request";
+
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
 const RAW_OUTPUT_MAX_CHARS = 220_000;
@@ -239,6 +241,7 @@ const openPluginModalBtn = byId<HTMLButtonElement>("openPluginModalBtn");
 const closePluginModalBtn = byId<HTMLButtonElement>("closePluginModalBtn");
 const pluginOverlay = byId<HTMLElement>("pluginOverlay");
 const importPluginBtn = byId<HTMLButtonElement>("importPluginBtn");
+const importPrePluginBtn = byId<HTMLButtonElement>("importPrePluginBtn");
 const pluginImportInput = byId<HTMLInputElement>("pluginImportInput");
 const pluginsStatusText = byId<HTMLElement>("pluginsStatusText");
 const pluginsList = byId<HTMLElement>("pluginsList");
@@ -367,6 +370,7 @@ let helperModalTrigger: HTMLElement | null = null;
 let environmentModalTrigger: HTMLElement | null = null;
 let importModalTrigger: HTMLElement | null = null;
 let pluginModalTrigger: HTMLElement | null = null;
+let pendingPluginImportKind: PluginImportKind = "aggregation";
 
 const bodyEditorController = createBodyEditor({
   parent: bodyEditor,
@@ -441,10 +445,15 @@ function wireEvents(): void {
     hidePluginModal(true);
   });
   importPluginBtn.addEventListener("click", () => {
+    pendingPluginImportKind = "aggregation";
+    pluginImportInput.click();
+  });
+  importPrePluginBtn.addEventListener("click", () => {
+    pendingPluginImportKind = "pre_request";
     pluginImportInput.click();
   });
   pluginImportInput.addEventListener("change", () => {
-    void importPlugin();
+    void importPlugin(pendingPluginImportKind);
   });
 
   exportCurlBtn.addEventListener("click", () => {
@@ -1893,17 +1902,27 @@ async function importCurl(): Promise<void> {
   }
 }
 
-async function importPlugin(): Promise<void> {
+async function importPlugin(kind: PluginImportKind): Promise<void> {
   const file = pluginImportInput.files?.[0];
   pluginImportInput.value = "";
   if (!file) {
     return;
   }
 
-  setPluginsStatus(`Importing ${file.name}...`);
+  setPluginsStatus(
+    `Importing ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin ${file.name}...`,
+  );
   try {
     const source = await file.text();
     const parsed = await parseImportedAggregationPluginFile(file.name, source);
+    if (kind === "pre_request" && !parsed.supports_pre_request) {
+      throw new Error(
+        `Plugin "${parsed.label}" does not export createPreRequestPlugin().`,
+      );
+    }
+    if (kind === "aggregation" && !parsed.supports_post_response) {
+      throw new Error(`Plugin "${parsed.label}" does not export create().`);
+    }
 
     const response = await fetch("/api/plugins/import", {
       method: "POST",
@@ -1916,11 +1935,17 @@ async function importPlugin(): Promise<void> {
     }
 
     await loadPlugins({
-      successMessage: `Imported plugin "${parsed.label}".`,
+      successMessage: `Imported ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin "${parsed.label}".`,
     });
     await saveCollectionStateToServer();
   } catch (error) {
-    setPluginsStatus(errorMessage(error, "Failed to import plugin."), true);
+    setPluginsStatus(
+      errorMessage(
+        error,
+        `Failed to import ${kind === "pre_request" ? "pre-request" : "aggregation"} plugin.`,
+      ),
+      true,
+    );
   }
 }
 
@@ -1983,7 +2008,7 @@ function renderImportedPlugins(): void {
   if (importedPlugins.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "No imported plugins yet. Import a JSON or JS package to add one.";
+    empty.textContent = "No imported plugins yet. Import a pre-request or aggregation plugin to add one.";
     pluginsList.appendChild(empty);
     return;
   }
@@ -3970,6 +3995,7 @@ function setLoading(isLoading: boolean): void {
   openEnvironmentModalBtn.disabled = isLoading;
   importCurlBtn.disabled = isLoading;
   importPluginBtn.disabled = isLoading;
+  importPrePluginBtn.disabled = isLoading;
   pluginImportInput.disabled = isLoading;
   exportCurlBtn.disabled = isLoading;
   requestNameInput.disabled = isLoading;
