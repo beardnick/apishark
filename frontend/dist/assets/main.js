@@ -97,6 +97,7 @@ const headerContextMenu = byId("headerContextMenu");
 const headerContextDuplicateBtn = byId("headerContextDuplicateBtn");
 const headerContextDeleteBtn = byId("headerContextDeleteBtn");
 const statusText = byId("statusText");
+const durationText = byId("durationText");
 const errorText = byId("errorText");
 const sentHeadersOutput = byId("sentHeadersOutput");
 const headersOutput = byId("headersOutput");
@@ -149,6 +150,8 @@ let draftAutosaveTimer = null;
 let collectionStateSaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
+let requestStartedAtMs = null;
+let requestElapsedTimerId = null;
 let bodyEditorHasJSON = false;
 let rawJsonController = null;
 let ssePayloadJsonController = null;
@@ -1887,6 +1890,7 @@ async function sendRequest() {
             aggregate_openai_sse: preparedAggregation.pluginId === AGGREGATION_PLUGIN_OPENAI,
             timeout_seconds: toPositiveInt(timeoutInput.value, 120),
         };
+        startResponseElapsedTimer();
         const response = await fetch("/api/request", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1910,6 +1914,7 @@ async function sendRequest() {
     }
     finally {
         activeAbortController = null;
+        stopResponseElapsedTimer();
         finalizeResponseViews();
         setLoading(false);
         persistState();
@@ -1987,9 +1992,7 @@ function consumeEvent(event) {
             setError(event.message);
             break;
         case "done":
-            if (statusText.textContent) {
-                statusText.textContent = `${statusText.textContent} (${event.duration_ms} ms)`;
-            }
+            stopResponseElapsedTimer(event.duration_ms);
             finalizeAggregationRuntime();
             finalizeResponseViews();
             break;
@@ -2056,6 +2059,7 @@ function clearOutputs() {
     aggregationRuntime = null;
     setRawResponseMode("plain");
     statusText.textContent = "-";
+    resetResponseElapsedTimer();
     sentHeadersOutput.textContent = "";
     headersOutput.textContent = "";
     plainRawResponseBuffer.clear();
@@ -2068,6 +2072,59 @@ function clearOutputs() {
     rawJsonMeta.textContent = "";
     rawCollapseBtn.disabled = true;
     rawExpandBtn.disabled = true;
+}
+function startResponseElapsedTimer() {
+    resetResponseElapsedTimer();
+    requestStartedAtMs = performance.now();
+    renderResponseElapsedTimer();
+    requestElapsedTimerId = window.setInterval(() => {
+        renderResponseElapsedTimer();
+    }, 100);
+}
+function stopResponseElapsedTimer(finalDurationMs) {
+    if (requestElapsedTimerId !== null) {
+        window.clearInterval(requestElapsedTimerId);
+        requestElapsedTimerId = null;
+    }
+    if (typeof finalDurationMs === "number" && Number.isFinite(finalDurationMs) && finalDurationMs >= 0) {
+        durationText.textContent = formatElapsedDuration(finalDurationMs);
+        requestStartedAtMs = null;
+        return;
+    }
+    if (requestStartedAtMs !== null) {
+        durationText.textContent = formatElapsedDuration(performance.now() - requestStartedAtMs);
+        requestStartedAtMs = null;
+    }
+}
+function resetResponseElapsedTimer() {
+    if (requestElapsedTimerId !== null) {
+        window.clearInterval(requestElapsedTimerId);
+        requestElapsedTimerId = null;
+    }
+    requestStartedAtMs = null;
+    durationText.textContent = "-";
+}
+function renderResponseElapsedTimer() {
+    if (requestStartedAtMs === null) {
+        durationText.textContent = "-";
+        return;
+    }
+    durationText.textContent = formatElapsedDuration(performance.now() - requestStartedAtMs);
+}
+function formatElapsedDuration(durationMs) {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+        return "-";
+    }
+    if (durationMs < 1000) {
+        return `${Math.round(durationMs)} ms`;
+    }
+    const totalSeconds = durationMs / 1000;
+    if (totalSeconds < 60) {
+        return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)} s`;
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds - minutes * 60;
+    return `${minutes}m ${seconds.toFixed(1).padStart(4, "0")}s`;
 }
 function setRawResponseMode(mode) {
     rawResponseMode = mode;
