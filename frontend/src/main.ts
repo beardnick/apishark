@@ -299,6 +299,8 @@ const headerContextDeleteBtn = byId<HTMLButtonElement>("headerContextDeleteBtn")
 const statusText = byId<HTMLSpanElement>("statusText");
 const durationText = byId<HTMLSpanElement>("durationText");
 const errorText = byId<HTMLParagraphElement>("errorText");
+const responseSearchInput = byId<HTMLInputElement>("responseSearchInput");
+const responseSearchStatus = byId<HTMLElement>("responseSearchStatus");
 const sentHeadersOutput = byId<HTMLElement>("sentHeadersOutput");
 const headersOutput = byId<HTMLElement>("headersOutput");
 const rawJsonMeta = byId<HTMLElement>("rawJsonMeta");
@@ -363,6 +365,7 @@ let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let requestStartedAtMs: number | null = null;
 let requestElapsedTimerId: number | null = null;
+let responseSearchQuery = "";
 let bodyEditorHasJSON = false;
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
@@ -504,6 +507,10 @@ function wireEvents(): void {
   });
 
   clearOutputBtn.addEventListener("click", () => clearOutputs());
+  responseSearchInput.addEventListener("input", () => {
+    responseSearchQuery = responseSearchInput.value;
+    refreshResponseSearch();
+  });
 
   addHeaderBtn.addEventListener("click", () => {
     headerRows.push(createEmptyHeaderRow());
@@ -2503,6 +2510,7 @@ async function sendRequest(): Promise<void> {
     stopResponseElapsedTimer();
     finalizeResponseViews();
     setLoading(false);
+    refreshResponseSearch();
     persistState();
   }
 }
@@ -2577,6 +2585,7 @@ function consumeEvent(event: ServerEvent): void {
       statusText.textContent = `${event.status_text}${event.streaming ? " (SSE stream)" : ""}`;
       renderSentHeaders(latestSentHeaders);
       renderResponseHeaders(latestResponseHeaders);
+      refreshResponseSearch();
       break;
 
     case "raw_event":
@@ -2662,6 +2671,7 @@ function finalizeResponseViews(): void {
     rawOutput.textContent = rawText;
     renderRawJSONIfPossible(rawText);
   }
+  refreshResponseSearch();
 }
 
 function clearOutputs(): void {
@@ -2683,6 +2693,7 @@ function clearOutputs(): void {
   rawJsonMeta.textContent = "";
   rawCollapseBtn.disabled = true;
   rawExpandBtn.disabled = true;
+  refreshResponseSearch();
 }
 
 function startResponseElapsedTimer(): void {
@@ -2891,6 +2902,7 @@ function selectSseLine(entry: SseLineEntry): void {
     ssePayloadCollapseBtn.disabled = false;
     ssePayloadExpandBtn.disabled = false;
     ssePayloadMeta.textContent = `Line ${entry.index}`;
+    refreshResponseSearchHighlights();
     return;
   }
 
@@ -2901,6 +2913,176 @@ function selectSseLine(entry: SseLineEntry): void {
   ssePayloadCollapseBtn.disabled = true;
   ssePayloadExpandBtn.disabled = true;
   ssePayloadMeta.textContent = `Line ${entry.index}`;
+  refreshResponseSearchHighlights();
+}
+
+function refreshResponseSearch(): void {
+  const query = responseSearchQuery.trim();
+  const matchCount = countResponseSearchMatches(query);
+  updateResponseSearchStatus(query, matchCount);
+  refreshResponseSearchHighlights();
+}
+
+function refreshResponseSearchHighlights(): void {
+  for (const root of responseSearchHighlightRoots()) {
+    clearSearchHighlights(root);
+  }
+
+  const query = responseSearchQuery.trim();
+  if (query === "" || requestIsLoading) {
+    return;
+  }
+
+  for (const root of responseSearchHighlightRoots()) {
+    highlightTextInElement(root, query);
+  }
+}
+
+function updateResponseSearchStatus(query: string, matchCount: number): void {
+  if (query === "") {
+    responseSearchStatus.textContent = "";
+    return;
+  }
+
+  if (!hasResponseSearchContent()) {
+    responseSearchStatus.textContent = "No response to search";
+    return;
+  }
+
+  responseSearchStatus.textContent =
+    matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+}
+
+function countResponseSearchMatches(query: string): number {
+  if (query === "") {
+    return 0;
+  }
+
+  return responseSearchTexts().reduce((total, text) => total + countTextMatches(text, query), 0);
+}
+
+function hasResponseSearchContent(): boolean {
+  return responseSearchTexts().some((text) => text.trim() !== "");
+}
+
+function responseSearchTexts(): string[] {
+  return [
+    snapshotRawResponseText(),
+    aggregateAppender.snapshotText(),
+    formatHeadersForSearch(latestSentHeaders),
+    formatHeadersForSearch(latestResponseHeaders),
+  ];
+}
+
+function formatHeadersForSearch(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("\n");
+}
+
+function countTextMatches(text: string, query: string): number {
+  if (text === "" || query === "") {
+    return 0;
+  }
+
+  const normalizedText = text.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
+  let count = 0;
+  let index = normalizedText.indexOf(normalizedQuery);
+  while (index >= 0) {
+    count += 1;
+    index = normalizedText.indexOf(normalizedQuery, index + normalizedQuery.length);
+  }
+  return count;
+}
+
+function responseSearchHighlightRoots(): HTMLElement[] {
+  return [
+    rawOutput,
+    rawJsonViewer,
+    aggregateOutput,
+    sentHeadersOutput,
+    headersOutput,
+    sseLineList,
+    ssePayloadOutput,
+    ssePayloadJsonViewer,
+  ];
+}
+
+function clearSearchHighlights(root: HTMLElement): void {
+  const marks = [...root.querySelectorAll<HTMLElement>("mark.response-search-match")];
+  for (const mark of marks) {
+    const parent = mark.parentNode;
+    if (!parent) {
+      continue;
+    }
+    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark);
+    parent.normalize();
+  }
+}
+
+function highlightTextInElement(root: HTMLElement, query: string): number {
+  if (query === "") {
+    return 0;
+  }
+
+  const normalizedQuery = query.toLowerCase();
+  const textNodes: Text[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const text = node.nodeValue ?? "";
+      if (text === "" || !text.toLowerCase().includes(normalizedQuery)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (node.parentElement?.closest("mark.response-search-match")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  let current = walker.nextNode();
+  while (current) {
+    textNodes.push(current as Text);
+    current = walker.nextNode();
+  }
+
+  let matchCount = 0;
+  for (const node of textNodes) {
+    matchCount += replaceTextNodeWithHighlights(node, query);
+  }
+  return matchCount;
+}
+
+function replaceTextNodeWithHighlights(node: Text, query: string): number {
+  const text = node.data;
+  const normalizedText = text.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
+  const fragment = document.createDocumentFragment();
+  let matchCount = 0;
+  let cursor = 0;
+  let index = normalizedText.indexOf(normalizedQuery);
+
+  while (index >= 0) {
+    if (index > cursor) {
+      fragment.appendChild(document.createTextNode(text.slice(cursor, index)));
+    }
+
+    const mark = document.createElement("mark");
+    mark.className = "response-search-match";
+    mark.textContent = text.slice(index, index + query.length);
+    fragment.appendChild(mark);
+    matchCount += 1;
+    cursor = index + query.length;
+    index = normalizedText.indexOf(normalizedQuery, cursor);
+  }
+
+  if (cursor < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(cursor)));
+  }
+
+  node.replaceWith(fragment);
+  return matchCount;
 }
 
 function extractPayloadText(rawLine: string): string {
@@ -3854,16 +4036,39 @@ function renderCollections(): void {
 }
 
 function matchesRequestSearch(
-  request: Pick<RequestLibraryDraft, "name" | "method" | "url">,
+  request: Pick<RequestLibraryDraft, "name" | "method" | "url"> &
+    Partial<Pick<RequestLibraryDraft, "headers" | "body" | "body_fields">>,
   normalizedSearch: string,
 ): boolean {
   if (normalizedSearch === "") {
     return true;
   }
 
-  return [request.name, request.method, request.url]
+  return collectRequestSearchValues(request)
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+
+function collectRequestSearchValues(
+  request: Pick<RequestLibraryDraft, "name" | "method" | "url"> &
+    Partial<Pick<RequestLibraryDraft, "headers" | "body" | "body_fields">>,
+): string[] {
+  const values = [request.name, request.method, request.url].filter(
+    (value): value is string => typeof value === "string",
+  );
+  if (typeof request.body === "string") {
+    values.push(request.body);
+  }
+
+  for (const header of request.headers ?? []) {
+    values.push(header.key, header.value);
+  }
+
+  for (const field of request.body_fields ?? []) {
+    values.push(field.key, field.value);
+  }
+
+  return values;
 }
 
 function normalizeCollapsedCollectionIds(input: unknown): string[] {

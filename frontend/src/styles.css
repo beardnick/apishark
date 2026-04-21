@@ -1480,6 +1480,27 @@ button.ghost:hover:not(:disabled) {
   color: var(--accent-strong);
 }
 
+.response-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) auto;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.response-search-input {
+  width: 100%;
+}
+
+.response-search-match {
+  color: #1f2937;
+  background: #fde68a;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 2px;
+}
+
 .json-toolbar {
   flex-wrap: wrap;
   padding-bottom: var(--space-3);
@@ -2162,6 +2183,7 @@ button.ghost:hover:not(:disabled) {
   .header-row,
   .env-row,
   .collection-plugin-row,
+  .response-search-row,
   .response-status-strip,
   .response-headers-grid-head,
   .response-headers-stack,

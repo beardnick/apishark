@@ -99,6 +99,8 @@ const headerContextDeleteBtn = byId("headerContextDeleteBtn");
 const statusText = byId("statusText");
 const durationText = byId("durationText");
 const errorText = byId("errorText");
+const responseSearchInput = byId("responseSearchInput");
+const responseSearchStatus = byId("responseSearchStatus");
 const sentHeadersOutput = byId("sentHeadersOutput");
 const headersOutput = byId("headersOutput");
 const rawJsonMeta = byId("rawJsonMeta");
@@ -152,6 +154,7 @@ let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let requestStartedAtMs = null;
 let requestElapsedTimerId = null;
+let responseSearchQuery = "";
 let bodyEditorHasJSON = false;
 let rawJsonController = null;
 let ssePayloadJsonController = null;
@@ -278,6 +281,10 @@ function wireEvents() {
         }
     });
     clearOutputBtn.addEventListener("click", () => clearOutputs());
+    responseSearchInput.addEventListener("input", () => {
+        responseSearchQuery = responseSearchInput.value;
+        refreshResponseSearch();
+    });
     addHeaderBtn.addEventListener("click", () => {
         headerRows.push(createEmptyHeaderRow());
         renderHeaderRows();
@@ -1917,6 +1924,7 @@ async function sendRequest() {
         stopResponseElapsedTimer();
         finalizeResponseViews();
         setLoading(false);
+        refreshResponseSearch();
         persistState();
     }
 }
@@ -1984,6 +1992,7 @@ function consumeEvent(event) {
             statusText.textContent = `${event.status_text}${event.streaming ? " (SSE stream)" : ""}`;
             renderSentHeaders(latestSentHeaders);
             renderResponseHeaders(latestResponseHeaders);
+            refreshResponseSearch();
             break;
         case "raw_event":
             consumeRawEvent(event);
@@ -2052,6 +2061,7 @@ function finalizeResponseViews() {
         rawOutput.textContent = rawText;
         renderRawJSONIfPossible(rawText);
     }
+    refreshResponseSearch();
 }
 function clearOutputs() {
     latestSentHeaders = {};
@@ -2072,6 +2082,7 @@ function clearOutputs() {
     rawJsonMeta.textContent = "";
     rawCollapseBtn.disabled = true;
     rawExpandBtn.disabled = true;
+    refreshResponseSearch();
 }
 function startResponseElapsedTimer() {
     resetResponseElapsedTimer();
@@ -2248,6 +2259,7 @@ function selectSseLine(entry) {
         ssePayloadCollapseBtn.disabled = false;
         ssePayloadExpandBtn.disabled = false;
         ssePayloadMeta.textContent = `Line ${entry.index}`;
+        refreshResponseSearchHighlights();
         return;
     }
     ssePayloadJsonViewer.textContent = "";
@@ -2257,6 +2269,151 @@ function selectSseLine(entry) {
     ssePayloadCollapseBtn.disabled = true;
     ssePayloadExpandBtn.disabled = true;
     ssePayloadMeta.textContent = `Line ${entry.index}`;
+    refreshResponseSearchHighlights();
+}
+function refreshResponseSearch() {
+    const query = responseSearchQuery.trim();
+    const matchCount = countResponseSearchMatches(query);
+    updateResponseSearchStatus(query, matchCount);
+    refreshResponseSearchHighlights();
+}
+function refreshResponseSearchHighlights() {
+    for (const root of responseSearchHighlightRoots()) {
+        clearSearchHighlights(root);
+    }
+    const query = responseSearchQuery.trim();
+    if (query === "" || requestIsLoading) {
+        return;
+    }
+    for (const root of responseSearchHighlightRoots()) {
+        highlightTextInElement(root, query);
+    }
+}
+function updateResponseSearchStatus(query, matchCount) {
+    if (query === "") {
+        responseSearchStatus.textContent = "";
+        return;
+    }
+    if (!hasResponseSearchContent()) {
+        responseSearchStatus.textContent = "No response to search";
+        return;
+    }
+    responseSearchStatus.textContent =
+        matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+}
+function countResponseSearchMatches(query) {
+    if (query === "") {
+        return 0;
+    }
+    return responseSearchTexts().reduce((total, text) => total + countTextMatches(text, query), 0);
+}
+function hasResponseSearchContent() {
+    return responseSearchTexts().some((text) => text.trim() !== "");
+}
+function responseSearchTexts() {
+    return [
+        snapshotRawResponseText(),
+        aggregateAppender.snapshotText(),
+        formatHeadersForSearch(latestSentHeaders),
+        formatHeadersForSearch(latestResponseHeaders),
+    ];
+}
+function formatHeadersForSearch(headers) {
+    return Object.entries(headers)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n");
+}
+function countTextMatches(text, query) {
+    if (text === "" || query === "") {
+        return 0;
+    }
+    const normalizedText = text.toLowerCase();
+    const normalizedQuery = query.toLowerCase();
+    let count = 0;
+    let index = normalizedText.indexOf(normalizedQuery);
+    while (index >= 0) {
+        count += 1;
+        index = normalizedText.indexOf(normalizedQuery, index + normalizedQuery.length);
+    }
+    return count;
+}
+function responseSearchHighlightRoots() {
+    return [
+        rawOutput,
+        rawJsonViewer,
+        aggregateOutput,
+        sentHeadersOutput,
+        headersOutput,
+        sseLineList,
+        ssePayloadOutput,
+        ssePayloadJsonViewer,
+    ];
+}
+function clearSearchHighlights(root) {
+    const marks = [...root.querySelectorAll("mark.response-search-match")];
+    for (const mark of marks) {
+        const parent = mark.parentNode;
+        if (!parent) {
+            continue;
+        }
+        parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark);
+        parent.normalize();
+    }
+}
+function highlightTextInElement(root, query) {
+    if (query === "") {
+        return 0;
+    }
+    const normalizedQuery = query.toLowerCase();
+    const textNodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            const text = node.nodeValue ?? "";
+            if (text === "" || !text.toLowerCase().includes(normalizedQuery)) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            if (node.parentElement?.closest("mark.response-search-match")) {
+                return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        },
+    });
+    let current = walker.nextNode();
+    while (current) {
+        textNodes.push(current);
+        current = walker.nextNode();
+    }
+    let matchCount = 0;
+    for (const node of textNodes) {
+        matchCount += replaceTextNodeWithHighlights(node, query);
+    }
+    return matchCount;
+}
+function replaceTextNodeWithHighlights(node, query) {
+    const text = node.data;
+    const normalizedText = text.toLowerCase();
+    const normalizedQuery = query.toLowerCase();
+    const fragment = document.createDocumentFragment();
+    let matchCount = 0;
+    let cursor = 0;
+    let index = normalizedText.indexOf(normalizedQuery);
+    while (index >= 0) {
+        if (index > cursor) {
+            fragment.appendChild(document.createTextNode(text.slice(cursor, index)));
+        }
+        const mark = document.createElement("mark");
+        mark.className = "response-search-match";
+        mark.textContent = text.slice(index, index + query.length);
+        fragment.appendChild(mark);
+        matchCount += 1;
+        cursor = index + query.length;
+        index = normalizedText.indexOf(normalizedQuery, cursor);
+    }
+    if (cursor < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+    node.replaceWith(fragment);
+    return matchCount;
 }
 function extractPayloadText(rawLine) {
     const trimmed = rawLine.trim();
@@ -3065,9 +3222,22 @@ function matchesRequestSearch(request, normalizedSearch) {
     if (normalizedSearch === "") {
         return true;
     }
-    return [request.name, request.method, request.url]
+    return collectRequestSearchValues(request)
         .filter((value) => typeof value === "string")
         .some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+function collectRequestSearchValues(request) {
+    const values = [request.name, request.method, request.url].filter((value) => typeof value === "string");
+    if (typeof request.body === "string") {
+        values.push(request.body);
+    }
+    for (const header of request.headers ?? []) {
+        values.push(header.key, header.value);
+    }
+    for (const field of request.body_fields ?? []) {
+        values.push(field.key, field.value);
+    }
+    return values;
 }
 function normalizeCollapsedCollectionIds(input) {
     if (!Array.isArray(input)) {

@@ -55,6 +55,8 @@ test("built runtime keeps collection collapse controls and persisted collapse st
   assert.match(js, /collection-collapse-btn/);
   assert.match(js, /collapsedCollectionIds/);
   assert.match(js, /toggleCollectionCollapsed/);
+  assert.match(js, /collectRequestSearchValues/);
+  assert.match(js, /body_fields/);
   assert.match(js, /showRequestContextMenu/);
   assert.match(js, /duplicateSavedRequest/);
 });
