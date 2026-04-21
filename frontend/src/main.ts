@@ -186,6 +186,7 @@ type ServerEvent =
   | { type: "done"; duration_ms: number; aggregated: string };
 
 type RawResponseMode = "plain" | "sse";
+type EditorFindScope = "request" | "response";
 type SseLineEntry = {
   index: number;
   rawLine: string;
@@ -201,6 +202,11 @@ type PaneLayoutState = {
 };
 
 type PluginImportKind = "aggregation" | "pre_request";
+
+type RequestFindMatch = {
+  from: number;
+  to: number;
+};
 
 const STORAGE_KEY = "apishark.state.v2";
 const REQUEST_AGGREGATION_USE_COLLECTION = "__collection__";
@@ -245,6 +251,13 @@ const importPrePluginBtn = byId<HTMLButtonElement>("importPrePluginBtn");
 const pluginImportInput = byId<HTMLInputElement>("pluginImportInput");
 const pluginsStatusText = byId<HTMLElement>("pluginsStatusText");
 const pluginsList = byId<HTMLElement>("pluginsList");
+const requestWorkbench = byId<HTMLElement>("requestWorkbench");
+const requestFindBar = byId<HTMLElement>("requestFindBar");
+const requestFindInput = byId<HTMLInputElement>("requestFindInput");
+const requestFindStatus = byId<HTMLElement>("requestFindStatus");
+const requestFindPrevBtn = byId<HTMLButtonElement>("requestFindPrevBtn");
+const requestFindNextBtn = byId<HTMLButtonElement>("requestFindNextBtn");
+const requestFindCloseBtn = byId<HTMLButtonElement>("requestFindCloseBtn");
 const requestNameInput = byId<HTMLInputElement>("requestNameInput");
 const methodInput = byId<HTMLSelectElement>("methodInput");
 const urlInput = byId<HTMLInputElement>("urlInput");
@@ -299,8 +312,13 @@ const headerContextDeleteBtn = byId<HTMLButtonElement>("headerContextDeleteBtn")
 const statusText = byId<HTMLSpanElement>("statusText");
 const durationText = byId<HTMLSpanElement>("durationText");
 const errorText = byId<HTMLParagraphElement>("errorText");
-const responseSearchInput = byId<HTMLInputElement>("responseSearchInput");
-const responseSearchStatus = byId<HTMLElement>("responseSearchStatus");
+const responseWorkbench = byId<HTMLElement>("responseWorkbench");
+const responseFindBar = byId<HTMLElement>("responseFindBar");
+const responseFindInput = byId<HTMLInputElement>("responseFindInput");
+const responseFindStatus = byId<HTMLElement>("responseFindStatus");
+const responseFindPrevBtn = byId<HTMLButtonElement>("responseFindPrevBtn");
+const responseFindNextBtn = byId<HTMLButtonElement>("responseFindNextBtn");
+const responseFindCloseBtn = byId<HTMLButtonElement>("responseFindCloseBtn");
 const sentHeadersOutput = byId<HTMLElement>("sentHeadersOutput");
 const headersOutput = byId<HTMLElement>("headersOutput");
 const rawJsonMeta = byId<HTMLElement>("rawJsonMeta");
@@ -365,7 +383,14 @@ let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let requestStartedAtMs: number | null = null;
 let requestElapsedTimerId: number | null = null;
-let responseSearchQuery = "";
+let hoveredFindScope: EditorFindScope | null = null;
+let activeFindScope: EditorFindScope | null = null;
+let requestFindQuery = "";
+let requestFindMatches: RequestFindMatch[] = [];
+let activeRequestFindMatchIndex = -1;
+let responseFindQuery = "";
+let responseSearchMatches: HTMLElement[] = [];
+let activeResponseSearchMatchIndex = -1;
 let bodyEditorHasJSON = false;
 let rawJsonController: JsonViewController | null = null;
 let ssePayloadJsonController: JsonViewController | null = null;
@@ -386,6 +411,9 @@ const bodyEditorController = createBodyEditor({
   undoStorageKey: "apishark.body-editor.undo.v1",
   onStateChange: (event) => {
     syncBodyEditor();
+    if (!requestFindBar.hidden) {
+      refreshRequestFind();
+    }
     if (event.reason === "doc" && event.source === "user") {
       markRequestEditorChanged();
     }
@@ -507,10 +535,7 @@ function wireEvents(): void {
   });
 
   clearOutputBtn.addEventListener("click", () => clearOutputs());
-  responseSearchInput.addEventListener("input", () => {
-    responseSearchQuery = responseSearchInput.value;
-    refreshResponseSearch();
-  });
+  setupEditorFindControls();
 
   addHeaderBtn.addEventListener("click", () => {
     headerRows.push(createEmptyHeaderRow());
@@ -527,6 +552,9 @@ function wireEvents(): void {
   });
   bodyModeInput.addEventListener("change", () => {
     renderBodyEditorControls();
+    if (!requestFindBar.hidden) {
+      refreshRequestFind();
+    }
     markRequestEditorChanged();
   });
   addBodyFieldBtn.addEventListener("click", () => {
@@ -655,6 +683,142 @@ function wireEvents(): void {
     target.addEventListener("input", handler);
     target.addEventListener("change", handler);
   }
+}
+
+function setupEditorFindControls(): void {
+  requestWorkbench.addEventListener("pointerenter", () => {
+    hoveredFindScope = "request";
+  });
+  requestWorkbench.addEventListener("pointerleave", (event) => {
+    if (!(event.relatedTarget instanceof Node) || !requestWorkbench.contains(event.relatedTarget)) {
+      hoveredFindScope = hoveredFindScope === "request" ? null : hoveredFindScope;
+    }
+  });
+  responseWorkbench.addEventListener("pointerenter", () => {
+    hoveredFindScope = "response";
+  });
+  responseWorkbench.addEventListener("pointerleave", (event) => {
+    if (!(event.relatedTarget instanceof Node) || !responseWorkbench.contains(event.relatedTarget)) {
+      hoveredFindScope = hoveredFindScope === "response" ? null : hoveredFindScope;
+    }
+  });
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (!isFindShortcut(event)) {
+        return;
+      }
+
+      const scope = resolveEditorFindScope(event.target);
+      if (!scope) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      openEditorFind(scope);
+    },
+    true,
+  );
+
+  requestFindInput.addEventListener("input", () => {
+    requestFindQuery = requestFindInput.value;
+    activeRequestFindMatchIndex = -1;
+    refreshRequestFind();
+  });
+  requestFindInput.addEventListener("keydown", (event) => {
+    handleFindInputKeydown(event, "request");
+  });
+  requestFindPrevBtn.addEventListener("click", () => goToRequestFindMatch(-1));
+  requestFindNextBtn.addEventListener("click", () => goToRequestFindMatch(1));
+  requestFindCloseBtn.addEventListener("click", () => closeEditorFind("request"));
+
+  responseFindInput.addEventListener("input", () => {
+    responseFindQuery = responseFindInput.value;
+    activeResponseSearchMatchIndex = -1;
+    refreshResponseSearch();
+  });
+  responseFindInput.addEventListener("keydown", (event) => {
+    handleFindInputKeydown(event, "response");
+  });
+  responseFindPrevBtn.addEventListener("click", () => goToResponseSearchMatch(-1));
+  responseFindNextBtn.addEventListener("click", () => goToResponseSearchMatch(1));
+  responseFindCloseBtn.addEventListener("click", () => closeEditorFind("response"));
+}
+
+function isFindShortcut(event: KeyboardEvent): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "f";
+}
+
+function resolveEditorFindScope(target: EventTarget | null): EditorFindScope | null {
+  if (target instanceof Node) {
+    if (requestWorkbench.contains(target)) {
+      return "request";
+    }
+    if (responseWorkbench.contains(target)) {
+      return "response";
+    }
+  }
+  return hoveredFindScope;
+}
+
+function openEditorFind(scope: EditorFindScope): void {
+  activeFindScope = scope;
+  if (scope === "request") {
+    requestFindBar.hidden = false;
+    requestFindInput.value = requestFindQuery;
+    refreshRequestFind();
+    requestFindInput.focus();
+    requestFindInput.select();
+    return;
+  }
+
+  responseFindBar.hidden = false;
+  responseFindInput.value = responseFindQuery;
+  refreshResponseSearch();
+  responseFindInput.focus();
+  responseFindInput.select();
+}
+
+function closeEditorFind(scope: EditorFindScope): void {
+  if (scope === "request") {
+    requestFindBar.hidden = true;
+    activeRequestFindMatchIndex = -1;
+    requestFindStatus.textContent = "";
+    if (activeFindScope === "request") {
+      activeFindScope = null;
+    }
+    bodyEditorController.focus();
+    return;
+  }
+
+  responseFindBar.hidden = true;
+  clearResponseSearchHighlights();
+  activeResponseSearchMatchIndex = -1;
+  responseFindStatus.textContent = "";
+  if (activeFindScope === "response") {
+    activeFindScope = null;
+  }
+}
+
+function handleFindInputKeydown(event: KeyboardEvent, scope: EditorFindScope): void {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeEditorFind(scope);
+    return;
+  }
+
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  if (scope === "request") {
+    goToRequestFindMatch(event.shiftKey ? -1 : 1);
+    return;
+  }
+  goToResponseSearchMatch(event.shiftKey ? -1 : 1);
 }
 
 function setupTabs(): void {
@@ -2916,41 +3080,172 @@ function selectSseLine(entry: SseLineEntry): void {
   refreshResponseSearchHighlights();
 }
 
+function refreshRequestFind(): void {
+  const query = requestFindQuery.trim();
+  requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
+  if (query === "") {
+    requestFindStatus.textContent = "";
+    activeRequestFindMatchIndex = -1;
+    updateRequestFindButtons();
+    return;
+  }
+
+  if (bodyModeInput.value !== "raw") {
+    requestFindStatus.textContent = "Switch to raw body to search";
+    activeRequestFindMatchIndex = -1;
+    updateRequestFindButtons();
+    return;
+  }
+
+  if (requestFindMatches.length === 0) {
+    requestFindStatus.textContent = "No matches";
+    activeRequestFindMatchIndex = -1;
+    updateRequestFindButtons();
+    return;
+  }
+
+  if (activeRequestFindMatchIndex < 0 || activeRequestFindMatchIndex >= requestFindMatches.length) {
+    activeRequestFindMatchIndex = 0;
+  }
+  updateRequestFindStatus();
+  updateRequestFindButtons();
+  selectActiveRequestFindMatch();
+}
+
+function goToRequestFindMatch(direction: 1 | -1): void {
+  if (requestFindQuery.trim() === "") {
+    requestFindInput.focus();
+    return;
+  }
+  if (requestFindMatches.length === 0) {
+    refreshRequestFind();
+  }
+  if (requestFindMatches.length === 0) {
+    return;
+  }
+  activeRequestFindMatchIndex = wrapIndex(
+    activeRequestFindMatchIndex + direction,
+    requestFindMatches.length,
+  );
+  updateRequestFindStatus();
+  selectActiveRequestFindMatch();
+}
+
+function selectActiveRequestFindMatch(): void {
+  const match = requestFindMatches[activeRequestFindMatchIndex];
+  if (!match) {
+    return;
+  }
+  bodyEditorController.selectRange(match.from, match.to);
+}
+
+function updateRequestFindStatus(): void {
+  requestFindStatus.textContent = `${activeRequestFindMatchIndex + 1} of ${requestFindMatches.length}`;
+}
+
+function updateRequestFindButtons(): void {
+  const disabled = requestFindMatches.length === 0;
+  requestFindPrevBtn.disabled = disabled;
+  requestFindNextBtn.disabled = disabled;
+}
+
 function refreshResponseSearch(): void {
-  const query = responseSearchQuery.trim();
+  const query = responseFindQuery.trim();
   const matchCount = countResponseSearchMatches(query);
   updateResponseSearchStatus(query, matchCount);
   refreshResponseSearchHighlights();
 }
 
 function refreshResponseSearchHighlights(): void {
-  for (const root of responseSearchHighlightRoots()) {
-    clearSearchHighlights(root);
-  }
+  clearResponseSearchHighlights();
 
-  const query = responseSearchQuery.trim();
+  const query = responseFindQuery.trim();
   if (query === "" || requestIsLoading) {
+    activeResponseSearchMatchIndex = -1;
+    updateResponseFindButtons();
     return;
   }
 
   for (const root of responseSearchHighlightRoots()) {
-    highlightTextInElement(root, query);
+    responseSearchMatches.push(...highlightTextInElement(root, query));
   }
+
+  if (activeResponseSearchMatchIndex < 0 || activeResponseSearchMatchIndex >= responseSearchMatches.length) {
+    activeResponseSearchMatchIndex = responseSearchMatches.length > 0 ? 0 : -1;
+  }
+  activateResponseSearchMatch(activeResponseSearchMatchIndex);
+  updateResponseFindButtons();
+}
+
+function clearResponseSearchHighlights(): void {
+  responseSearchMatches = [];
+  for (const root of responseSearchHighlightRoots()) {
+    clearSearchHighlights(root);
+  }
+}
+
+function goToResponseSearchMatch(direction: 1 | -1): void {
+  if (responseFindQuery.trim() === "") {
+    responseFindInput.focus();
+    return;
+  }
+  if (responseSearchMatches.length === 0) {
+    refreshResponseSearch();
+  }
+  if (responseSearchMatches.length === 0) {
+    return;
+  }
+  activateResponseSearchMatch(
+    wrapIndex(activeResponseSearchMatchIndex + direction, responseSearchMatches.length),
+  );
+}
+
+function activateResponseSearchMatch(index: number): void {
+  for (const match of responseSearchMatches) {
+    match.classList.remove("is-active");
+  }
+
+  const match = responseSearchMatches[index];
+  if (!match) {
+    activeResponseSearchMatchIndex = -1;
+    updateResponseSearchStatus(responseFindQuery.trim(), responseSearchMatches.length);
+    return;
+  }
+
+  activeResponseSearchMatchIndex = index;
+  match.classList.add("is-active");
+  match.scrollIntoView({ block: "center", inline: "nearest" });
+  updateResponseSearchStatus(responseFindQuery.trim(), responseSearchMatches.length);
 }
 
 function updateResponseSearchStatus(query: string, matchCount: number): void {
   if (query === "") {
-    responseSearchStatus.textContent = "";
+    responseFindStatus.textContent = "";
     return;
   }
 
   if (!hasResponseSearchContent()) {
-    responseSearchStatus.textContent = "No response to search";
+    responseFindStatus.textContent = "No response to search";
     return;
   }
 
-  responseSearchStatus.textContent =
-    matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+  if (matchCount === 0) {
+    responseFindStatus.textContent = "No matches";
+    return;
+  }
+
+  if (activeResponseSearchMatchIndex >= 0 && matchCount > 0) {
+    responseFindStatus.textContent = `${activeResponseSearchMatchIndex + 1} of ${matchCount}`;
+    return;
+  }
+
+  responseFindStatus.textContent = matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+}
+
+function updateResponseFindButtons(): void {
+  const disabled = responseSearchMatches.length === 0;
+  responseFindPrevBtn.disabled = disabled;
+  responseFindNextBtn.disabled = disabled;
 }
 
 function countResponseSearchMatches(query: string): number {
@@ -2981,19 +3276,27 @@ function formatHeadersForSearch(headers: Record<string, string>): string {
 }
 
 function countTextMatches(text: string, query: string): number {
+  return collectTextMatches(text, query).length;
+}
+
+function collectTextMatches(text: string, query: string): RequestFindMatch[] {
   if (text === "" || query === "") {
-    return 0;
+    return [];
   }
 
+  const matches: RequestFindMatch[] = [];
   const normalizedText = text.toLowerCase();
   const normalizedQuery = query.toLowerCase();
-  let count = 0;
   let index = normalizedText.indexOf(normalizedQuery);
   while (index >= 0) {
-    count += 1;
+    matches.push({ from: index, to: index + query.length });
     index = normalizedText.indexOf(normalizedQuery, index + normalizedQuery.length);
   }
-  return count;
+  return matches;
+}
+
+function wrapIndex(index: number, length: number): number {
+  return ((index % length) + length) % length;
 }
 
 function responseSearchHighlightRoots(): HTMLElement[] {
@@ -3021,9 +3324,9 @@ function clearSearchHighlights(root: HTMLElement): void {
   }
 }
 
-function highlightTextInElement(root: HTMLElement, query: string): number {
+function highlightTextInElement(root: HTMLElement, query: string): HTMLElement[] {
   if (query === "") {
-    return 0;
+    return [];
   }
 
   const normalizedQuery = query.toLowerCase();
@@ -3047,19 +3350,15 @@ function highlightTextInElement(root: HTMLElement, query: string): number {
     current = walker.nextNode();
   }
 
-  let matchCount = 0;
-  for (const node of textNodes) {
-    matchCount += replaceTextNodeWithHighlights(node, query);
-  }
-  return matchCount;
+  return textNodes.flatMap((node) => replaceTextNodeWithHighlights(node, query));
 }
 
-function replaceTextNodeWithHighlights(node: Text, query: string): number {
+function replaceTextNodeWithHighlights(node: Text, query: string): HTMLElement[] {
   const text = node.data;
   const normalizedText = text.toLowerCase();
   const normalizedQuery = query.toLowerCase();
   const fragment = document.createDocumentFragment();
-  let matchCount = 0;
+  const marks: HTMLElement[] = [];
   let cursor = 0;
   let index = normalizedText.indexOf(normalizedQuery);
 
@@ -3072,7 +3371,7 @@ function replaceTextNodeWithHighlights(node: Text, query: string): number {
     mark.className = "response-search-match";
     mark.textContent = text.slice(index, index + query.length);
     fragment.appendChild(mark);
-    matchCount += 1;
+    marks.push(mark);
     cursor = index + query.length;
     index = normalizedText.indexOf(normalizedQuery, cursor);
   }
@@ -3082,7 +3381,7 @@ function replaceTextNodeWithHighlights(node: Text, query: string): number {
   }
 
   node.replaceWith(fragment);
-  return matchCount;
+  return marks;
 }
 
 function extractPayloadText(rawLine: string): string {

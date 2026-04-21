@@ -61,6 +61,8 @@ test("request workspace keeps import and export next to request actions", async 
   assert.ok(requestWorkbenchMatch, "request workbench should exist");
   assert.match(requestWorkbenchMatch[0], /id="openImportModalBtn"/);
   assert.match(requestWorkbenchMatch[0], /id="exportCurlBtn"/);
+  assert.match(requestWorkbenchMatch[0], /id="requestFindBar"/);
+  assert.match(requestWorkbenchMatch[0], /id="requestFindInput"/);
   assert.doesNotMatch(html, /id="openImportModalFromSidebarBtn"/);
 });
 
@@ -85,8 +87,9 @@ test("response workspace keeps a summary strip and grid-aligned headers panel", 
   assert.match(responseWorkbenchMatch[0], /class="response-status-label">Status<\/span>/);
   assert.match(responseWorkbenchMatch[0], /class="response-status-label">Elapsed<\/span>/);
   assert.match(responseWorkbenchMatch[0], /id="durationText"/);
-  assert.match(responseWorkbenchMatch[0], /id="responseSearchInput"/);
-  assert.match(responseWorkbenchMatch[0], /id="responseSearchStatus"/);
+  assert.match(responseWorkbenchMatch[0], /id="responseFindBar"/);
+  assert.match(responseWorkbenchMatch[0], /id="responseFindInput"/);
+  assert.doesNotMatch(responseWorkbenchMatch[0], /id="responseSearchInput"/);
   assert.doesNotMatch(responseWorkbenchMatch[0], /Streaming-aware/);
   assert.match(responseWorkbenchMatch[0], /class="response-headers-grid-head"/);
   assert.match(responseWorkbenchMatch[0], /class="headers-panel-stack response-headers-stack"/);

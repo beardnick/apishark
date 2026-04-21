@@ -47,6 +47,13 @@ const importPrePluginBtn = byId("importPrePluginBtn");
 const pluginImportInput = byId("pluginImportInput");
 const pluginsStatusText = byId("pluginsStatusText");
 const pluginsList = byId("pluginsList");
+const requestWorkbench = byId("requestWorkbench");
+const requestFindBar = byId("requestFindBar");
+const requestFindInput = byId("requestFindInput");
+const requestFindStatus = byId("requestFindStatus");
+const requestFindPrevBtn = byId("requestFindPrevBtn");
+const requestFindNextBtn = byId("requestFindNextBtn");
+const requestFindCloseBtn = byId("requestFindCloseBtn");
 const requestNameInput = byId("requestNameInput");
 const methodInput = byId("methodInput");
 const urlInput = byId("urlInput");
@@ -99,8 +106,13 @@ const headerContextDeleteBtn = byId("headerContextDeleteBtn");
 const statusText = byId("statusText");
 const durationText = byId("durationText");
 const errorText = byId("errorText");
-const responseSearchInput = byId("responseSearchInput");
-const responseSearchStatus = byId("responseSearchStatus");
+const responseWorkbench = byId("responseWorkbench");
+const responseFindBar = byId("responseFindBar");
+const responseFindInput = byId("responseFindInput");
+const responseFindStatus = byId("responseFindStatus");
+const responseFindPrevBtn = byId("responseFindPrevBtn");
+const responseFindNextBtn = byId("responseFindNextBtn");
+const responseFindCloseBtn = byId("responseFindCloseBtn");
 const sentHeadersOutput = byId("sentHeadersOutput");
 const headersOutput = byId("headersOutput");
 const rawJsonMeta = byId("rawJsonMeta");
@@ -154,7 +166,14 @@ let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let requestStartedAtMs = null;
 let requestElapsedTimerId = null;
-let responseSearchQuery = "";
+let hoveredFindScope = null;
+let activeFindScope = null;
+let requestFindQuery = "";
+let requestFindMatches = [];
+let activeRequestFindMatchIndex = -1;
+let responseFindQuery = "";
+let responseSearchMatches = [];
+let activeResponseSearchMatchIndex = -1;
 let bodyEditorHasJSON = false;
 let rawJsonController = null;
 let ssePayloadJsonController = null;
@@ -174,6 +193,9 @@ const bodyEditorController = createBodyEditor({
     undoStorageKey: "apishark.body-editor.undo.v1",
     onStateChange: (event) => {
         syncBodyEditor();
+        if (!requestFindBar.hidden) {
+            refreshRequestFind();
+        }
         if (event.reason === "doc" && event.source === "user") {
             markRequestEditorChanged();
         }
@@ -281,10 +303,7 @@ function wireEvents() {
         }
     });
     clearOutputBtn.addEventListener("click", () => clearOutputs());
-    responseSearchInput.addEventListener("input", () => {
-        responseSearchQuery = responseSearchInput.value;
-        refreshResponseSearch();
-    });
+    setupEditorFindControls();
     addHeaderBtn.addEventListener("click", () => {
         headerRows.push(createEmptyHeaderRow());
         renderHeaderRows();
@@ -298,6 +317,9 @@ function wireEvents() {
     });
     bodyModeInput.addEventListener("change", () => {
         renderBodyEditorControls();
+        if (!requestFindBar.hidden) {
+            refreshRequestFind();
+        }
         markRequestEditorChanged();
     });
     addBodyFieldBtn.addEventListener("click", () => {
@@ -412,6 +434,123 @@ function wireEvents() {
         target.addEventListener("input", handler);
         target.addEventListener("change", handler);
     }
+}
+function setupEditorFindControls() {
+    requestWorkbench.addEventListener("pointerenter", () => {
+        hoveredFindScope = "request";
+    });
+    requestWorkbench.addEventListener("pointerleave", (event) => {
+        if (!(event.relatedTarget instanceof Node) || !requestWorkbench.contains(event.relatedTarget)) {
+            hoveredFindScope = hoveredFindScope === "request" ? null : hoveredFindScope;
+        }
+    });
+    responseWorkbench.addEventListener("pointerenter", () => {
+        hoveredFindScope = "response";
+    });
+    responseWorkbench.addEventListener("pointerleave", (event) => {
+        if (!(event.relatedTarget instanceof Node) || !responseWorkbench.contains(event.relatedTarget)) {
+            hoveredFindScope = hoveredFindScope === "response" ? null : hoveredFindScope;
+        }
+    });
+    document.addEventListener("keydown", (event) => {
+        if (!isFindShortcut(event)) {
+            return;
+        }
+        const scope = resolveEditorFindScope(event.target);
+        if (!scope) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        openEditorFind(scope);
+    }, true);
+    requestFindInput.addEventListener("input", () => {
+        requestFindQuery = requestFindInput.value;
+        activeRequestFindMatchIndex = -1;
+        refreshRequestFind();
+    });
+    requestFindInput.addEventListener("keydown", (event) => {
+        handleFindInputKeydown(event, "request");
+    });
+    requestFindPrevBtn.addEventListener("click", () => goToRequestFindMatch(-1));
+    requestFindNextBtn.addEventListener("click", () => goToRequestFindMatch(1));
+    requestFindCloseBtn.addEventListener("click", () => closeEditorFind("request"));
+    responseFindInput.addEventListener("input", () => {
+        responseFindQuery = responseFindInput.value;
+        activeResponseSearchMatchIndex = -1;
+        refreshResponseSearch();
+    });
+    responseFindInput.addEventListener("keydown", (event) => {
+        handleFindInputKeydown(event, "response");
+    });
+    responseFindPrevBtn.addEventListener("click", () => goToResponseSearchMatch(-1));
+    responseFindNextBtn.addEventListener("click", () => goToResponseSearchMatch(1));
+    responseFindCloseBtn.addEventListener("click", () => closeEditorFind("response"));
+}
+function isFindShortcut(event) {
+    return (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "f";
+}
+function resolveEditorFindScope(target) {
+    if (target instanceof Node) {
+        if (requestWorkbench.contains(target)) {
+            return "request";
+        }
+        if (responseWorkbench.contains(target)) {
+            return "response";
+        }
+    }
+    return hoveredFindScope;
+}
+function openEditorFind(scope) {
+    activeFindScope = scope;
+    if (scope === "request") {
+        requestFindBar.hidden = false;
+        requestFindInput.value = requestFindQuery;
+        refreshRequestFind();
+        requestFindInput.focus();
+        requestFindInput.select();
+        return;
+    }
+    responseFindBar.hidden = false;
+    responseFindInput.value = responseFindQuery;
+    refreshResponseSearch();
+    responseFindInput.focus();
+    responseFindInput.select();
+}
+function closeEditorFind(scope) {
+    if (scope === "request") {
+        requestFindBar.hidden = true;
+        activeRequestFindMatchIndex = -1;
+        requestFindStatus.textContent = "";
+        if (activeFindScope === "request") {
+            activeFindScope = null;
+        }
+        bodyEditorController.focus();
+        return;
+    }
+    responseFindBar.hidden = true;
+    clearResponseSearchHighlights();
+    activeResponseSearchMatchIndex = -1;
+    responseFindStatus.textContent = "";
+    if (activeFindScope === "response") {
+        activeFindScope = null;
+    }
+}
+function handleFindInputKeydown(event, scope) {
+    if (event.key === "Escape") {
+        event.preventDefault();
+        closeEditorFind(scope);
+        return;
+    }
+    if (event.key !== "Enter") {
+        return;
+    }
+    event.preventDefault();
+    if (scope === "request") {
+        goToRequestFindMatch(event.shiftKey ? -1 : 1);
+        return;
+    }
+    goToResponseSearchMatch(event.shiftKey ? -1 : 1);
 }
 function setupTabs() {
     const tabButtons = document.querySelectorAll("[data-tab-group][data-tab-target]");
@@ -2271,35 +2410,144 @@ function selectSseLine(entry) {
     ssePayloadMeta.textContent = `Line ${entry.index}`;
     refreshResponseSearchHighlights();
 }
+function refreshRequestFind() {
+    const query = requestFindQuery.trim();
+    requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
+    if (query === "") {
+        requestFindStatus.textContent = "";
+        activeRequestFindMatchIndex = -1;
+        updateRequestFindButtons();
+        return;
+    }
+    if (bodyModeInput.value !== "raw") {
+        requestFindStatus.textContent = "Switch to raw body to search";
+        activeRequestFindMatchIndex = -1;
+        updateRequestFindButtons();
+        return;
+    }
+    if (requestFindMatches.length === 0) {
+        requestFindStatus.textContent = "No matches";
+        activeRequestFindMatchIndex = -1;
+        updateRequestFindButtons();
+        return;
+    }
+    if (activeRequestFindMatchIndex < 0 || activeRequestFindMatchIndex >= requestFindMatches.length) {
+        activeRequestFindMatchIndex = 0;
+    }
+    updateRequestFindStatus();
+    updateRequestFindButtons();
+    selectActiveRequestFindMatch();
+}
+function goToRequestFindMatch(direction) {
+    if (requestFindQuery.trim() === "") {
+        requestFindInput.focus();
+        return;
+    }
+    if (requestFindMatches.length === 0) {
+        refreshRequestFind();
+    }
+    if (requestFindMatches.length === 0) {
+        return;
+    }
+    activeRequestFindMatchIndex = wrapIndex(activeRequestFindMatchIndex + direction, requestFindMatches.length);
+    updateRequestFindStatus();
+    selectActiveRequestFindMatch();
+}
+function selectActiveRequestFindMatch() {
+    const match = requestFindMatches[activeRequestFindMatchIndex];
+    if (!match) {
+        return;
+    }
+    bodyEditorController.selectRange(match.from, match.to);
+}
+function updateRequestFindStatus() {
+    requestFindStatus.textContent = `${activeRequestFindMatchIndex + 1} of ${requestFindMatches.length}`;
+}
+function updateRequestFindButtons() {
+    const disabled = requestFindMatches.length === 0;
+    requestFindPrevBtn.disabled = disabled;
+    requestFindNextBtn.disabled = disabled;
+}
 function refreshResponseSearch() {
-    const query = responseSearchQuery.trim();
+    const query = responseFindQuery.trim();
     const matchCount = countResponseSearchMatches(query);
     updateResponseSearchStatus(query, matchCount);
     refreshResponseSearchHighlights();
 }
 function refreshResponseSearchHighlights() {
+    clearResponseSearchHighlights();
+    const query = responseFindQuery.trim();
+    if (query === "" || requestIsLoading) {
+        activeResponseSearchMatchIndex = -1;
+        updateResponseFindButtons();
+        return;
+    }
+    for (const root of responseSearchHighlightRoots()) {
+        responseSearchMatches.push(...highlightTextInElement(root, query));
+    }
+    if (activeResponseSearchMatchIndex < 0 || activeResponseSearchMatchIndex >= responseSearchMatches.length) {
+        activeResponseSearchMatchIndex = responseSearchMatches.length > 0 ? 0 : -1;
+    }
+    activateResponseSearchMatch(activeResponseSearchMatchIndex);
+    updateResponseFindButtons();
+}
+function clearResponseSearchHighlights() {
+    responseSearchMatches = [];
     for (const root of responseSearchHighlightRoots()) {
         clearSearchHighlights(root);
     }
-    const query = responseSearchQuery.trim();
-    if (query === "" || requestIsLoading) {
+}
+function goToResponseSearchMatch(direction) {
+    if (responseFindQuery.trim() === "") {
+        responseFindInput.focus();
         return;
     }
-    for (const root of responseSearchHighlightRoots()) {
-        highlightTextInElement(root, query);
+    if (responseSearchMatches.length === 0) {
+        refreshResponseSearch();
     }
+    if (responseSearchMatches.length === 0) {
+        return;
+    }
+    activateResponseSearchMatch(wrapIndex(activeResponseSearchMatchIndex + direction, responseSearchMatches.length));
+}
+function activateResponseSearchMatch(index) {
+    for (const match of responseSearchMatches) {
+        match.classList.remove("is-active");
+    }
+    const match = responseSearchMatches[index];
+    if (!match) {
+        activeResponseSearchMatchIndex = -1;
+        updateResponseSearchStatus(responseFindQuery.trim(), responseSearchMatches.length);
+        return;
+    }
+    activeResponseSearchMatchIndex = index;
+    match.classList.add("is-active");
+    match.scrollIntoView({ block: "center", inline: "nearest" });
+    updateResponseSearchStatus(responseFindQuery.trim(), responseSearchMatches.length);
 }
 function updateResponseSearchStatus(query, matchCount) {
     if (query === "") {
-        responseSearchStatus.textContent = "";
+        responseFindStatus.textContent = "";
         return;
     }
     if (!hasResponseSearchContent()) {
-        responseSearchStatus.textContent = "No response to search";
+        responseFindStatus.textContent = "No response to search";
         return;
     }
-    responseSearchStatus.textContent =
-        matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+    if (matchCount === 0) {
+        responseFindStatus.textContent = "No matches";
+        return;
+    }
+    if (activeResponseSearchMatchIndex >= 0 && matchCount > 0) {
+        responseFindStatus.textContent = `${activeResponseSearchMatchIndex + 1} of ${matchCount}`;
+        return;
+    }
+    responseFindStatus.textContent = matchCount === 1 ? "1 match" : `${matchCount.toLocaleString()} matches`;
+}
+function updateResponseFindButtons() {
+    const disabled = responseSearchMatches.length === 0;
+    responseFindPrevBtn.disabled = disabled;
+    responseFindNextBtn.disabled = disabled;
 }
 function countResponseSearchMatches(query) {
     if (query === "") {
@@ -2324,18 +2572,24 @@ function formatHeadersForSearch(headers) {
         .join("\n");
 }
 function countTextMatches(text, query) {
+    return collectTextMatches(text, query).length;
+}
+function collectTextMatches(text, query) {
     if (text === "" || query === "") {
-        return 0;
+        return [];
     }
+    const matches = [];
     const normalizedText = text.toLowerCase();
     const normalizedQuery = query.toLowerCase();
-    let count = 0;
     let index = normalizedText.indexOf(normalizedQuery);
     while (index >= 0) {
-        count += 1;
+        matches.push({ from: index, to: index + query.length });
         index = normalizedText.indexOf(normalizedQuery, index + normalizedQuery.length);
     }
-    return count;
+    return matches;
+}
+function wrapIndex(index, length) {
+    return ((index % length) + length) % length;
 }
 function responseSearchHighlightRoots() {
     return [
@@ -2362,7 +2616,7 @@ function clearSearchHighlights(root) {
 }
 function highlightTextInElement(root, query) {
     if (query === "") {
-        return 0;
+        return [];
     }
     const normalizedQuery = query.toLowerCase();
     const textNodes = [];
@@ -2383,18 +2637,14 @@ function highlightTextInElement(root, query) {
         textNodes.push(current);
         current = walker.nextNode();
     }
-    let matchCount = 0;
-    for (const node of textNodes) {
-        matchCount += replaceTextNodeWithHighlights(node, query);
-    }
-    return matchCount;
+    return textNodes.flatMap((node) => replaceTextNodeWithHighlights(node, query));
 }
 function replaceTextNodeWithHighlights(node, query) {
     const text = node.data;
     const normalizedText = text.toLowerCase();
     const normalizedQuery = query.toLowerCase();
     const fragment = document.createDocumentFragment();
-    let matchCount = 0;
+    const marks = [];
     let cursor = 0;
     let index = normalizedText.indexOf(normalizedQuery);
     while (index >= 0) {
@@ -2405,7 +2655,7 @@ function replaceTextNodeWithHighlights(node, query) {
         mark.className = "response-search-match";
         mark.textContent = text.slice(index, index + query.length);
         fragment.appendChild(mark);
-        matchCount += 1;
+        marks.push(mark);
         cursor = index + query.length;
         index = normalizedText.indexOf(normalizedQuery, cursor);
     }
@@ -2413,7 +2663,7 @@ function replaceTextNodeWithHighlights(node, query) {
         fragment.appendChild(document.createTextNode(text.slice(cursor)));
     }
     node.replaceWith(fragment);
-    return matchCount;
+    return marks;
 }
 function extractPayloadText(rawLine) {
     const trimmed = rawLine.trim();

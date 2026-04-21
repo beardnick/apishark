@@ -1480,16 +1480,38 @@ button.ghost:hover:not(:disabled) {
   color: var(--accent-strong);
 }
 
-.response-search-row {
+.editor-find-bar {
   display: grid;
-  grid-template-columns: minmax(0, 280px) auto;
+  grid-template-columns: auto minmax(160px, 320px) auto auto auto auto;
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-3);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(250, 252, 255, 0.94);
+  box-shadow: var(--shadow-soft);
 }
 
-.response-search-input {
+.editor-find-input {
   width: 100%;
+}
+
+.editor-find-label,
+.editor-find-status {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.editor-find-btn {
+  min-height: 30px;
+  padding: 6px 9px;
+}
+
+.editor-find-close {
+  width: 30px;
+  height: 30px;
 }
 
 .response-search-match {
@@ -1499,6 +1521,12 @@ button.ghost:hover:not(:disabled) {
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
   padding: 0 2px;
+}
+
+.response-search-match.is-active {
+  color: #111827;
+  background: #fb923c;
+  outline: 1px solid rgba(180, 83, 9, 0.5);
 }
 
 .json-toolbar {
@@ -2183,7 +2211,7 @@ button.ghost:hover:not(:disabled) {
   .header-row,
   .env-row,
   .collection-plugin-row,
-  .response-search-row,
+  .editor-find-bar,
   .response-status-strip,
   .response-headers-grid-head,
   .response-headers-stack,

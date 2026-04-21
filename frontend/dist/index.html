@@ -90,6 +90,29 @@
         </header>
 
         <section id="requestWorkbench" class="workspace-block request-workspace">
+          <div id="requestFindBar" class="editor-find-bar" hidden>
+            <span class="editor-find-label">Find</span>
+            <input
+              id="requestFindInput"
+              type="search"
+              class="editor-find-input"
+              placeholder="Search request body"
+              aria-label="Search request body"
+            />
+            <span id="requestFindStatus" class="editor-find-status" aria-live="polite"></span>
+            <button id="requestFindPrevBtn" type="button" class="ghost editor-find-btn">Previous</button>
+            <button id="requestFindNextBtn" type="button" class="ghost editor-find-btn">Next</button>
+            <button
+              id="requestFindCloseBtn"
+              type="button"
+              class="ghost icon-btn editor-find-close"
+              aria-label="Close request search"
+              title="Close search"
+            >
+              <span class="action-symbol" aria-hidden="true">×</span>
+            </button>
+          </div>
+
           <div class="request-tool-grid">
             <div class="request-tool-grid-head" aria-hidden="true">
               <span>Method</span>
@@ -333,15 +356,27 @@
           </div>
           <p id="errorText" class="error"></p>
 
-          <div class="response-search-row">
+          <div id="responseFindBar" class="editor-find-bar" hidden>
+            <span class="editor-find-label">Find</span>
             <input
-              id="responseSearchInput"
+              id="responseFindInput"
               type="search"
-              class="response-search-input"
+              class="editor-find-input"
               placeholder="Search response"
               aria-label="Search response"
             />
-            <span id="responseSearchStatus" class="hint compact" aria-live="polite"></span>
+            <span id="responseFindStatus" class="editor-find-status" aria-live="polite"></span>
+            <button id="responseFindPrevBtn" type="button" class="ghost editor-find-btn">Previous</button>
+            <button id="responseFindNextBtn" type="button" class="ghost editor-find-btn">Next</button>
+            <button
+              id="responseFindCloseBtn"
+              type="button"
+              class="ghost icon-btn editor-find-close"
+              aria-label="Close response search"
+              title="Close search"
+            >
+              <span class="action-symbol" aria-hidden="true">×</span>
+            </button>
           </div>
 
           <div class="pm-tabs" role="tablist" aria-label="Response tabs">

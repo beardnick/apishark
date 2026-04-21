@@ -105,6 +105,7 @@ export type BodyEditorController = {
   destroy(): void;
   focus(selectAll?: boolean): void;
   getText(): string;
+  selectRange(from: number, to: number): void;
   setText(text: string): void;
   setEditable(editable: boolean): void;
   canUndo(): boolean;
@@ -296,6 +297,19 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
     },
     getText() {
       return view.state.doc.toString();
+    },
+    selectRange(from: number, to: number) {
+      const docLength = view.state.doc.length;
+      const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
+      const end = Math.min(Math.max(start, Math.trunc(to)), docLength);
+      view.focus();
+      dispatchWithSource(
+        {
+          selection: EditorSelection.range(start, end),
+          effects: EditorView.scrollIntoView(start, { y: "center" }),
+        },
+        "api",
+      );
     },
     setText(text: string) {
       undoStack = [];

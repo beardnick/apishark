@@ -125,6 +125,16 @@ export function createBodyEditor(options) {
         getText() {
             return view.state.doc.toString();
         },
+        selectRange(from, to) {
+            const docLength = view.state.doc.length;
+            const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
+            const end = Math.min(Math.max(start, Math.trunc(to)), docLength);
+            view.focus();
+            dispatchWithSource({
+                selection: EditorSelection.range(start, end),
+                effects: EditorView.scrollIntoView(start, { y: "center" }),
+            }, "api");
+        },
         setText(text) {
             undoStack = [];
             persistUndoStack(options.undoStorageKey, undoStack);
