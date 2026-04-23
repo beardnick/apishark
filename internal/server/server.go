@@ -181,6 +181,7 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 		client = &cloned
 	}
 	client.Timeout = timeout
+	upstreamStart := time.Now()
 	upstreamResp, err := client.Do(upstreamReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("upstream request failed: %v", err), http.StatusBadGateway)
@@ -204,14 +205,15 @@ func (s *server) handleSendRequest(w http.ResponseWriter, r *http.Request) {
 	contentType := upstreamResp.Header.Get("Content-Type")
 	streaming := strings.Contains(strings.ToLower(contentType), "text/event-stream")
 	if !sendEvent(w, flusher, map[string]any{
-		"type":               "meta",
-		"status":             upstreamResp.StatusCode,
-		"status_text":        upstreamResp.Status,
-		"headers":            flattenHeaders(upstreamResp.Header),
-		"response_headers":   flattenHeaders(upstreamResp.Header),
-		"sent_headers":       flattenHeaders(upstreamReq.Header),
-		"streaming":          streaming,
-		"aggregation_plugin": normalizeAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
+		"type":                       "meta",
+		"status":                     upstreamResp.StatusCode,
+		"status_text":                upstreamResp.Status,
+		"headers":                    flattenHeaders(upstreamResp.Header),
+		"response_headers":           flattenHeaders(upstreamResp.Header),
+		"sent_headers":               flattenHeaders(upstreamReq.Header),
+		"streaming":                  streaming,
+		"first_response_duration_ms": time.Since(upstreamStart).Milliseconds(),
+		"aggregation_plugin":         normalizeAggregationPlugin(payload.AggregationPlugin, payload.AggregateOpenAISSE),
 	}) {
 		return
 	}

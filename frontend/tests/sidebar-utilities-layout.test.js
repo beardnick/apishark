@@ -85,8 +85,10 @@ test("response workspace keeps a summary strip and grid-aligned headers panel", 
   assert.ok(responseWorkbenchMatch, "response workbench should exist");
   assert.match(responseWorkbenchMatch[0], /class="response-status-strip"/);
   assert.match(responseWorkbenchMatch[0], /class="response-status-label">Status<\/span>/);
-  assert.match(responseWorkbenchMatch[0], /class="response-status-label">Elapsed<\/span>/);
-  assert.match(responseWorkbenchMatch[0], /id="durationText"/);
+  assert.match(responseWorkbenchMatch[0], /class="response-status-label">First response<\/span>/);
+  assert.match(responseWorkbenchMatch[0], /id="firstResponseTimeText"/);
+  assert.match(responseWorkbenchMatch[0], /class="response-status-label">Response time<\/span>/);
+  assert.match(responseWorkbenchMatch[0], /id="responseDurationText"/);
   assert.match(responseWorkbenchMatch[0], /id="responseFindBar"/);
   assert.match(responseWorkbenchMatch[0], /id="responseFindInput"/);
   assert.doesNotMatch(responseWorkbenchMatch[0], /id="responseSearchInput"/);

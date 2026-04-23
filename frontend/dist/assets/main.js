@@ -104,7 +104,8 @@ const headerContextMenu = byId("headerContextMenu");
 const headerContextDuplicateBtn = byId("headerContextDuplicateBtn");
 const headerContextDeleteBtn = byId("headerContextDeleteBtn");
 const statusText = byId("statusText");
-const durationText = byId("durationText");
+const firstResponseTimeText = byId("firstResponseTimeText");
+const responseDurationText = byId("responseDurationText");
 const errorText = byId("errorText");
 const responseWorkbench = byId("responseWorkbench");
 const responseFindBar = byId("responseFindBar");
@@ -164,8 +165,9 @@ let draftAutosaveTimer = null;
 let collectionStateSaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
-let requestStartedAtMs = null;
-let requestElapsedTimerId = null;
+let requestSentAtMs = null;
+let responseStartedAtMs = null;
+let responseDurationTimerId = null;
 let hoveredFindScope = null;
 let activeFindScope = null;
 let requestFindQuery = "";
@@ -2036,7 +2038,7 @@ async function sendRequest() {
             aggregate_openai_sse: preparedAggregation.pluginId === AGGREGATION_PLUGIN_OPENAI,
             timeout_seconds: toPositiveInt(timeoutInput.value, 120),
         };
-        startResponseElapsedTimer();
+        startRequestTiming();
         const response = await fetch("/api/request", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2060,7 +2062,7 @@ async function sendRequest() {
     }
     finally {
         activeAbortController = null;
-        stopResponseElapsedTimer();
+        finalizeRequestTiming();
         finalizeResponseViews();
         setLoading(false);
         refreshResponseSearch();
@@ -2127,6 +2129,7 @@ function consumeEvent(event) {
         case "meta":
             latestSentHeaders = event.sent_headers ?? {};
             latestResponseHeaders = event.response_headers ?? event.headers;
+            markFirstResponseReceived(event.first_response_duration_ms);
             setRawResponseMode(event.streaming ? "sse" : "plain");
             statusText.textContent = `${event.status_text}${event.streaming ? " (SSE stream)" : ""}`;
             renderSentHeaders(latestSentHeaders);
@@ -2140,7 +2143,7 @@ function consumeEvent(event) {
             setError(event.message);
             break;
         case "done":
-            stopResponseElapsedTimer(event.duration_ms);
+            stopResponseDurationTimer(event.duration_ms);
             finalizeAggregationRuntime();
             finalizeResponseViews();
             break;
@@ -2208,7 +2211,7 @@ function clearOutputs() {
     aggregationRuntime = null;
     setRawResponseMode("plain");
     statusText.textContent = "-";
-    resetResponseElapsedTimer();
+    resetRequestTiming();
     sentHeadersOutput.textContent = "";
     headersOutput.textContent = "";
     plainRawResponseBuffer.clear();
@@ -2223,43 +2226,64 @@ function clearOutputs() {
     rawExpandBtn.disabled = true;
     refreshResponseSearch();
 }
-function startResponseElapsedTimer() {
-    resetResponseElapsedTimer();
-    requestStartedAtMs = performance.now();
-    renderResponseElapsedTimer();
-    requestElapsedTimerId = window.setInterval(() => {
-        renderResponseElapsedTimer();
+function startRequestTiming() {
+    resetRequestTiming();
+    requestSentAtMs = performance.now();
+}
+function markFirstResponseReceived(firstResponseDurationMs) {
+    if (typeof firstResponseDurationMs === "number" &&
+        Number.isFinite(firstResponseDurationMs) &&
+        firstResponseDurationMs >= 0) {
+        firstResponseTimeText.textContent = formatElapsedDuration(firstResponseDurationMs);
+    }
+    else if (requestSentAtMs !== null) {
+        firstResponseTimeText.textContent = formatElapsedDuration(performance.now() - requestSentAtMs);
+    }
+    requestSentAtMs = null;
+    if (responseDurationTimerId !== null) {
+        window.clearInterval(responseDurationTimerId);
+    }
+    responseStartedAtMs = performance.now();
+    renderResponseDurationTimer();
+    responseDurationTimerId = window.setInterval(() => {
+        renderResponseDurationTimer();
     }, 100);
 }
-function stopResponseElapsedTimer(finalDurationMs) {
-    if (requestElapsedTimerId !== null) {
-        window.clearInterval(requestElapsedTimerId);
-        requestElapsedTimerId = null;
+function stopResponseDurationTimer(finalDurationMs) {
+    if (responseDurationTimerId !== null) {
+        window.clearInterval(responseDurationTimerId);
+        responseDurationTimerId = null;
     }
     if (typeof finalDurationMs === "number" && Number.isFinite(finalDurationMs) && finalDurationMs >= 0) {
-        durationText.textContent = formatElapsedDuration(finalDurationMs);
-        requestStartedAtMs = null;
+        responseDurationText.textContent = formatElapsedDuration(finalDurationMs);
+        responseStartedAtMs = null;
         return;
     }
-    if (requestStartedAtMs !== null) {
-        durationText.textContent = formatElapsedDuration(performance.now() - requestStartedAtMs);
-        requestStartedAtMs = null;
+    if (responseStartedAtMs !== null) {
+        responseDurationText.textContent = formatElapsedDuration(performance.now() - responseStartedAtMs);
+        responseStartedAtMs = null;
     }
 }
-function resetResponseElapsedTimer() {
-    if (requestElapsedTimerId !== null) {
-        window.clearInterval(requestElapsedTimerId);
-        requestElapsedTimerId = null;
-    }
-    requestStartedAtMs = null;
-    durationText.textContent = "-";
+function finalizeRequestTiming() {
+    stopResponseDurationTimer();
+    requestSentAtMs = null;
 }
-function renderResponseElapsedTimer() {
-    if (requestStartedAtMs === null) {
-        durationText.textContent = "-";
+function resetRequestTiming() {
+    if (responseDurationTimerId !== null) {
+        window.clearInterval(responseDurationTimerId);
+        responseDurationTimerId = null;
+    }
+    requestSentAtMs = null;
+    responseStartedAtMs = null;
+    firstResponseTimeText.textContent = "-";
+    responseDurationText.textContent = "-";
+}
+function renderResponseDurationTimer() {
+    if (responseStartedAtMs === null) {
+        responseDurationText.textContent = "-";
         return;
     }
-    durationText.textContent = formatElapsedDuration(performance.now() - requestStartedAtMs);
+    responseDurationText.textContent = formatElapsedDuration(performance.now() - responseStartedAtMs);
 }
 function formatElapsedDuration(durationMs) {
     if (!Number.isFinite(durationMs) || durationMs < 0) {
