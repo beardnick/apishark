@@ -384,6 +384,7 @@ let collectionStateSaveTimer: number | null = null;
 let latestSentHeaders: Record<string, string> = {};
 let latestResponseHeaders: Record<string, string> = {};
 let requestSentAtMs: number | null = null;
+let firstResponseTimerId: number | null = null;
 let responseStartedAtMs: number | null = null;
 let responseDurationTimerId: number | null = null;
 let hoveredFindScope: EditorFindScope | null = null;
@@ -2867,9 +2868,14 @@ function clearOutputs(): void {
 function startRequestTiming(): void {
   resetRequestTiming();
   requestSentAtMs = performance.now();
+  renderFirstResponseTimer();
+  firstResponseTimerId = window.setInterval(() => {
+    renderFirstResponseTimer();
+  }, 100);
 }
 
 function markFirstResponseReceived(firstResponseDurationMs?: number): void {
+  stopFirstResponseTimer();
   if (
     typeof firstResponseDurationMs === "number" &&
     Number.isFinite(firstResponseDurationMs) &&
@@ -2910,11 +2916,16 @@ function stopResponseDurationTimer(finalDurationMs?: number): void {
 }
 
 function finalizeRequestTiming(): void {
+  stopFirstResponseTimer();
   stopResponseDurationTimer();
   requestSentAtMs = null;
 }
 
 function resetRequestTiming(): void {
+  if (firstResponseTimerId !== null) {
+    window.clearInterval(firstResponseTimerId);
+    firstResponseTimerId = null;
+  }
   if (responseDurationTimerId !== null) {
     window.clearInterval(responseDurationTimerId);
     responseDurationTimerId = null;
@@ -2923,6 +2934,25 @@ function resetRequestTiming(): void {
   responseStartedAtMs = null;
   firstResponseTimeText.textContent = "-";
   responseDurationText.textContent = "-";
+}
+
+function stopFirstResponseTimer(): void {
+  if (firstResponseTimerId !== null) {
+    window.clearInterval(firstResponseTimerId);
+    firstResponseTimerId = null;
+  }
+
+  if (requestSentAtMs !== null) {
+    firstResponseTimeText.textContent = formatElapsedDuration(performance.now() - requestSentAtMs);
+  }
+}
+
+function renderFirstResponseTimer(): void {
+  if (requestSentAtMs === null) {
+    firstResponseTimeText.textContent = "-";
+    return;
+  }
+  firstResponseTimeText.textContent = formatElapsedDuration(performance.now() - requestSentAtMs);
 }
 
 function renderResponseDurationTimer(): void {

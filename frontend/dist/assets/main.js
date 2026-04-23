@@ -166,6 +166,7 @@ let collectionStateSaveTimer = null;
 let latestSentHeaders = {};
 let latestResponseHeaders = {};
 let requestSentAtMs = null;
+let firstResponseTimerId = null;
 let responseStartedAtMs = null;
 let responseDurationTimerId = null;
 let hoveredFindScope = null;
@@ -2229,8 +2230,13 @@ function clearOutputs() {
 function startRequestTiming() {
     resetRequestTiming();
     requestSentAtMs = performance.now();
+    renderFirstResponseTimer();
+    firstResponseTimerId = window.setInterval(() => {
+        renderFirstResponseTimer();
+    }, 100);
 }
 function markFirstResponseReceived(firstResponseDurationMs) {
+    stopFirstResponseTimer();
     if (typeof firstResponseDurationMs === "number" &&
         Number.isFinite(firstResponseDurationMs) &&
         firstResponseDurationMs >= 0) {
@@ -2265,10 +2271,15 @@ function stopResponseDurationTimer(finalDurationMs) {
     }
 }
 function finalizeRequestTiming() {
+    stopFirstResponseTimer();
     stopResponseDurationTimer();
     requestSentAtMs = null;
 }
 function resetRequestTiming() {
+    if (firstResponseTimerId !== null) {
+        window.clearInterval(firstResponseTimerId);
+        firstResponseTimerId = null;
+    }
     if (responseDurationTimerId !== null) {
         window.clearInterval(responseDurationTimerId);
         responseDurationTimerId = null;
@@ -2277,6 +2288,22 @@ function resetRequestTiming() {
     responseStartedAtMs = null;
     firstResponseTimeText.textContent = "-";
     responseDurationText.textContent = "-";
+}
+function stopFirstResponseTimer() {
+    if (firstResponseTimerId !== null) {
+        window.clearInterval(firstResponseTimerId);
+        firstResponseTimerId = null;
+    }
+    if (requestSentAtMs !== null) {
+        firstResponseTimeText.textContent = formatElapsedDuration(performance.now() - requestSentAtMs);
+    }
+}
+function renderFirstResponseTimer() {
+    if (requestSentAtMs === null) {
+        firstResponseTimeText.textContent = "-";
+        return;
+    }
+    firstResponseTimeText.textContent = formatElapsedDuration(performance.now() - requestSentAtMs);
 }
 function renderResponseDurationTimer() {
     if (responseStartedAtMs === null) {
