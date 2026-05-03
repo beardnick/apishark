@@ -90,29 +90,6 @@
         </header>
 
         <section id="requestWorkbench" class="workspace-block request-workspace">
-          <div id="requestFindBar" class="editor-find-bar" hidden>
-            <span class="editor-find-label">Find</span>
-            <input
-              id="requestFindInput"
-              type="search"
-              class="editor-find-input"
-              placeholder="Search request body"
-              aria-label="Search request body"
-            />
-            <span id="requestFindStatus" class="editor-find-status" aria-live="polite"></span>
-            <button id="requestFindPrevBtn" type="button" class="ghost editor-find-btn">Previous</button>
-            <button id="requestFindNextBtn" type="button" class="ghost editor-find-btn">Next</button>
-            <button
-              id="requestFindCloseBtn"
-              type="button"
-              class="ghost icon-btn editor-find-close"
-              aria-label="Close request search"
-              title="Close search"
-            >
-              <span class="action-symbol" aria-hidden="true">×</span>
-            </button>
-          </div>
-
           <div class="request-tool-grid">
             <div class="request-tool-grid-head" aria-hidden="true">
               <span>Method</span>
@@ -298,6 +275,29 @@
                     <span>Prettify</span>
                   </button>
                 </div>
+              </div>
+
+              <div id="requestFindBar" class="editor-find-bar body-editor-find-bar" hidden>
+                <span class="editor-find-label">Find</span>
+                <input
+                  id="requestFindInput"
+                  type="search"
+                  class="editor-find-input"
+                  placeholder="Search request body"
+                  aria-label="Search request body"
+                />
+                <span id="requestFindStatus" class="editor-find-status" aria-live="polite"></span>
+                <button id="requestFindPrevBtn" type="button" class="ghost editor-find-btn">Previous</button>
+                <button id="requestFindNextBtn" type="button" class="ghost editor-find-btn">Next</button>
+                <button
+                  id="requestFindCloseBtn"
+                  type="button"
+                  class="ghost icon-btn editor-find-close"
+                  aria-label="Close request search"
+                  title="Close search"
+                >
+                  <span class="action-symbol" aria-hidden="true">×</span>
+                </button>
               </div>
 
               <div id="bodyEditorShell" class="body-editor-shell">

@@ -770,6 +770,7 @@ function resolveEditorFindScope(target: EventTarget | null): EditorFindScope | n
 function openEditorFind(scope: EditorFindScope): void {
   activeFindScope = scope;
   if (scope === "request") {
+    activateTab("request", "bodyPanel");
     requestFindBar.hidden = false;
     requestFindInput.value = requestFindQuery;
     refreshRequestFind();
@@ -790,6 +791,7 @@ function closeEditorFind(scope: EditorFindScope): void {
     requestFindBar.hidden = true;
     activeRequestFindMatchIndex = -1;
     requestFindStatus.textContent = "";
+    updateRequestFindHighlights();
     if (activeFindScope === "request") {
       activeFindScope = null;
     }
@@ -3141,25 +3143,30 @@ function selectSseLine(entry: SseLineEntry): void {
 
 function refreshRequestFind(): void {
   const query = requestFindQuery.trim();
-  requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
   if (query === "") {
+    requestFindMatches = [];
     requestFindStatus.textContent = "";
     activeRequestFindMatchIndex = -1;
     updateRequestFindButtons();
+    updateRequestFindHighlights();
     return;
   }
 
   if (bodyModeInput.value !== "raw") {
+    requestFindMatches = [];
     requestFindStatus.textContent = "Switch to raw body to search";
     activeRequestFindMatchIndex = -1;
     updateRequestFindButtons();
+    updateRequestFindHighlights();
     return;
   }
 
+  requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
   if (requestFindMatches.length === 0) {
     requestFindStatus.textContent = "No matches";
     activeRequestFindMatchIndex = -1;
     updateRequestFindButtons();
+    updateRequestFindHighlights();
     return;
   }
 
@@ -3168,7 +3175,8 @@ function refreshRequestFind(): void {
   }
   updateRequestFindStatus();
   updateRequestFindButtons();
-  selectActiveRequestFindMatch();
+  updateRequestFindHighlights();
+  revealActiveRequestFindMatch();
 }
 
 function goToRequestFindMatch(direction: 1 | -1): void {
@@ -3187,15 +3195,16 @@ function goToRequestFindMatch(direction: 1 | -1): void {
     requestFindMatches.length,
   );
   updateRequestFindStatus();
-  selectActiveRequestFindMatch();
+  updateRequestFindHighlights();
+  revealActiveRequestFindMatch();
 }
 
-function selectActiveRequestFindMatch(): void {
+function revealActiveRequestFindMatch(): void {
   const match = requestFindMatches[activeRequestFindMatchIndex];
   if (!match) {
     return;
   }
-  bodyEditorController.selectRange(match.from, match.to);
+  bodyEditorController.revealRange(match.from, match.to);
 }
 
 function updateRequestFindStatus(): void {
@@ -3206,6 +3215,16 @@ function updateRequestFindButtons(): void {
   const disabled = requestFindMatches.length === 0;
   requestFindPrevBtn.disabled = disabled;
   requestFindNextBtn.disabled = disabled;
+}
+
+function updateRequestFindHighlights(): void {
+  bodyEditorController.setFindMatches(
+    requestFindMatches.map((match, index) => ({
+      from: match.from,
+      to: match.to,
+      active: index === activeRequestFindMatchIndex,
+    })),
+  );
 }
 
 function refreshResponseSearch(): void {

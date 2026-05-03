@@ -82,6 +82,12 @@ export type BodyEditorSyntaxError = {
   column: number;
 };
 
+export type BodyEditorFindMatch = {
+  from: number;
+  to: number;
+  active: boolean;
+};
+
 export type BodyEditorChangeReason = "doc" | "fold" | "focus";
 export type BodyEditorChangeSource = "user" | "api";
 
@@ -105,7 +111,9 @@ export type BodyEditorController = {
   destroy(): void;
   focus(selectAll?: boolean): void;
   getText(): string;
+  revealRange(from: number, to: number): void;
   selectRange(from: number, to: number): void;
+  setFindMatches(matches: BodyEditorFindMatch[]): void;
   setText(text: string): void;
   setEditable(editable: boolean): void;
   canUndo(): boolean;
@@ -147,6 +155,7 @@ type JsonRangePrimitiveNode = {
 type BodyEditorComputedState = {
   analysis: BodyEditorAnalysis;
   decorations: DecorationSet;
+  findMatches: BodyEditorFindMatch[];
 };
 
 type BodyEditorSelectionSnapshot = {
@@ -161,6 +170,7 @@ type BodyEditorUndoEntry = {
 };
 
 const setFoldedPathsEffect = StateEffect.define<readonly string[]>();
+const setFindMatchesEffect = StateEffect.define<readonly BodyEditorFindMatch[]>();
 
 const editableCompartment = new Compartment();
 const MAX_UNDO_ENTRIES = 100;
@@ -298,6 +308,17 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
     getText() {
       return view.state.doc.toString();
     },
+    revealRange(from: number, to: number) {
+      const docLength = view.state.doc.length;
+      const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
+      const end = Math.min(Math.max(start, Math.trunc(to)), docLength);
+      dispatchWithSource(
+        {
+          effects: EditorView.scrollIntoView(EditorSelection.range(start, end), { y: "center" }),
+        },
+        "api",
+      );
+    },
     selectRange(from: number, to: number) {
       const docLength = view.state.doc.length;
       const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
@@ -307,6 +328,14 @@ export function createBodyEditor(options: CreateBodyEditorOptions): BodyEditorCo
         {
           selection: EditorSelection.range(start, end),
           effects: EditorView.scrollIntoView(start, { y: "center" }),
+        },
+        "api",
+      );
+    },
+    setFindMatches(matches: BodyEditorFindMatch[]) {
+      dispatchWithSource(
+        {
+          effects: setFindMatchesEffect.of(normalizeBodyEditorFindMatches(matches, view.state.doc.length)),
         },
         "api",
       );
@@ -560,20 +589,30 @@ const bodyEditorComputedField = StateField.define<BodyEditorComputedState>({
   },
   update(value, transaction) {
     let nextFoldedPaths = value.analysis.foldedPaths;
+    let nextFindMatches = value.findMatches;
     let foldChanged = false;
+    let findChanged = false;
 
     for (const effect of transaction.effects) {
       if (effect.is(setFoldedPathsEffect)) {
         nextFoldedPaths = [...effect.value];
         foldChanged = true;
       }
+      if (effect.is(setFindMatchesEffect)) {
+        nextFindMatches = [...effect.value];
+        findChanged = true;
+      }
     }
 
-    if (!transaction.docChanged && !foldChanged) {
+    if (!transaction.docChanged && !foldChanged && !findChanged) {
       return value;
     }
 
-    return buildComputedState(transaction.state.doc.toString(), nextFoldedPaths);
+    return buildComputedState(
+      transaction.state.doc.toString(),
+      nextFoldedPaths,
+      normalizeBodyEditorFindMatches(nextFindMatches, transaction.state.doc.length),
+    );
   },
   provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
 });
@@ -799,9 +838,14 @@ function clampSelectionPosition(position: number, docLength: number): number {
   return Math.max(0, Math.min(docLength, Math.trunc(position)));
 }
 
-function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEditorComputedState {
+function buildComputedState(
+  text: string,
+  foldedPaths: Iterable<string>,
+  findMatches: Iterable<BodyEditorFindMatch> = [],
+): BodyEditorComputedState {
   const analysis = analyzeBodyEditorText(text, foldedPaths);
   const foldedPathSet = new Set(analysis.foldedPaths);
+  const normalizedFindMatches = normalizeBodyEditorFindMatches(findMatches, text.length);
   const ranges: Range<Decoration>[] = [];
 
   if (analysis.hasJSON) {
@@ -845,10 +889,36 @@ function buildComputedState(text: string, foldedPaths: Iterable<string>): BodyEd
     );
   }
 
+  for (const match of normalizedFindMatches) {
+    ranges.push(
+      Decoration.mark({
+        class: match.active ? "cm-body-search-match is-active" : "cm-body-search-match",
+      }).range(match.from, match.to),
+    );
+  }
+
   return {
     analysis,
     decorations: Decoration.set(ranges, true),
+    findMatches: normalizedFindMatches,
   };
+}
+
+function normalizeBodyEditorFindMatches(
+  matches: Iterable<BodyEditorFindMatch>,
+  docLength: number,
+): BodyEditorFindMatch[] {
+  const normalized: BodyEditorFindMatch[] = [];
+  for (const match of matches) {
+    const from = Math.min(Math.max(0, Math.trunc(match.from)), docLength);
+    const to = Math.min(Math.max(from, Math.trunc(match.to)), docLength);
+    if (from === to) {
+      continue;
+    }
+    normalized.push({ from, to, active: match.active });
+  }
+  normalized.sort((left, right) => left.from - right.from || left.to - right.to);
+  return normalized;
 }
 
 export function collectBodyEditorTemplateRanges(text: string): BodyEditorTemplateRange[] {

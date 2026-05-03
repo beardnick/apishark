@@ -1071,6 +1071,21 @@ textarea.has-env-template.has-dynamic-template {
   font-weight: 600;
 }
 
+.body-code-editor .cm-body-search-match {
+  color: #1f2937;
+  background: #fde68a;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 2px;
+}
+
+.body-code-editor .cm-body-search-match.is-active {
+  color: #111827;
+  background: #fb923c;
+  outline: 1px solid rgba(180, 83, 9, 0.5);
+}
+
 input[type="checkbox"] {
   width: 15px;
   height: 15px;
@@ -1491,6 +1506,10 @@ button.ghost:hover:not(:disabled) {
   border-radius: 10px;
   background: rgba(250, 252, 255, 0.94);
   box-shadow: var(--shadow-soft);
+}
+
+.body-editor-find-bar {
+  margin-top: var(--space-3);
 }
 
 .editor-find-input {

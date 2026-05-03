@@ -2,6 +2,7 @@ import { Compartment, EditorSelection, EditorState, RangeSet, StateEffect, State
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, gutters, highlightSpecialChars, keymap, lineNumbers, placeholder, } from "@codemirror/view";
 import { prettifyJSONText } from "./json-view.js";
 const setFoldedPathsEffect = StateEffect.define();
+const setFindMatchesEffect = StateEffect.define();
 const editableCompartment = new Compartment();
 const MAX_UNDO_ENTRIES = 100;
 const ENV_TEMPLATE_PATTERN = /\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}/g;
@@ -125,6 +126,14 @@ export function createBodyEditor(options) {
         getText() {
             return view.state.doc.toString();
         },
+        revealRange(from, to) {
+            const docLength = view.state.doc.length;
+            const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
+            const end = Math.min(Math.max(start, Math.trunc(to)), docLength);
+            dispatchWithSource({
+                effects: EditorView.scrollIntoView(EditorSelection.range(start, end), { y: "center" }),
+            }, "api");
+        },
         selectRange(from, to) {
             const docLength = view.state.doc.length;
             const start = Math.min(Math.max(0, Math.trunc(from)), docLength);
@@ -133,6 +142,11 @@ export function createBodyEditor(options) {
             dispatchWithSource({
                 selection: EditorSelection.range(start, end),
                 effects: EditorView.scrollIntoView(start, { y: "center" }),
+            }, "api");
+        },
+        setFindMatches(matches) {
+            dispatchWithSource({
+                effects: setFindMatchesEffect.of(normalizeBodyEditorFindMatches(matches, view.state.doc.length)),
             }, "api");
         },
         setText(text) {
@@ -333,17 +347,23 @@ const bodyEditorComputedField = StateField.define({
     },
     update(value, transaction) {
         let nextFoldedPaths = value.analysis.foldedPaths;
+        let nextFindMatches = value.findMatches;
         let foldChanged = false;
+        let findChanged = false;
         for (const effect of transaction.effects) {
             if (effect.is(setFoldedPathsEffect)) {
                 nextFoldedPaths = [...effect.value];
                 foldChanged = true;
             }
+            if (effect.is(setFindMatchesEffect)) {
+                nextFindMatches = [...effect.value];
+                findChanged = true;
+            }
         }
-        if (!transaction.docChanged && !foldChanged) {
+        if (!transaction.docChanged && !foldChanged && !findChanged) {
             return value;
         }
-        return buildComputedState(transaction.state.doc.toString(), nextFoldedPaths);
+        return buildComputedState(transaction.state.doc.toString(), nextFoldedPaths, normalizeBodyEditorFindMatches(nextFindMatches, transaction.state.doc.length));
     },
     provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
 });
@@ -527,9 +547,10 @@ function selectionFromSnapshot(selection, docLength) {
 function clampSelectionPosition(position, docLength) {
     return Math.max(0, Math.min(docLength, Math.trunc(position)));
 }
-function buildComputedState(text, foldedPaths) {
+function buildComputedState(text, foldedPaths, findMatches = []) {
     const analysis = analyzeBodyEditorText(text, foldedPaths);
     const foldedPathSet = new Set(analysis.foldedPaths);
+    const normalizedFindMatches = normalizeBodyEditorFindMatches(findMatches, text.length);
     const ranges = [];
     if (analysis.hasJSON) {
         for (const token of analysis.tokens) {
@@ -554,10 +575,29 @@ function buildComputedState(text, foldedPaths) {
     for (const templateRange of collectBodyEditorTemplateRanges(text)) {
         ranges.push(Decoration.mark({ class: templateRange.className }).range(templateRange.from, templateRange.to));
     }
+    for (const match of normalizedFindMatches) {
+        ranges.push(Decoration.mark({
+            class: match.active ? "cm-body-search-match is-active" : "cm-body-search-match",
+        }).range(match.from, match.to));
+    }
     return {
         analysis,
         decorations: Decoration.set(ranges, true),
+        findMatches: normalizedFindMatches,
     };
+}
+function normalizeBodyEditorFindMatches(matches, docLength) {
+    const normalized = [];
+    for (const match of matches) {
+        const from = Math.min(Math.max(0, Math.trunc(match.from)), docLength);
+        const to = Math.min(Math.max(from, Math.trunc(match.to)), docLength);
+        if (from === to) {
+            continue;
+        }
+        normalized.push({ from, to, active: match.active });
+    }
+    normalized.sort((left, right) => left.from - right.from || left.to - right.to);
+    return normalized;
 }
 export function collectBodyEditorTemplateRanges(text) {
     const ranges = [];

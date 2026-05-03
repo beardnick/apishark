@@ -507,6 +507,7 @@ function resolveEditorFindScope(target) {
 function openEditorFind(scope) {
     activeFindScope = scope;
     if (scope === "request") {
+        activateTab("request", "bodyPanel");
         requestFindBar.hidden = false;
         requestFindInput.value = requestFindQuery;
         refreshRequestFind();
@@ -525,6 +526,7 @@ function closeEditorFind(scope) {
         requestFindBar.hidden = true;
         activeRequestFindMatchIndex = -1;
         requestFindStatus.textContent = "";
+        updateRequestFindHighlights();
         if (activeFindScope === "request") {
             activeFindScope = null;
         }
@@ -2463,23 +2465,28 @@ function selectSseLine(entry) {
 }
 function refreshRequestFind() {
     const query = requestFindQuery.trim();
-    requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
     if (query === "") {
+        requestFindMatches = [];
         requestFindStatus.textContent = "";
         activeRequestFindMatchIndex = -1;
         updateRequestFindButtons();
+        updateRequestFindHighlights();
         return;
     }
     if (bodyModeInput.value !== "raw") {
+        requestFindMatches = [];
         requestFindStatus.textContent = "Switch to raw body to search";
         activeRequestFindMatchIndex = -1;
         updateRequestFindButtons();
+        updateRequestFindHighlights();
         return;
     }
+    requestFindMatches = collectTextMatches(bodyEditorController.getText(), query);
     if (requestFindMatches.length === 0) {
         requestFindStatus.textContent = "No matches";
         activeRequestFindMatchIndex = -1;
         updateRequestFindButtons();
+        updateRequestFindHighlights();
         return;
     }
     if (activeRequestFindMatchIndex < 0 || activeRequestFindMatchIndex >= requestFindMatches.length) {
@@ -2487,7 +2494,8 @@ function refreshRequestFind() {
     }
     updateRequestFindStatus();
     updateRequestFindButtons();
-    selectActiveRequestFindMatch();
+    updateRequestFindHighlights();
+    revealActiveRequestFindMatch();
 }
 function goToRequestFindMatch(direction) {
     if (requestFindQuery.trim() === "") {
@@ -2502,14 +2510,15 @@ function goToRequestFindMatch(direction) {
     }
     activeRequestFindMatchIndex = wrapIndex(activeRequestFindMatchIndex + direction, requestFindMatches.length);
     updateRequestFindStatus();
-    selectActiveRequestFindMatch();
+    updateRequestFindHighlights();
+    revealActiveRequestFindMatch();
 }
-function selectActiveRequestFindMatch() {
+function revealActiveRequestFindMatch() {
     const match = requestFindMatches[activeRequestFindMatchIndex];
     if (!match) {
         return;
     }
-    bodyEditorController.selectRange(match.from, match.to);
+    bodyEditorController.revealRange(match.from, match.to);
 }
 function updateRequestFindStatus() {
     requestFindStatus.textContent = `${activeRequestFindMatchIndex + 1} of ${requestFindMatches.length}`;
@@ -2518,6 +2527,13 @@ function updateRequestFindButtons() {
     const disabled = requestFindMatches.length === 0;
     requestFindPrevBtn.disabled = disabled;
     requestFindNextBtn.disabled = disabled;
+}
+function updateRequestFindHighlights() {
+    bodyEditorController.setFindMatches(requestFindMatches.map((match, index) => ({
+        from: match.from,
+        to: match.to,
+        active: index === activeRequestFindMatchIndex,
+    })));
 }
 function refreshResponseSearch() {
     const query = responseFindQuery.trim();

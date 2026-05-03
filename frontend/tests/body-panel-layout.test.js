@@ -24,6 +24,10 @@ test("built body panel keeps a single editor shell with visible body editor cont
   assert.match(bodyPanel, /id="bodyPrettifyBtn"/);
   assert.match(bodyPanel, /id="bodyCollapseBtn"/);
   assert.match(bodyPanel, /id="bodyExpandBtn"/);
+  assert.match(bodyPanel, /id="requestFindBar"/);
+  assert.match(bodyPanel, /id="requestFindInput"/);
+  assert.match(bodyPanel, /id="requestFindPrevBtn"/);
+  assert.match(bodyPanel, /id="requestFindNextBtn"/);
   assert.match(bodyPanel, />\s*Collapse\s*</);
   assert.match(bodyPanel, />\s*Expand\s*</);
   assert.match(bodyPanel, />\s*Undo\s*</);
@@ -33,6 +37,7 @@ test("built body panel keeps a single editor shell with visible body editor cont
   assert.ok(bodyPanel.indexOf('id="bodyCollapseBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
   assert.ok(bodyPanel.indexOf('id="bodyExpandBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
   assert.ok(bodyPanel.indexOf('id="bodyUndoBtn"') < bodyPanel.indexOf('id="copyBodyBtn"'));
+  assert.ok(bodyPanel.indexOf('id="requestFindBar"') < bodyPanel.indexOf('id="bodyEditorShell"'));
 
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPanel"/);
   assert.doesNotMatch(bodyPanel, /id="bodyJsonPreview"/);
