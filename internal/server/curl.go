@@ -189,6 +189,7 @@ func shellSplit(input string) ([]string, error) {
 	var current strings.Builder
 	inSingle := false
 	inDouble := false
+	inANSIC := false
 	escaped := false
 
 	flush := func() {
@@ -199,7 +200,26 @@ func shellSplit(input string) ([]string, error) {
 		current.Reset()
 	}
 
-	for _, ch := range input {
+	runes := []rune(input)
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+		if inANSIC {
+			switch ch {
+			case '\\':
+				if i+1 >= len(runes) {
+					current.WriteRune(ch)
+					continue
+				}
+				i++
+				writeANSICEscape(&current, runes, &i)
+			case '\'':
+				inANSIC = false
+			default:
+				current.WriteRune(ch)
+			}
+			continue
+		}
+
 		if escaped {
 			if ch == '\n' || ch == '\r' {
 				escaped = false
@@ -207,6 +227,12 @@ func shellSplit(input string) ([]string, error) {
 			}
 			current.WriteRune(ch)
 			escaped = false
+			continue
+		}
+
+		if !inSingle && !inDouble && ch == '$' && i+1 < len(runes) && runes[i+1] == '\'' {
+			inANSIC = true
+			i++
 			continue
 		}
 
@@ -243,9 +269,96 @@ func shellSplit(input string) ([]string, error) {
 	if escaped {
 		current.WriteRune('\\')
 	}
-	if inSingle || inDouble {
+	if inSingle || inDouble || inANSIC {
 		return nil, errors.New("unclosed quote in curl command")
 	}
 	flush()
 	return tokens, nil
+}
+
+func writeANSICEscape(current *strings.Builder, runes []rune, index *int) {
+	ch := runes[*index]
+	switch ch {
+	case 'a':
+		current.WriteRune('\a')
+	case 'b':
+		current.WriteRune('\b')
+	case 'e', 'E':
+		current.WriteRune('\x1b')
+	case 'f':
+		current.WriteRune('\f')
+	case 'n':
+		current.WriteRune('\n')
+	case 'r':
+		current.WriteRune('\r')
+	case 't':
+		current.WriteRune('\t')
+	case 'v':
+		current.WriteRune('\v')
+	case '\\', '\'', '"', '?':
+		current.WriteRune(ch)
+	case '\n', '\r':
+		return
+	case 'x':
+		if value, ok := readHexEscape(runes, index, 2); ok {
+			current.WriteRune(rune(value))
+			return
+		}
+		current.WriteRune(ch)
+	case 'u':
+		if value, ok := readHexEscape(runes, index, 4); ok {
+			current.WriteRune(rune(value))
+			return
+		}
+		current.WriteRune(ch)
+	case 'U':
+		if value, ok := readHexEscape(runes, index, 8); ok {
+			current.WriteRune(rune(value))
+			return
+		}
+		current.WriteRune(ch)
+	default:
+		if isOctalDigit(ch) {
+			value := int(ch - '0')
+			for count := 0; count < 2 && *index+1 < len(runes) && isOctalDigit(runes[*index+1]); count++ {
+				*index = *index + 1
+				value = value*8 + int(runes[*index]-'0')
+			}
+			current.WriteRune(rune(value))
+			return
+		}
+		current.WriteRune(ch)
+	}
+}
+
+func readHexEscape(runes []rune, index *int, limit int) (int, bool) {
+	value := 0
+	count := 0
+	for count < limit && *index+1 < len(runes) {
+		digit, ok := hexValue(runes[*index+1])
+		if !ok {
+			break
+		}
+		*index = *index + 1
+		value = value*16 + digit
+		count++
+	}
+	return value, count > 0
+}
+
+func hexValue(ch rune) (int, bool) {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return int(ch - '0'), true
+	case ch >= 'a' && ch <= 'f':
+		return int(ch-'a') + 10, true
+	case ch >= 'A' && ch <= 'F':
+		return int(ch-'A') + 10, true
+	default:
+		return 0, false
+	}
+}
+
+func isOctalDigit(ch rune) bool {
+	return ch >= '0' && ch <= '7'
 }

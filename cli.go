@@ -652,6 +652,7 @@ func buildAIDoc() string {
 		"- URL forms: inline `https://...`, `http://...`, `--url https://...`, `--url=https://...`",
 		"- Method-changing flags: `-I` / `--head`, `-G` / `--get`",
 		"- Multi-line curl commands that use trailing backslash continuation",
+		"- ANSI-C quoted arguments such as `$'{\"note\":\"it\\'s ok\"}'`",
 		"",
 		"`--json` import behavior:",
 		"",

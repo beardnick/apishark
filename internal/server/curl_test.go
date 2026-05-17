@@ -18,6 +18,23 @@ func TestParseCurlCommandParsesDataRawBody(t *testing.T) {
 	}
 }
 
+func TestParseCurlCommandParsesANSICQuotedDataBody(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := ParseCurlCommand(`curl https://api.example.test/v1/messages --data-raw $'{"message":"hello\nworld","note":"it\'s ok"}'`)
+	if err != nil {
+		t.Fatalf("ParseCurlCommand() error = %v", err)
+	}
+
+	if parsed.Method != httpMethodPost {
+		t.Fatalf("method = %q, want %q", parsed.Method, httpMethodPost)
+	}
+	wantBody := "{\"message\":\"hello\nworld\",\"note\":\"it's ok\"}"
+	if parsed.Body != wantBody {
+		t.Fatalf("body = %q, want %q", parsed.Body, wantBody)
+	}
+}
+
 func TestParseCurlCommandParsesDataEqualsForms(t *testing.T) {
 	t.Parallel()
 

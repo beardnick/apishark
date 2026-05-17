@@ -88,6 +88,7 @@ Currently supported:
 - URL: inline `https://...` / `http://...`, `--url`, `--url=`
 - Method toggles: `-I` / `--head`, `-G` / `--get`
 - Multi-line commands with trailing `\`
+- ANSI-C quoted arguments such as `$'{"note":"it\'s ok"}'`
 
 `--json` also adds `Content-Type: application/json` and `Accept: application/json`
 if those headers were not already present.
